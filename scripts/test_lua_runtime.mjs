@@ -110,6 +110,8 @@ game.emit('ui.action', {id:'game-levels', kind:{type:'clicked'}});
 runGameplay();
 assert.deepEqual(game.drain('engine.scene'), [{action:'replace', scene:'level_selector'}]);
 world.components.set('entity', new Map([['Health', 50], ['Nullable', null], ['False', false], ['__proto__', 'safe'], ['Stats', Object.assign(Object.create(null), {hp:10, keep:true})]]));
+world.resources.set('null-resource', null);
+world.resources.set('false-resource', false);
 world.resources.set('special-keys', JSON.parse('{"__proto__":{"items":[{},[],null]},"constructor":"safe","kind":"user","entries":"data"}'));
 world.resources.set('nested-roundtrip', JSON.parse('{"rows":[{"name":"original","enabled":false},[],null],"empty":{},"empty_list":[],"zero":0}'));
 game.vm.doStringSync(`
@@ -118,10 +120,13 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
-  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil)
+  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
+  assert(ecs.get('entity', 'False') == false)
+  assert(ecs.get_resource('null-resource') == ecs.null and ecs.get_resource('false-resource') == false)
+  assert(ecs.get_resource('missing-resource') == nil)
   assert(ecs.get('entity', '__proto__') == 'safe' and not ecs.has('entity', 'Missing'))
   ecs.set_field('entity', 'Stats', 'hp', 25)
   ecs.set_field('entity', 'Stats', 'optional', ecs.null)

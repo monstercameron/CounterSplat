@@ -208,3 +208,7 @@ Run `node scripts/benchmark_lua_changed_reads.mjs` to compare the original
 wrapper-table response, a table request with a scalar response, and scalar
 arguments with a scalar response on the browser Lua bridge. This fixture measures Lua/JavaScript transport; it does not include
 Rust execution, GPU rendering, or frame rate.
+
+Run `node scripts/benchmark_lua_scalar_reads.mjs` to compare Lua request
+and response tables with scalar arguments and direct results for a camera read
+and a presence check. The in-memory fixture excludes Rust and GPU work.

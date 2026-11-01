@@ -5,7 +5,7 @@
 const INSTRUCTION_LIMIT = 10_000_000;
 const HOOK_INTERVAL = 1_000;
 const BOOTSTRAP = `
-local call, call_flat, call_changed = __ecs_call, __ecs_call_flat, __ecs_call_changed
+local call, call_flat, call_changed, call_strings = __ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings
 local type, pairs, ipairs = type, pairs, ipairs
 local profile_now, profile_sample = __profile_now, __profile_sample
 local set_hook, raw_pcall, raw_xpcall, raise, select_value =
@@ -46,7 +46,7 @@ local function bounded(fn, ...)
         raise(result, 0)
     end
 end
-__ecs_call, __ecs_call_flat, __ecs_call_changed, __profile_now, __profile_sample = nil, nil, nil, nil, nil
+__ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings, __profile_now, __profile_sample = nil, nil, nil, nil, nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
     count.n = count.n + 1
@@ -89,14 +89,14 @@ local function invoke_flat(op, args)
     if result.found then return decode(result.value) end
 end
 local function invoke_one_string(op, key, value)
-    local args = {[key] = value}
-    if type(value) == "string" then return invoke_flat(op, args) end
-    return invoke(op, args)
+    if type(value) == "string" then return decode(call_strings(op, key, value)) end
+    return invoke(op, {[key] = value})
 end
 local function invoke_two_strings(op, key1, value1, key2, value2)
-    local args = {[key1] = value1, [key2] = value2}
-    if type(value1) == "string" and type(value2) == "string" then return invoke_flat(op, args) end
-    return invoke(op, args)
+    if type(value1) == "string" and type(value2) == "string" then
+        return decode(call_strings(op, key1, value1, key2, value2))
+    end
+    return invoke(op, {[key1] = value1, [key2] = value2})
 end
 ecs = { null = null }
 function ecs.array() local result = {}; arrays[result] = true; return result end
@@ -232,6 +232,14 @@ export class LuaScene {
         if (revision != null) request.revision = revision;
         const result = host.call(request, true);
         return result.found ? encodeResult(result.value) : false;
+      });
+      // Undefined becomes Lua nil, while JSON null remains ecs.null. Scalar
+      // arguments avoid transferring a temporary Lua request table.
+      vm.global.set('__ecs_call_strings', (op, key1, value1, key2, value2) => {
+        const request = {op, [key1]:value1};
+        if (key2 != null) request[key2] = value2;
+        const result = host.call(request, true);
+        return result.found ? encodeResult(result.value) : undefined;
       });
       if (profile) {
         vm.global.set('__profile_now', () => performance.now());
