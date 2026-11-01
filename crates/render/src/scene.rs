@@ -34,6 +34,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Splats per instance (`GSplatResourceBase.instanceSize` in the engine).
 pub const INSTANCE_SIZE: u32 = 128;
+// Reuse up to roughly 3 MiB of retired-centre data per scene. Unusually large
+// releases use a temporary buffer so they do not permanently enlarge the cache.
+const RELEASE_SCRATCH_SPLATS: usize = 262_144;
 
 /// The engine's 32×32 RGBA8 blue-noise texture (`core/math/blue-noise.js`), row-major.
 const BLUE_NOISE_32: &[u8] = include_bytes!("../assets/blue_noise_32_rgba8.bin");
@@ -113,6 +116,7 @@ pub struct GsplatScene {
     /// The splat textures by stream name, kept so a pool can be written in place.
     textures: BTreeMap<String, wgpu::Texture>,
     centers: wgpu::Buffer,
+    release_scratch: std::cell::RefCell<Vec<[f32; 3]>>,
     splat_width: u32,
     uniform_cache: std::cell::RefCell<BTreeMap<String, Vec<u8>>>,
     io_metrics: std::cell::RefCell<crate::metrics::Metrics>,
@@ -473,6 +477,7 @@ fn assemble(
         bounds: robust_bounds(centres),
         textures,
         centers,
+        release_scratch: Default::default(),
         splat_width,
         uniform_cache: Default::default(),
         io_metrics: Default::default(),
@@ -592,11 +597,23 @@ impl GsplatScene {
         self.io_metrics
             .borrow_mut()
             .count("stream_slots_released", u64::from(count));
-        queue.write_buffer(
-            &self.centers,
-            u64::from(start) * 12,
-            &f32s(&vec![f32::NAN; count as usize * 3]),
-        );
+        let count = count as usize;
+        if count <= RELEASE_SCRATCH_SPLATS {
+            let mut empty = self.release_scratch.borrow_mut();
+            empty.resize(count, [f32::NAN; 3]);
+            queue.write_buffer(
+                &self.centers,
+                u64::from(start) * 12,
+                centres_le_bytes(&empty).as_ref(),
+            );
+        } else {
+            let empty = vec![[f32::NAN; 3]; count];
+            queue.write_buffer(
+                &self.centers,
+                u64::from(start) * 12,
+                centres_le_bytes(&empty).as_ref(),
+            );
+        }
         self.sorter.invalidate();
     }
 
@@ -1046,6 +1063,105 @@ mod tests {
                 names[i]
             );
         }
+    }
+
+    #[test]
+    fn released_centres_are_nan_without_touching_other_slots() {
+        let Some((device, queue)) = crate::try_device() else {
+            return;
+        };
+        let pipelines = Pipelines::new(&device, crate::COLOR_FORMAT).unwrap();
+        let meta = sog::Meta {
+            count: 0,
+            means_mins: [-1.0; 3],
+            means_maxs: [1.0; 3],
+            scales_codebook: vec![0.0; 256],
+            sh0_codebook: vec![0.0; 256],
+            sh_n_codebook: vec![0.0; 256],
+            sh_n_count: 0,
+        };
+        let capacity = RELEASE_SCRATCH_SPLATS as u32 + 16;
+        let pool =
+            pool_with_centroid_rows(&device, &queue, &pipelines, &meta, capacity, 0.5, 1).unwrap();
+        let centres: Vec<_> = (0..16).map(|i| [i as f32, 2.0, -1.0]).collect();
+        pool.write_splats(&queue, 0, &[], &centres);
+        pool.release(&queue, 1, 3);
+        let scratch_capacity = pool.release_scratch.borrow().capacity();
+        pool.release(&queue, 5, 2);
+        assert_eq!(pool.release_scratch.borrow().capacity(), scratch_capacity);
+        // Exercise the temporary large-release path without growing retained scratch.
+        pool.release(&queue, 8, RELEASE_SCRATCH_SPLATS as u32 + 1);
+        assert_eq!(pool.release_scratch.borrow().capacity(), scratch_capacity);
+
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("retired centre readback"),
+            size: 16 * 12,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&pool.centers, 0, &readback, 0, 16 * 12);
+        queue.submit(Some(encoder.finish()));
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        let bytes = slice.get_mapped_range().unwrap();
+        for (index, xyz) in bytes.chunks_exact(12).enumerate() {
+            let retired = (1..4).contains(&index) || (5..7).contains(&index) || index >= 8;
+            for (axis, value) in xyz.chunks_exact(4).enumerate() {
+                let bits = u32::from_le_bytes(value.try_into().unwrap());
+                let expected = if retired {
+                    f32::NAN
+                } else {
+                    centres[index][axis]
+                };
+                assert_eq!(bits, expected.to_bits(), "slot {index} axis {axis}");
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_retired_centre_preparation() {
+        use std::{hint::black_box, time::Instant};
+        let mut scratch = Vec::<[f32; 3]>::new();
+        let mut old_samples = Vec::new();
+        let mut new_samples = Vec::new();
+        for sample in 0..9 {
+            for old in if sample % 2 == 0 {
+                [true, false]
+            } else {
+                [false, true]
+            } {
+                let start = Instant::now();
+                for i in 0..400 {
+                    let count = black_box(if i % 2 == 0 { 16_384 } else { 32_768 });
+                    if old {
+                        let empty = vec![f32::NAN; count * 3];
+                        black_box(f32s(&empty));
+                    } else {
+                        scratch.resize(count, [f32::NAN; 3]);
+                        black_box(centres_le_bytes(&scratch));
+                    }
+                }
+                let ns = start.elapsed().as_nanos() as f64 / 400.0;
+                if old {
+                    old_samples.push(ns);
+                } else {
+                    new_samples.push(ns);
+                }
+            }
+        }
+        old_samples.sort_by(f64::total_cmp);
+        new_samples.sort_by(f64::total_cmp);
+        println!(
+            "retired centres: old {:.0} ns, reused {:.0} ns",
+            old_samples[4], new_samples[4]
+        );
     }
 
     #[test]

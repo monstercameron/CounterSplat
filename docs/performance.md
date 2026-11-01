@@ -181,3 +181,8 @@ preparation only, without network, encoding, GPU uploads, or rendering.
 Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-render --lib benchmark_fade_preparation -- --ignored --nocapture`
 to compare CPU preparation of active streaming crossfades.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render --lib benchmark_retired_centre_preparation -- --ignored
+--nocapture` to compare CPU preparation of retired splat slots. GPU transfer
+and rendering time are excluded.
