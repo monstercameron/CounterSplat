@@ -278,4 +278,8 @@ vector, and object writes through the native Lua API to an in-memory sink. Run
 `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-scripting-lua benchmark_scalar_input -- --ignored --nocapture
 --test-threads=1` to compare the primitive decoder with the general decoder in
-the same process. These fixtures exclude ECS-owner thread scheduling and rendering.
+the same process. Run `cargo test --locked --release --target-dir .artifacts/target
+-p countersplat-scripting-lua benchmark_nested_input -- --ignored --nocapture
+--test-threads=1` to compare the inline ancestor tracker with the original
+hash-set validation for vectors, objects, wide tables, and deep tables. These
+fixtures exclude ECS-owner thread scheduling and rendering.

@@ -254,10 +254,56 @@ fn json_input(lua: &Lua, value: Value) -> mlua::Result<JsonValue> {
     json_input_general(lua, value)
 }
 
+// Most values have only a few nested tables. Track their active ancestors on
+// the stack, then use a set for deeper inputs so cycle checks remain bounded.
+struct ActiveTables {
+    inline: [usize; 8],
+    len: usize,
+    deep: Option<HashSet<usize>>,
+}
+
+impl ActiveTables {
+    fn new() -> Self {
+        Self {
+            inline: [0; 8],
+            len: 0,
+            deep: None,
+        }
+    }
+
+    fn insert(&mut self, address: usize) -> bool {
+        if let Some(deep) = &mut self.deep {
+            return deep.insert(address);
+        }
+        if self.inline[..self.len].contains(&address) {
+            return false;
+        }
+        if self.len < self.inline.len() {
+            self.inline[self.len] = address;
+            self.len += 1;
+        } else {
+            let mut deep = HashSet::with_capacity(self.len * 2);
+            deep.extend(self.inline);
+            deep.insert(address);
+            self.deep = Some(deep);
+        }
+        true
+    }
+
+    fn remove(&mut self, address: usize) {
+        if let Some(deep) = &mut self.deep {
+            deep.remove(&address);
+        } else {
+            self.len -= 1;
+            debug_assert_eq!(self.inline[self.len], address);
+        }
+    }
+}
+
 fn json_input_general(lua: &Lua, value: Value) -> mlua::Result<JsonValue> {
     fn validate(
         value: &Value,
-        active: &mut HashSet<usize>,
+        active: &mut ActiveTables,
         depth: usize,
         visited: &mut usize,
     ) -> mlua::Result<()> {
@@ -287,14 +333,14 @@ fn json_input_general(lua: &Lua, value: Value) -> mlua::Result<JsonValue> {
                     let (_, item) = entry?;
                     validate(&item, active, depth + 1, visited)?;
                 }
-                active.remove(&address);
+                active.remove(address);
             }
             _ => {}
         }
         Ok(())
     }
     let mut visited = 0;
-    validate(&value, &mut HashSet::new(), 0, &mut visited)?;
+    validate(&value, &mut ActiveTables::new(), 0, &mut visited)?;
     lua.from_value(value)
 }
 fn entity_strings(entities: Vec<Entity>) -> Vec<String> {
@@ -758,6 +804,126 @@ fn install_ecs_api(
 #[cfg(test)]
 mod scalar_input_tests {
     use super::*;
+
+    // Retain the previous implementation as an independent comparison for
+    // correctness and the opt-in nested-input benchmark.
+    fn json_input_hashset_reference(lua: &Lua, value: Value) -> mlua::Result<JsonValue> {
+        fn validate(
+            value: &Value,
+            active: &mut HashSet<usize>,
+            depth: usize,
+            visited: &mut usize,
+        ) -> mlua::Result<()> {
+            *visited += 1;
+            if *visited > 100_000 {
+                return Err(mlua::Error::runtime(
+                    "JSON values cannot exceed 100,000 nodes",
+                ));
+            }
+            if depth > 128 {
+                return Err(mlua::Error::runtime(
+                    "JSON table nesting exceeds 128 levels",
+                ));
+            }
+            match value {
+                Value::Number(number) if !number.is_finite() => {
+                    return Err(mlua::Error::runtime("JSON values must use finite numbers"))
+                }
+                Value::Table(table) => {
+                    let address = table.to_pointer() as usize;
+                    if !active.insert(address) {
+                        return Err(mlua::Error::runtime(
+                            "JSON values cannot contain cyclic tables",
+                        ));
+                    }
+                    for entry in table.clone().pairs::<Value, Value>() {
+                        let (_, item) = entry?;
+                        validate(&item, active, depth + 1, visited)?;
+                    }
+                    active.remove(&address);
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+        let mut visited = 0;
+        validate(&value, &mut HashSet::new(), 0, &mut visited)?;
+        lua.from_value(value)
+    }
+
+    #[test]
+    fn nested_input_matches_hashset_validation() {
+        let lua = Lua::new();
+        let fixtures = [
+            ("return {1,2,3}", true),
+            ("local child={x=1}; return {a=child, b=child}", true),
+            ("local value={leaf=true}; for i=1,7 do value={child=value} end; return value", true),
+            ("local value={leaf=true}; for i=1,8 do value={child=value} end; return value", true),
+            ("local value={leaf=true}; for i=1,9 do value={child=value} end; return value", true),
+            ("local value={leaf=true}; for i=1,32 do value={child=value} end; return {a=value,b={x=1}}", true),
+            ("local root={}; local child=root; for i=1,32 do child.next={}; child=child.next end; child.loop=root; return root", false),
+            ("local value={}; for i=1,130 do value={child=value} end; return value", false),
+            ("local value={leaf=true}; for i=1,18 do value={value,value} end; return value", false),
+            ("return {number=0/0}", false),
+        ];
+        for (source, valid) in fixtures {
+            let value: Value = lua.load(source).eval().unwrap();
+            let expected =
+                json_input_hashset_reference(&lua, value.clone()).map_err(|e| e.to_string());
+            assert_eq!(expected.is_ok(), valid, "{source}");
+            let actual = json_input_general(&lua, value).map_err(|e| e.to_string());
+            assert_eq!(actual, expected, "{source}");
+        }
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_nested_input() {
+        use std::{hint::black_box, time::Instant};
+        let lua = Lua::new();
+        let fixtures = [
+            ("vector", "return {1.25,2.5,-3.75}", 100_000),
+            (
+                "object",
+                "return {position={1.25,2.5,-3.75},enabled=true}",
+                50_000,
+            ),
+            (
+                "wide",
+                "local a={}; for i=1,1000 do a[i]={x=i,y=2} end; return a",
+                50,
+            ),
+            (
+                "deep",
+                "local a={leaf=true}; for i=1,96 do a={child=a} end; return a",
+                500,
+            ),
+        ];
+        for (name, source, iterations) in fixtures {
+            let value: Value = lua.load(source).eval().unwrap();
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..9 {
+                for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                    let start = Instant::now();
+                    for _ in 0..iterations {
+                        let result = if mode == 0 {
+                            json_input_hashset_reference(black_box(&lua), black_box(value.clone()))
+                        } else {
+                            json_input_general(black_box(&lua), black_box(value.clone()))
+                        };
+                        black_box(result.unwrap());
+                    }
+                    samples[mode].push(start.elapsed().as_nanos() as f64 / iterations as f64);
+                }
+            }
+            samples[0].sort_by(f64::total_cmp);
+            samples[1].sort_by(f64::total_cmp);
+            println!(
+                "{name}: hash set {:.0} ns, inline {:.0} ns",
+                samples[0][4], samples[1][4]
+            );
+        }
+    }
 
     #[test]
     fn primitive_inputs_match_the_general_decoder() {
