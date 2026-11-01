@@ -281,7 +281,7 @@ ecs.on("input.mouse_delta", function(event)
     camera.yaw = (camera.yaw + dx * settings.mouse_sensitivity + math.pi) % (2 * math.pi) - math.pi
     local vertical = settings.invert_y and 1 or -1
     camera.pitch = math.max(-1.553343, math.min(1.553343, camera.pitch + dy * settings.mouse_sensitivity * vertical))
-    ecs.set(player, "PlayerCamera", camera)
+    ecs.set_fields(player, "PlayerCamera", {yaw=camera.yaw, pitch=camera.pitch})
 end)
 ecs.on("ui.action", function(action)
     if action.id == ids.reset and action.kind.type == "clicked" then

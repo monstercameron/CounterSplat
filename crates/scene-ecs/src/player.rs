@@ -5,7 +5,7 @@ use countersplat_scene::{
 };
 
 macro_rules! adapter {
-    ($name:ident, $component:ty $(, $fast_field:ident)?) => {
+    ($name:ident, $component:ty $(, [$($fast_field:ident),+])?) => {
         struct $name;
         impl ComponentAdapter for $name {
             fn read(&self, world: &World, entity: Entity) -> Result<Option<Value>, String> {
@@ -41,19 +41,54 @@ macro_rules! adapter {
                 field: &str,
                 value: Value,
             ) -> Result<(), String> {
-                if field != stringify!($fast_field) {
+                if !matches!(field, $(stringify!($fast_field))|+) {
                     return countersplat_ecs::write_object_field_via_adapter(
                         self, world, entity, field, value,
                     );
                 }
-                // Validate a copy before replacing the component, so a bad
-                // field cannot leave partially changed physics or camera state.
                 let mut component = world
                     .get::<$component>(entity)
                     .cloned()
                     .ok_or("component is missing")?;
-                component.$fast_field =
-                    serde_json::from_value(value).map_err(|e| e.to_string())?;
+                match field {
+                    $(stringify!($fast_field) => {
+                        component.$fast_field =
+                            serde_json::from_value(value).map_err(|e| e.to_string())?;
+                    },)+
+                    _ => unreachable!(),
+                }
+                component.validate().map_err(str::to_owned)?;
+                world.insert(entity, component)
+            }
+            fn write_fields(
+                &self,
+                world: &mut World,
+                entity: Entity,
+                fields: countersplat_ecs::ComponentFields,
+            ) -> Result<(), String> {
+                if fields
+                    .keys()
+                    .any(|field| !matches!(field.as_str(), $(stringify!($fast_field))|+))
+                {
+                    return countersplat_ecs::write_object_fields_via_adapter(
+                        self, world, entity, fields,
+                    );
+                }
+                // Merge and validate a copy before replacing the component;
+                // one bad field cannot leave a partially updated component.
+                let mut component = world
+                    .get::<$component>(entity)
+                    .cloned()
+                    .ok_or("component is missing")?;
+                for (field, value) in fields {
+                    match field.as_str() {
+                        $(stringify!($fast_field) => {
+                            component.$fast_field =
+                                serde_json::from_value(value).map_err(|e| e.to_string())?;
+                        },)+
+                        _ => unreachable!(),
+                    }
+                }
                 component.validate().map_err(str::to_owned)?;
                 world.insert(entity, component)
             }
@@ -75,7 +110,23 @@ macro_rules! adapter {
         }
     };
 }
-adapter!(CameraAdapter, PlayerCamera, position);
+adapter!(
+    CameraAdapter,
+    PlayerCamera,
+    [
+        position,
+        view_offset,
+        view_posture_offset_y,
+        view_bob_pitch,
+        view_bob_roll,
+        view_turn_roll,
+        yaw,
+        pitch,
+        roll,
+        fov_degrees,
+        view_fov_degrees
+    ]
+);
 adapter!(LensAdapter, CameraLens);
 adapter!(ZoomLensAdapter, CameraZoomLens);
 adapter!(ControllerAdapter, CameraController);

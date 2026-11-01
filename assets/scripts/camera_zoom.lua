@@ -47,7 +47,7 @@ local function reset()
     held, magnification, lens_blend = false, 1, 0
     publish_lens(0)
     local camera = ecs.get(player, "PlayerCamera")
-    if camera then camera.view_fov_degrees = ecs.null; ecs.set(player, "PlayerCamera", camera) end
+    if camera then ecs.set_field(player, "PlayerCamera", "view_fov_degrees", ecs.null) end
 end
 ecs.on("input.reset", reset)
 ecs.on("ui.action", function(action)
@@ -74,8 +74,7 @@ ecs.system("player.camera_zoom", function(dt)
         view_fov = math.deg(2 * math.atan(math.tan(math.rad(camera.fov_degrees) / 2) / magnification))
     end
     if camera.view_fov_degrees ~= view_fov then
-        camera.view_fov_degrees = view_fov
-        ecs.set(player, "PlayerCamera", camera)
+        ecs.set_field(player, "PlayerCamera", "view_fov_degrees", view_fov)
     end
 end)
 

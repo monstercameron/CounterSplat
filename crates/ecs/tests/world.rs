@@ -981,3 +981,62 @@ fn commands_cross_threads_and_preserve_replies_and_snapshot_data() {
     drop(command_tx);
     worker.join().unwrap();
 }
+
+#[test]
+fn multi_field_writes_apply_atomically_through_world_and_json() {
+    let mut world = World::new();
+    world
+        .register_serde_component::<Position>("Position")
+        .unwrap();
+    let entity = world.spawn();
+    world.insert(entity, Position { x: 1.0, y: 2.0 }).unwrap();
+    world
+        .set_dynamic(entity, "State", json!({"keep":1}))
+        .unwrap();
+    let revision = world.structure_revision();
+    let fields = json!({"x":3.0,"y":4.0}).as_object().unwrap().clone();
+    world
+        .write_component_fields(entity, "Position", fields)
+        .unwrap();
+    assert_eq!(
+        world.get::<Position>(entity),
+        Some(&Position { x: 3.0, y: 4.0 })
+    );
+    let invalid = json!({"x":9.0,"y":"bad"}).as_object().unwrap().clone();
+    assert!(world
+        .write_component_fields(entity, "Position", invalid)
+        .is_err());
+    assert_eq!(
+        world.get::<Position>(entity),
+        Some(&Position { x: 3.0, y: 4.0 })
+    );
+    let request = json!({"op":"set_fields","id":entity.to_string(),"name":"State","fields":{"keep":7,"extra":null}});
+    let result: Value =
+        serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+    assert_eq!(result, json!({"found":false,"value":null}));
+    assert_eq!(
+        world.get_dynamic(entity, "State"),
+        Some(&json!({"keep":7,"extra":null}))
+    );
+    let invalid = json!({"op":"set_fields","id":entity.to_string(),"name":"State","fields":[1,2]});
+    assert!(world.apply_script_json(&invalid.to_string()).is_err());
+    assert_eq!(
+        world.get_dynamic(entity, "State"),
+        Some(&json!({"keep":7,"extra":null}))
+    );
+    assert_eq!(world.structure_revision(), revision);
+    assert_eq!(
+        world
+            .apply_operation(WorldOperation::WriteComponentFields {
+                entity,
+                name: "State".into(),
+                fields: json!({"keep":9}).as_object().unwrap().clone()
+            })
+            .unwrap(),
+        WorldOutcome::Applied
+    );
+    assert!(world.despawn(entity));
+    assert!(world
+        .write_component_fields(entity, "State", Default::default())
+        .is_err());
+}

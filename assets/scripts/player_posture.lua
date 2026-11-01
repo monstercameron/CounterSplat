@@ -190,7 +190,7 @@ ecs.system('player.posture',function(dt)
         posture.amount=animation.start+(animation.target-animation.start)*smooth
         local camera=ecs.get(player,'PlayerCamera')
         camera.view_posture_offset_y=animation.offset*(1-smooth)
-        ecs.set(player,'PlayerCamera',camera)
+        ecs.set_field(player,'PlayerCamera','view_posture_offset_y',camera.view_posture_offset_y)
         if t>=1 then posture.amount=animation.target; animation=nil end
     end
     posture.moving=moving(controls)

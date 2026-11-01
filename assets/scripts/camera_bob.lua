@@ -50,7 +50,8 @@ local function reset()
         previous = camera.position
         camera.view_offset = {0, 0, 0}
         camera.view_bob_pitch, camera.view_bob_roll = 0, 0
-        ecs.set(player, "PlayerCamera", camera)
+        ecs.set_fields(player, "PlayerCamera", {view_offset=camera.view_offset,
+            view_bob_pitch=camera.view_bob_pitch, view_bob_roll=camera.view_bob_roll})
     end
 end
 ecs.on("input.reset", reset)
@@ -131,6 +132,7 @@ ecs.system("player.camera_bob", function(dt)
         camera.view_bob_pitch ~= pitch or camera.view_bob_roll ~= roll then
         camera.view_offset = {x, vertical, z}
         camera.view_bob_pitch, camera.view_bob_roll = pitch, roll
-        ecs.set(player, "PlayerCamera", camera)
+        ecs.set_fields(player, "PlayerCamera", {view_offset=camera.view_offset,
+            view_bob_pitch=camera.view_bob_pitch, view_bob_roll=camera.view_bob_roll})
     end
 end)

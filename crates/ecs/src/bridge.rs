@@ -3,7 +3,7 @@
 //! The crate does not prescribe a transport: a channel, request queue or local
 //! call can all carry these types. Replies retain request IDs so a caller can
 //! correlate responses even when several subsystems submit requests.
-use crate::{Entity, Value, World};
+use crate::{ComponentFields, Entity, Value, World};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -88,6 +88,12 @@ pub enum WorldOperation {
         name: String,
         field: String,
         value: Value,
+    },
+    /// Update multiple fields on an existing object-valued component.
+    WriteComponentFields {
+        entity: Entity,
+        name: String,
+        fields: ComponentFields,
     },
     RemoveComponent {
         entity: Entity,
@@ -242,6 +248,14 @@ impl World {
                 value,
             } => {
                 self.write_component_field(entity, &name, &field, value)?;
+                Ok(Out::Applied)
+            }
+            Op::WriteComponentFields {
+                entity,
+                name,
+                fields,
+            } => {
+                self.write_component_fields(entity, &name, fields)?;
                 Ok(Out::Applied)
             }
             Op::RemoveComponent { entity, name } => {

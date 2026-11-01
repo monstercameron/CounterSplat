@@ -500,6 +500,25 @@ fn install_ecs_api(
         lua,
         &api,
         bridge,
+        "set_fields",
+        |lua, bridge, (id, name, fields): (String, String, Value)| {
+            let JsonValue::Object(fields) = json_input(lua, fields)? else {
+                return Err(mlua::Error::runtime("component fields must be an object"));
+            };
+            applied(request(
+                bridge,
+                WorldOperation::WriteComponentFields {
+                    entity: entity(id)?,
+                    name,
+                    fields,
+                },
+            )?)
+        },
+    )?;
+    bind(
+        lua,
+        &api,
+        bridge,
         "remove",
         |lua, bridge, (id, name): (String, String)| {
             maybe_value(

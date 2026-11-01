@@ -59,6 +59,9 @@ script handles them.
   object-valued component without replacing its other fields. Dynamic objects
   can gain fields; registered adapters apply their usual validation. A missing,
   non-object, or invalid target raises an error.
+- ecs.set_fields(id, name, fields) updates several fields together. Registered
+  adapters control validation; the built-in scene adapters commit the combined
+  update only when it is valid.
 - ecs.get_resource(name), ecs.set_resource(name, value), and
   ecs.remove_resource(name) access dynamic resources.
 - ecs.set_parent(child, parent_or_nil), ecs.parent(id), and ecs.children(id)

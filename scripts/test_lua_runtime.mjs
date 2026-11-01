@@ -29,6 +29,15 @@ class WorldFixture {
         value = components.get(op.name);
         break;
       }
+      case 'set_fields': {
+        const component = (this.components.get(op.id) || new Map()).get(op.name);
+        if (component === null || typeof component !== 'object' || Array.isArray(component) ||
+            op.fields === null || typeof op.fields !== 'object' || Array.isArray(op.fields))
+          throw new Error('component and fields must be objects');
+        Object.assign(component, op.fields);
+        found = false;
+        break;
+      }
       case 'set_field': {
         const component = (this.components.get(op.id) || new Map()).get(op.name);
         if (component === null || typeof component !== 'object' || Array.isArray(component))
@@ -102,8 +111,14 @@ game.vm.doStringSync(`
   ecs.set_field('entity', 'Stats', 'hp', 25)
   ecs.set_field('entity', 'Stats', 'optional', ecs.null)
   ecs.set_field('entity', 'Stats', '__proto__', 'safe')
+  ecs.set_fields('entity', 'Stats', {hp=30, optional=ecs.null})
+  ecs.set_fields('entity', 'Stats', {})
+  assert(not pcall(function() ecs.set_fields('entity', 'Stats', ecs.array()) end))
+  assert(not pcall(function() ecs.set_fields('entity', 'Stats', {hp=0/0}) end))
+  local patch_cycle = {}; patch_cycle.self = patch_cycle
+  assert(not pcall(function() ecs.set_fields('entity', 'Stats', patch_cycle) end))
   local stats = ecs.get('entity', 'Stats')
-  assert(stats.hp == 25 and stats.keep and stats.optional == ecs.null and stats.__proto__ == 'safe')
+  assert(stats.hp == 30 and stats.keep and stats.optional == ecs.null and stats.__proto__ == 'safe')
   assert(not pcall(function() ecs.set_field('entity', 'Missing', 'hp', 1) end))
   assert(not pcall(function() ecs.set_field('entity', 'Stats', 'bad', 0/0) end))
   -- Non-string arguments still use the validating general encoder.

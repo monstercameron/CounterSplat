@@ -27,8 +27,7 @@ local delta, rate, roll, aiming, previous = 0, 0, 0, false, nil
 local function clear_target(entity)
     local camera = entity and ecs.is_alive(entity) and ecs.get(entity, "PlayerCamera")
     if camera and camera.view_turn_roll ~= 0 then
-        camera.view_turn_roll = 0
-        ecs.set(entity, "PlayerCamera", camera)
+        ecs.set_field(entity, "PlayerCamera", "view_turn_roll", 0)
     end
 end
 local function reset_motion()
@@ -72,7 +71,7 @@ ecs.on("input.mouse_delta", function(event)
     local vertical = controls.invert_y and 1 or -1
     local pitch_limit = math.rad(config.pitch_limit_degrees)
     camera.pitch = math.max(-pitch_limit, math.min(pitch_limit, camera.pitch + dy * controls.mouse_sensitivity * vertical))
-    ecs.set(target, "PlayerCamera", camera)
+    ecs.set_fields(target, "PlayerCamera", {yaw=camera.yaw, pitch=camera.pitch})
     switch_target(target)
     -- Neural-Sight's original yaw sign is opposite to CounterSplat's basis.
     delta = math.max(-10, math.min(10, delta - turn))
@@ -133,8 +132,7 @@ ecs.system("camera.neural_controller", function(dt)
             if math.abs(rate) < 0.00002 and math.abs(roll) < 0.000002 then rate, roll = 0, 0 end
             local camera = ecs.get(target, "PlayerCamera")
             if camera.view_turn_roll ~= roll then
-                camera.view_turn_roll = roll
-                ecs.set(target, "PlayerCamera", camera)
+                ecs.set_field(target, "PlayerCamera", "view_turn_roll", roll)
             end
         end
     end

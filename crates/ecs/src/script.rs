@@ -2,7 +2,7 @@
 //!
 //! Hosts can use this boundary when the caller cannot exchange Rust values directly. All
 //! operations still execute on the world owner and use the same component adapters as native Lua.
-use crate::{Entity, World, WorldOperation, WorldOutcome};
+use crate::{ComponentFields, Entity, World, WorldOperation, WorldOutcome};
 use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
 use serde_json::{json, Value};
 use std::{borrow::Cow, collections::HashSet, str::FromStr};
@@ -205,6 +205,13 @@ enum ScriptOperation<'a> {
         field: Cow<'a, str>,
         value: Value,
     },
+    SetFields {
+        #[serde(borrow)]
+        id: Cow<'a, str>,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
+        fields: ComponentFields,
+    },
     Remove {
         #[serde(borrow)]
         id: Cow<'a, str>,
@@ -313,6 +320,10 @@ impl World {
                 value,
             } => {
                 self.write_component_field(Entity::from_str(&id)?, &name, &field, value)?;
+                return script_result::<Value>(None);
+            }
+            S::SetFields { id, name, fields } => {
+                self.write_component_fields(Entity::from_str(&id)?, &name, fields)?;
                 return script_result::<Value>(None);
             }
             S::Remove { id, name } => {

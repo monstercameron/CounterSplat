@@ -30,7 +30,7 @@ ecs.on("physics.motion_resolved", function(event)
     end
     if event.attempted[2] < -0.00001 then body.grounded = event.moved[2] - event.attempted[2] > 0.0005
     elseif event.attempted[2] > 0.00001 then body.grounded = false end
-    ecs.set(event.entity, "PhysicsBody", body)
+    ecs.set_fields(event.entity, "PhysicsBody", {velocity=body.velocity, grounded=body.grounded})
     if collided then ecs.emit("physics.collision", {entity=event.entity, attempted=event.attempted,
         moved=event.moved, grounded=body.grounded}) end
 end)
@@ -39,7 +39,8 @@ ecs.on("physics.motion_error", function(event)
         local body = ecs.get(event.entity, "PhysicsBody")
         if body then
             for i = 1, 3 do body.velocity[i] = 0 end
-            body.grounded = false; ecs.set(event.entity, "PhysicsBody", body)
+            body.grounded = false
+            ecs.set_fields(event.entity, "PhysicsBody", {velocity=body.velocity, grounded=body.grounded})
         end
     end
     ecs.emit("physics.error", event)

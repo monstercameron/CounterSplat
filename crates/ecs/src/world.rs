@@ -63,6 +63,9 @@ impl<T> ComponentView<'_, T> {
 /// An ordered, exact-size view of the entities in a component index.
 pub type EntityIndex<'a> = Box<dyn ExactSizeIterator<Item = Entity> + 'a>;
 
+/// Named field values for an atomic update to an object-valued component.
+pub type ComponentFields = serde_json::Map<String, Value>;
+
 /// A narrow adapter exposing a Rust-owned component to scripting and other external consumers.
 ///
 /// Methods execute on the world-owning thread. Adapters may validate input or expose a restricted view; they must
@@ -99,6 +102,17 @@ pub trait ComponentAdapter: Send + Sync + 'static {
     ) -> Result<(), String> {
         write_object_field_via_adapter(self, world, entity, field, value)
     }
+    /// Updates several fields together, validating the combined result through
+    /// the usual write path. Adapters may specialize this without committing a
+    /// partial update when validation fails.
+    fn write_fields(
+        &self,
+        world: &mut World,
+        entity: Entity,
+        fields: ComponentFields,
+    ) -> Result<(), String> {
+        write_object_fields_via_adapter(self, world, entity, fields)
+    }
     /// Removes the component and returns its previous exposed value.
     fn remove(&self, world: &mut World, entity: Entity) -> Result<Option<Value>, String>;
     /// Reports component presence for queries and component listings.
@@ -129,6 +143,22 @@ pub fn write_object_field_via_adapter<A: ComponentAdapter + ?Sized>(
         .as_object_mut()
         .ok_or("component is not an object")?;
     object.insert(field.to_owned(), value);
+    adapter.write(world, entity, component)
+}
+
+/// Implements a multi-field update through an adapter's ordinary read/write
+/// API. The adapter receives a complete candidate only after all fields merge.
+pub fn write_object_fields_via_adapter<A: ComponentAdapter + ?Sized>(
+    adapter: &A,
+    world: &mut World,
+    entity: Entity,
+    fields: ComponentFields,
+) -> Result<(), String> {
+    let mut component = adapter.read(world, entity)?.ok_or("component is missing")?;
+    let object = component
+        .as_object_mut()
+        .ok_or("component is not an object")?;
+    object.extend(fields);
     adapter.write(world, entity, component)
 }
 
@@ -724,6 +754,32 @@ impl World {
                 .as_object_mut()
                 .ok_or("component is not an object")?;
             object.insert(field.to_owned(), value);
+            Ok(())
+        }
+    }
+
+    /// Updates several fields on an existing object component as one operation.
+    /// Adapters can validate the combined candidate before committing it.
+    pub fn write_component_fields(
+        &mut self,
+        entity: Entity,
+        name: &str,
+        fields: ComponentFields,
+    ) -> Result<(), String> {
+        self.require_alive(entity)?;
+        validate_name(name)?;
+        if let Some(adapter) = self.adapters.get(name).cloned() {
+            adapter.write_fields(self, entity, fields)
+        } else {
+            let component = self
+                .dynamic_components
+                .get_mut(name)
+                .and_then(|store| store.get_mut(&entity))
+                .ok_or("component is missing")?;
+            let object = component
+                .as_object_mut()
+                .ok_or("component is not an object")?;
+            object.extend(fields);
             Ok(())
         }
     }
