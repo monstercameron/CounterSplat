@@ -621,6 +621,7 @@ async function launchLevel(id, sceneId = '') {
     });
     startSkyWorker(game, token, new Set(skies.map(sky => sky.id)));
     voxelRuntime = new VoxelRuntime(game, levelBase, () => generation === token && active === game);
+    if (frameProfiler) voxelRuntime.enableLatencyProfile();
     status.textContent = 'Streaming scan';
     message.hidden = true;
   } catch (error) {
@@ -957,7 +958,9 @@ function tick(timestamp) {
         stackCapture?.endFrame(stackFrame, submitted, renderMs, scriptsMs, stages, gameplayLua, rustTiming, timestamp);
         frameProfiler.record(timestamp, submitted, renderMs, scriptsMs, callbackMs, stages);
         if (timestamp - lastProfileReport >= 500) {
-          metrics.dataset.profile = JSON.stringify(frameProfiler.snapshot(profileState, gameplayLua?.profileReport()));
+          const report = frameProfiler.snapshot(profileState, gameplayLua?.profileReport());
+          report.voxel_worker = voxelRuntime?.latencyReport() ?? null;
+          metrics.dataset.profile = JSON.stringify(report);
           lastProfileReport = timestamp;
         }
       }

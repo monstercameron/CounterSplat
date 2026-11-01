@@ -1,5 +1,5 @@
 // Opt-in browser-side measurements. Times are CPU wall time, not GPU timestamps.
-function summary(samples) {
+export function summarizeSamples(samples) {
   if (!samples.length) return null;
   const values = [...samples].sort((a,b) => a-b);
   const mean = values.reduce((sum,value) => sum+value, 0) / values.length;
@@ -40,7 +40,7 @@ export class FrameProfiler {
       this.push(name, stages[name] || 0);
   }
   snapshot(state, lua) {
-    const metrics = Object.fromEntries(Object.entries(this.samples).map(([key, values]) => [key, summary(values)]));
+    const metrics = Object.fromEntries(Object.entries(this.samples).map(([key, values]) => [key, summarizeSamples(values)]));
     const submitted = Number(state?.submitted_frames) || 0, busy = Number(state?.busy_skips) || 0;
     return {...metrics, gpu_busy_skips:busy, submitted_frames:submitted,
       busy_fraction:busy+submitted ? busy/(busy+submitted) : 0, lua};

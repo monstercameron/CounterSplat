@@ -1,3 +1,5 @@
+import {WorkerLatency} from './worker_latency.js';
+
 // Coordinates per-entity ECS bodies with the separate level-collision worker.
 // Lua submits movement intents; this host reconciles each entity's worker result.
 export class VoxelRuntime {
@@ -8,11 +10,21 @@ export class VoxelRuntime {
     if (!this.level || !this.player) throw new Error('Voxel level or player entity is missing.');
     this.state = 'loading'; this.resolution = null; this.count = 0;
     this.capture = false; this.visible = false; this.bodies = new Map(); this.requests = new Map();
+    this.latency = null;
     this.sequence = 0; this.groundRequests = new Map(); this.clearanceRequests = new Map(); this.traceRequests = new Map(); this.debugPending = null; this.debugAt = -Infinity; this.debugPosition = null;
     this.setState('loading');
     worker.onmessage = ({data}) => this.onMessage(data);
     worker.onerror = event => this.fail(event.message || 'Voxel worker failed.');
     worker.postMessage({type:'load', base:base.href});
+  }
+  enableLatencyProfile(now = () => performance.now()) { this.latency = new WorkerLatency({now}); }
+  latencyReport() { return this.latency?.snapshot() ?? null; }
+  send(message) {
+    if (this.latency && Number.isSafeInteger(message.id)) {
+      this.latency.start(message.id, message.type, message.deltas?.length);
+      message.profile = true;
+    }
+    this.worker.postMessage(message);
   }
   call(operation) { return JSON.parse(this.game.ecs_operation('gameplay', JSON.stringify(operation))); }
   get(id, name) { return this.call({op:'get', id, name}).value; }
@@ -71,6 +83,8 @@ export class VoxelRuntime {
   }
   onMessage(data) {
     if (!this.isCurrent()) return;
+    if (this.latency && Number.isSafeInteger(data?.id))
+      this.latency.finish(data.id, data.worker_ms, data.type === 'error');
     try {
       if (data.type === 'ready') {
         this.resolution = data.resolution; this.setState('ready');
@@ -162,7 +176,7 @@ export class VoxelRuntime {
       halfHeight:body.capsule_half_height ?? 0, offsetY:body.collision_offset_y};
     this.requests.set(requestId, id);
     const center = start.slice(); center[1] += body.collision_offset_y;
-    this.worker.postMessage({type:'move', id:requestId, position:center, deltas, radius:body.radius,
+    this.send({type:'move', id:requestId, position:center, deltas, radius:body.radius,
       halfHeight:body.capsule_half_height ?? 0});
   }
   tick(runtime, now) {
@@ -193,7 +207,7 @@ export class VoxelRuntime {
       if (!capture) { this.traceResult(request, 'unavailable'); continue; }
       if (this.traceRequests.size >= 128) { this.traceResult(request, 'error'); continue; }
       const id = ++this.sequence; this.traceRequests.set(id, request);
-      this.worker.postMessage({type:'trace', id, start:trace.start, end:trace.finish});
+      this.send({type:'trace', id, start:trace.start, end:trace.finish});
     }
     // Ground requests are script-authored; the worker only supplies geometry.
     for (const probe of runtime.drain('physics.ground_request')) {
@@ -203,7 +217,7 @@ export class VoxelRuntime {
           !Number.isFinite(probe.radius) || probe.radius < 0 || probe.radius > 1 ||
           !Number.isFinite(probe.max_drop) || probe.max_drop < 0.05 || probe.max_drop > 16) continue;
       const id = ++this.sequence; this.groundRequests.set(id, {entity:probe.entity, token:probe.token});
-      this.worker.postMessage({type:'ground', id, position:probe.position, radius:probe.radius, maxDrop:probe.max_drop});
+      this.send({type:'ground', id, position:probe.position, radius:probe.radius, maxDrop:probe.max_drop});
     }
     // The script decides what volume to check and what the result means.
     for (const probe of runtime.drain('physics.clearance_request')) {
@@ -214,7 +228,7 @@ export class VoxelRuntime {
           !Number.isFinite(probe.radius) || probe.radius < 0.05 || probe.radius > 1 ||
           !Number.isFinite(probe.half_height) || probe.half_height < 0 || probe.half_height > 4) continue;
       const id = ++this.sequence; this.clearanceRequests.set(id, {entity:probe.entity, token:probe.token});
-      this.worker.postMessage({type:'clearance', id, center:probe.center, radius:probe.radius, halfHeight:probe.half_height});
+      this.send({type:'clearance', id, center:probe.center, radius:probe.radius, halfHeight:probe.half_height});
     }
     const grouped = new Map();
     for (const move of runtime.drain('physics.move')) {
@@ -262,7 +276,7 @@ export class VoxelRuntime {
       if (moved) {
         this.debugAt = now; this.debugPosition = position.slice();
         const id = ++this.sequence; this.debugPending = id;
-        this.worker.postMessage({type:'debug', id, position, radius:3, limit:6000});
+        this.send({type:'debug', id, position, radius:3, limit:6000});
       }
     }
   }

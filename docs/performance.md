@@ -42,6 +42,15 @@ counters are cumulative for the current scene; GPU busy skips are also
 cumulative and can include loading. Reload or start another scene for a fresh
 measurement.
 
+`voxel_worker` reports bounded samples by operation. `round_trip_ms` runs from
+posting a collision request until its reply reaches the page; it includes queue
+and browser scheduling, message handling, and the worker's computation.
+`worker_ms` measures the worker handler and result packing; `batch_size` records
+the number of movement deltas in a request. The difference between the two
+timings is
+not a pure copy or transport measurement. Timer precision and profiling overhead
+affect short requests; cancelled or evicted requests may not be represented.
+
 These are CPU wall times and submission intervals, not GPU timestamps or actual
 monitor-present feedback. The optional per-system profiler adds overhead.
 Compare the same level, view, resolution, viewport, settings and measurement
@@ -102,6 +111,21 @@ countersplat-ecs --example script_bridge_bench` to measure JSON bridge reads,
 liveness and presence checks, entity queries, resource fields, and empty event
 drains. The benchmark uses both typed components and a larger dynamic component.
 It does not include Lua, JavaScript, or rendering costs.
+
+## Native worker latency benchmark
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-threaded-demo --example worker_latency` to compare four synchronous
+ECS worker reads with one `ReadComponents` batch and equivalent local reads.
+It reports p50, p95 and p99 for 4,000 groups after warm-up. The fixture uses
+small dynamic components and includes request/reply scheduling and value
+construction; it does not run Lua, browser workers, rendering, or GPU work.
+
+Run `node scripts/benchmark_lua_pair_reads.mjs` to compare two separate Lua
+component reads with `get_many` using Wasmoon and a JavaScript ECS fixture.
+It reports medians over 11 alternating samples of 2,000 pairs; it excludes the
+Rust bridge and worker scheduling, so its result is not an end-to-end frame time.
+Results depend on host scheduling and load.
 
 ## Event dispatch benchmark
 

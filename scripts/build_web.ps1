@@ -22,6 +22,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/mouse_buttons.js') -Dest
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/first_person_frames.js') -Destination (Join-Path $output 'first_person_frames.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/display_settings.js') -Destination (Join-Path $output 'display_settings.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/frame_profile.js') -Destination (Join-Path $output 'frame_profile.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/worker_latency.js') -Destination (Join-Path $output 'worker_latency.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/frame_stack_profile.js') -Destination (Join-Path $output 'frame_stack_profile.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/player_rig.js') -Destination (Join-Path $output 'player_rig.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/chunk_decoder_pool.js') -Destination (Join-Path $output 'chunk_decoder_pool.js') -Force

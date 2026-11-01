@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {WorkerLatency} from '../preview/worker_latency.js';
+let now = 0;
+const profile = new WorkerLatency({capacity:2, pendingLimit:2, now:() => now});
+profile.start(1, 'move', 3); now = 1; profile.start(2, 'trace');
+now = 5; profile.finish(1, 2); now = 8; profile.finish(2, 3, true);
+let report = profile.snapshot();
+assert.equal(report.operations.move.round_trip_ms.p50, 5);
+assert.equal(report.operations.move.worker_ms.p50, 2);
+assert.equal(report.operations.move.batch_size.p50, 3);
+assert.equal(report.operations.trace.batch_size, null);
+assert.equal(report.operations.trace.errors, 1);
+assert.equal(report.pending, 0);
+profile.start(3, 'move'); profile.start(4, 'move'); profile.start(5, 'move');
+assert.equal(profile.snapshot().evicted, 1);
+now = 9; profile.finish(3, 0); // evicted or stale replies are ignored
+now = 10; profile.finish(4, undefined); now = 11; profile.finish(5, 0.5);
+report = profile.snapshot();
+assert.equal(report.operations.move.completed, 3);
+assert.equal(report.operations.move.round_trip_ms.samples, 2);
+assert.equal(report.operations.move.worker_ms.samples, 2);
+assert.equal(report.pending, 0);
+assert.throws(() => new WorkerLatency({capacity:0}), RangeError);
+assert.throws(() => new WorkerLatency({pendingLimit:0}), RangeError);
+console.log('Bounded worker latency profiling tests passed.');
