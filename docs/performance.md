@@ -125,3 +125,11 @@ field-only JSON writes through the real physics and camera adapters. Run
 `node scripts/benchmark_lua_field.mjs` to compare the Lua/JavaScript side
 with an in-memory transport. Both are CPU microbenchmarks; they do not measure
 rendering, collision processing, or frame rate.
+
+
+## Camera lens decoding benchmark
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-scene --example lens_decode_bench` to compare decoding the
+transient camera lens from cloned and borrowed JSON values. The benchmark
+isolates CPU decoding; it does not measure rendering.

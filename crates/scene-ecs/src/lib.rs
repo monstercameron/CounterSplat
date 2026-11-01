@@ -10,6 +10,7 @@ mod voxel;
 
 use countersplat_ecs::{ComponentAdapter, Entity, Value, World};
 use countersplat_scene::{ComponentStorage, LevelAssets, SceneManifest, Skybox, SkyboxSnapshot};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 
 pub const SKYBOX_COMPONENT: &str = "Skybox";
@@ -119,7 +120,7 @@ pub fn instantiate_layers(
                 ));
             }
             if name == "LevelAssets" {
-                let level: LevelAssets = serde_json::from_value(value.clone())
+                let level = LevelAssets::deserialize(value)
                     .map_err(|error| format!("entity `{}` LevelAssets: {error}", item.id))?;
                 level
                     .validate()
@@ -132,7 +133,7 @@ pub fn instantiate_layers(
                 }
             }
             if name == SKYBOX_COMPONENT {
-                let sky: Skybox = serde_json::from_value(value.clone())
+                let sky = Skybox::deserialize(value)
                     .map_err(|error| format!("entity `{}` Skybox: {error}", item.id))?;
                 sky.validate()
                     .map_err(|error| format!("entity `{}` Skybox: {error}", item.id))?;

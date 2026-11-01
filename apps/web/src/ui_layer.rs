@@ -13,6 +13,7 @@ use countersplat_ui::{
 use countersplat_ui_ecs::UiLayout;
 use countersplat_ui_ecs::{apply_events, extract, register, update_frame_counters};
 use countersplat_ui_wgpu::{UiRenderer, UiTarget};
+use serde::Deserialize;
 use std::time::Duration;
 
 /// Only controls changed by the user are sent back to the scene owner.
@@ -349,7 +350,7 @@ impl SceneUi {
         // Lua owns transitions between profiles. Ignore malformed transient
         // values and fall back to the validated standard lens.
         if let Some(value) = self.world.get_dynamic_resource("camera.render_lens") {
-            if let Ok(lens) = serde_json::from_value::<CameraLens>(value.clone()) {
+            if let Ok(lens) = CameraLens::deserialize(value) {
                 if lens.validate().is_ok() {
                     return Ok(lens);
                 }

@@ -20,6 +20,7 @@ countersplat-ui-wgpu.workspace = true
 countersplat-assets.workspace = true
 countersplat-physics.workspace = true
 countersplat-render.workspace = true
+serde = "1"
 serde_json.workspace = true
 wgpu.workspace = true
 

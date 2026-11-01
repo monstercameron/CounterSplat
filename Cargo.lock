@@ -503,6 +503,7 @@ version = "0.1.0"
 dependencies = [
  "countersplat-ecs",
  "countersplat-scene",
+ "serde",
  "serde_json",
 ]
 
@@ -600,6 +601,7 @@ dependencies = [
  "countersplat-ui-ecs",
  "countersplat-ui-wgpu",
  "js-sys",
+ "serde",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",

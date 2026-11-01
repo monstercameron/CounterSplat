@@ -9,4 +9,5 @@ description = "ECS adapters for CounterSplat scene components"
 [dependencies]
 countersplat-ecs.workspace = true
 countersplat-scene.workspace = true
+serde = "1"
 serde_json.workspace = true
