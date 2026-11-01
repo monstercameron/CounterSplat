@@ -62,12 +62,14 @@ local function encode(value, seen, depth, count)
 end
 local function decode(value)
     if type(value) ~= "table" then return value end
-    local result = {}
+    -- Each response owns its freshly transferred entry tables, so decode them
+    -- in place instead of copying every object and array a second time.
+    local result = value.entries
     if value.kind == "array" then
         arrays[result] = true
-        for i, item in ipairs(value.entries) do result[i] = decode(item) end
+        for i, item in ipairs(result) do result[i] = decode(item) end
     elseif value.kind == "object" then
-        for key, entry in pairs(value.entries) do result[key] = decode(entry) end
+        for key, entry in pairs(result) do result[key] = decode(entry) end
     else
         error("invalid ECS bridge value")
     end

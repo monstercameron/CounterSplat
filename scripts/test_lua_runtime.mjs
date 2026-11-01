@@ -97,6 +97,7 @@ runGameplay();
 assert.deepEqual(game.drain('engine.scene'), [{action:'replace', scene:'level_selector'}]);
 world.components.set('entity', new Map([['Health', 50], ['Nullable', null], ['__proto__', 'safe'], ['Stats', Object.assign(Object.create(null), {hp:10, keep:true})]]));
 world.resources.set('special-keys', JSON.parse('{"__proto__":{"items":[{},[],null]},"constructor":"safe","kind":"user","entries":"data"}'));
+world.resources.set('nested-roundtrip', JSON.parse('{"rows":[{"name":"original","enabled":false},[],null],"empty":{},"empty_list":[],"zero":0}'));
 game.vm.doStringSync(`
   local count = select('#', pcall(function() return 1, nil, 3 end))
   assert(count == 4)
@@ -142,6 +143,15 @@ game.vm.doStringSync(`
   assert(special.__proto__.items[1] ~= nil and #special.__proto__.items[2] == 0)
   assert(special.__proto__.items[3] == ecs.null)
   assert(special.constructor == 'safe' and special.kind == 'user' and special.entries == 'data')
+  local first = ecs.get_resource('nested-roundtrip')
+  local second = ecs.get_resource('nested-roundtrip')
+  first.rows[1].name = 'changed'
+  first.rows[2][1] = 'added'
+  first.empty.key = true
+  first.empty_list[1] = false
+  assert(second.rows[1].name == 'original' and #second.rows[2] == 0)
+  assert(second.empty.key == nil and #second.empty_list == 0 and second.rows[3] == ecs.null)
+  ecs.set_resource('nested-changed', first)
 `);
 game.vm.doStringSync(`
   ecs.set_resource('roundtrip', {items = ecs.array(), marker = ecs.null, nested = {1, 2}})
@@ -158,6 +168,13 @@ game.vm.doStringSync(`
   assert(not pcall(function() ecs.set_resource('bad', cycle) end))
 `);
 assert.deepEqual(world.resources.get('again'), {items:[], marker:null, nested:[1, 2]});
+assert.deepEqual(world.resources.get('nested-changed'), {
+  rows:[{name:'changed',enabled:false},['added'],null], empty:{key:true}, empty_list:[false], zero:0,
+});
+assert.deepEqual(world.resources.get('nested-roundtrip'), {
+  rows:[{name:'original',enabled:false},[],null], empty:{}, empty_list:[], zero:0,
+});
+
 game.close();
 
 // Exercise every scalar-only wrapper and compare the requests received by the host.
