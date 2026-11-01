@@ -75,9 +75,9 @@ It does not include Lua, JavaScript, or rendering costs.
 ## Event dispatch benchmark
 
 Run `node scripts/benchmark_event_dispatch.mjs` to compare repeated empty
-channel checks with ordered batched checks. The fixture measures host-side JSON
-transport only; use the browser profiler to measure the actual Rust/WASM path
-and event handlers.
+channel checks, ordered batched checks, and pre-encoded immutable channel lists.
+The fixture measures host-side JSON transport only; use the browser profiler to
+measure the actual Rust/WASM path and event handlers.
 
 Run `cargo run --locked --release --target-dir .artifacts/target -p
 countersplat-ecs --example event_bench` to compare event burst and drain costs.

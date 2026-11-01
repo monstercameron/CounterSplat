@@ -1,6 +1,6 @@
 // Browser host: both the selector and gameplay render directly to the WebGPU canvas.
 import init, { Selector, Viewer } from '/pkg/countersplat_web.js';
-import { LuaScene } from '/lua_runtime.js';
+import { LuaScene, EventChannels } from '/lua_runtime.js';
 import { VoxelRuntime } from '/pkg/voxel_runtime.js';
 import { MouseCapture } from '/pkg/mouse_capture.js';
 import { GameplayMouseButtons, GameplayFireButton } from '/pkg/mouse_buttons.js';
@@ -156,16 +156,16 @@ function savePlayerControls(settings) {
   try { localStorage.setItem(playerControlsKey, JSON.stringify(settings)); }
   catch (error) { console.warn('Could not save player controls:', error); }
 }
-const gameplayEventChannels = ['input.key', 'input.mouse_delta', 'input.mouse_button', 'input.reset',
+const gameplayEventChannels = new EventChannels(['input.key', 'input.mouse_delta', 'input.mouse_button', 'input.reset',
   'ui.action', 'editor.entity_selected', 'physics.ready', 'physics.ground_result',
   'physics.clearance_result', 'physics.trace_result', 'physics.motion_resolved', 'physics.motion_error',
   'physics.collision', 'physics.error', 'weapon.trigger', 'weapon.aim', 'weapon.reload',
-  'weapon.equip', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.posture'];
-const tickEventChannels = ['weapon.shot', 'weapon.dry_fire', 'projectile.spawned',
-  'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death'];
-const outputChannels = ['player.controls_changed', 'camera.lens_changed', 'camera.zoom_lens_changed',
-  'camera.controller_changed', 'image.correction_changed', 'first_person.frame'];
-const trailingOutputChannels = ['projectile.visuals', 'player.rig_changed'];
+  'weapon.equip', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.posture']);
+const tickEventChannels = new EventChannels(['weapon.shot', 'weapon.dry_fire', 'projectile.spawned',
+  'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death']);
+const outputChannels = new EventChannels(['player.controls_changed', 'camera.lens_changed', 'camera.zoom_lens_changed',
+  'camera.controller_changed', 'image.correction_changed', 'first_person.frame']);
+const trailingOutputChannels = new EventChannels(['projectile.visuals', 'player.rig_changed']);
 const outputConsumers = [
   savePlayerControls, saveCameraLens, saveCameraZoomLens, saveCameraController, saveImageCorrection,
   frame => {

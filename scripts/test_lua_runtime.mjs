@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {Worker} from 'node:worker_threads';
-import {LuaScene} from '../preview/lua_runtime.js';
+import {LuaScene, EventChannels} from '../preview/lua_runtime.js';
 
 const require = createRequire(import.meta.url);
 const {LuaFactory} = require('../third_party/wasmoon/index.js');
@@ -392,6 +392,32 @@ assert.deepEqual(ordered.drain('earlier'), [{next:true}]);
 ordered.emit('first', {number:2}); ordered.emit('later', {keep:true});
 assert.throws(() => ordered.consumePending(channels, () => { throw new Error('consumer failed'); }), /consumer failed/);
 assert.deepEqual(ordered.drain('later'), [{keep:true}]);
+// Fixed channel lists use the same ordered, reentrant and failure semantics.
+const inputNames = ['earlier', 'first', 'later'];
+const fixedChannels = new EventChannels(inputNames);
+inputNames[1] = 'changed';
+assert.deepEqual(fixedChannels.names, ['earlier', 'first', 'later']);
+assert.throws(() => fixedChannels.names.push('other'), TypeError);
+assert.throws(() => new EventChannels(['ok', 1]), TypeError);
+assert.throws(() => new EventChannels(new Array(1)), TypeError);
+ordered.emit('first', {number:3});
+const fixedSeen = [];
+ordered.consumePending(fixedChannels, (index, events) => {
+  fixedSeen.push([fixedChannels.names[index], events]);
+  if (index === 1) ordered.emit('later', {same:true});
+});
+assert.deepEqual(fixedSeen, [['first', [{number:3}]], ['later', [{same:true}]]]);
+ordered.emit('first', {number:4}); ordered.emit('later', {keep:true});
+assert.throws(() => ordered.consumePending(fixedChannels, () => { throw new Error('fixed failure'); }), /fixed failure/);
+assert.deepEqual(ordered.drain('later'), [{keep:true}]);
+ordered.emit('first', {initial:true});
+ordered.dispatchPending(fixedChannels);
+assert.deepEqual(ordered.drain('seen'), [{name:'later'}]);
+ordered.dispatchPending(fixedChannels);
+assert.deepEqual(ordered.drain('seen'), [{name:'earlier'}, {name:'first'}]);
+const profiledChannels = new LuaScene(null, orderedWorld, 'gameplay', true);
+profiledChannels.consumePending(fixedChannels, () => {});
+assert.equal(profiledChannels.profileReport().operations.drain_next.count, 1);
 ordered.close();
 
 // Time spent inside an ECS host call must not exhaust a healthy Lua tick.

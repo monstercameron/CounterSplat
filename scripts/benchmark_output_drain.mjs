@@ -1,5 +1,5 @@
 import {performance} from 'node:perf_hooks';
-import {LuaScene} from '../preview/lua_runtime.js';
+import {LuaScene, EventChannels} from '../preview/lua_runtime.js';
 const names=['player.controls_changed','camera.lens_changed','camera.zoom_lens_changed',
  'camera.controller_changed','image.correction_changed','first_person.frame'];
 const frame={clip:'lowReady',index:5,motion_x:.002,motion_y:.003,motion_roll:.0002};
@@ -19,6 +19,7 @@ class Target {
   }
 }
 const target=new Target(),scene=new LuaScene(null,target,'gameplay');
+const fixed=new EventChannels(names);
 function full(){
   for(const name of names){const events=scene.drain(name); for(const event of events) if(!event.clip) throw new Error('bad event');}
 }
@@ -27,11 +28,16 @@ function next(){
     for(const event of events)if(!event.clip)throw new Error('bad event');
   });
 }
+function fixedNext(){
+  scene.consumePending(fixed, (_index, events) => {
+    for(const event of events)if(!event.clip)throw new Error('bad event');
+  });
+}
 function run(fn){
   const t=performance.now();
   for(let i=0;i<20000;i++){if(i%2===0)target.events.set('first_person.frame',[frame]);fn();}
   return performance.now()-t;
 }
-for(let i=0;i<3;i++){run(full);run(next);}
-const a=[],b=[];for(let i=0;i<11;i++){if(i%2){b.push(run(next));a.push(run(full))}else{a.push(run(full));b.push(run(next))}}
-a.sort((x,y)=>x-y);b.sort((x,y)=>x-y);console.log(JSON.stringify({frames:20000,with_frame_fraction:.5,full_ms:a[5],next_ms:b[5]}));
+for(let i=0;i<3;i++){run(full);run(next);run(fixedNext);}
+const a=[],b=[],c=[];for(let i=0;i<11;i++){if(i%2){c.push(run(fixedNext));b.push(run(next));a.push(run(full))}else{a.push(run(full));b.push(run(next));c.push(run(fixedNext))}}
+a.sort((x,y)=>x-y);b.sort((x,y)=>x-y);c.sort((x,y)=>x-y);console.log(JSON.stringify({frames:20000,with_frame_fraction:.5,full_ms:a[5],next_ms:b[5],fixed_ms:c[5]}));

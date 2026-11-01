@@ -315,6 +315,28 @@ function encodeResult(value) {
   return value;
 }
 
+// Immutable channel lists let a host reuse their serialized polling requests.
+// Ordinary arrays remain supported when callers need to change the list.
+export class EventChannels {
+  #names;
+  #requests = new Map();
+  constructor(names) {
+    if (!Array.isArray(names) || [...names].some(name => typeof name !== 'string'))
+      throw new TypeError('Event channels must be an array of strings');
+    this.#names = Object.freeze([...names]);
+  }
+  get names() { return this.#names; }
+  request(start) {
+    let encoded = this.#requests.get(start);
+    if (encoded === undefined) {
+      encoded = JSON.stringify({op:'drain_next', names:this.#names, start});
+      // Large, dynamically chosen channel lists cannot grow this cache without bound.
+      if (this.#requests.size < 64) this.#requests.set(start, encoded);
+    }
+    return encoded;
+  }
+}
+
 export class LuaScene {
   static async create(factory, target, layer, engineApi, scripts, profile = false) {
     const vm = await factory.createEngine({openStandardLibs: true, enableProxy: false,
@@ -409,14 +431,23 @@ export class LuaScene {
     try { return JSON.parse(this.target.ecs_operation(this.layer, JSON.stringify(op))); }
     finally { if (this.profile) this.recordProfile('operations', op.op, performance.now()-start); }
   }
+  // EventChannels requests have already been validated and encoded.
+  callEncoded(op, encoded) {
+    const start = this.profile ? performance.now() : 0;
+    try { return JSON.parse(this.target.ecs_operation(this.layer, encoded)); }
+    finally { if (this.profile) this.recordProfile('operations', op, performance.now()-start); }
+  }
   emit(name, value) { this.call({op: 'emit', name, value}); }
   drain(name) { return this.call({op: 'drain', name}).value; }
   // Drain and dispatch one channel at a time: a handler can emit an event for
   // a later channel and it will still be delivered in this pass.
-  dispatchPending(names) {
+  dispatchPending(channels) {
+    const fixed = channels instanceof EventChannels;
+    const names = fixed ? channels.names : channels;
     let start = 0;
     while (start < names.length) {
-      const batch = this.call({op: 'drain_next', names, start}).value;
+      const batch = (fixed ? this.callEncoded('drain_next', channels.request(start))
+                           : this.call({op:'drain_next', names, start})).value;
       if (batch === null) return;
       start = batch.index + 1;
       for (const event of batch.events) this.dispatch(names[batch.index], event);
@@ -424,10 +455,13 @@ export class LuaScene {
   }
   // Consume only the current channel before visiting the next. A consumer may
   // enqueue later channels, and an exception leaves those channels untouched.
-  consumePending(names, consume) {
+  consumePending(channels, consume) {
+    const fixed = channels instanceof EventChannels;
+    const names = fixed ? channels.names : channels;
     let start = 0;
     while (start < names.length) {
-      const batch = this.call({op: 'drain_next', names, start}).value;
+      const batch = (fixed ? this.callEncoded('drain_next', channels.request(start))
+                           : this.call({op:'drain_next', names, start})).value;
       if (batch === null) return;
       start = batch.index + 1;
       consume(batch.index, batch.events);
