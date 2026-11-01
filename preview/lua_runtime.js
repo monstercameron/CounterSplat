@@ -8,7 +8,7 @@ const BOOTSTRAP = `
 local call, call_flat = __ecs_call, __ecs_call_flat
 local call_changed, call_strings, query_one, get_pair = __ecs_call_changed, __ecs_call_strings, __ecs_query_one, __ecs_get_pair
 local set_scalar, set_vector = __ecs_set_scalar, __ecs_set_vector
-local set_pair, set_vector_pair = __ecs_set_pair, __ecs_set_vector_pair
+local set_pair, set_vector_pair, set_vector_triplet = __ecs_set_pair, __ecs_set_vector_pair, __ecs_set_vector_triplet
 local type, pairs, ipairs, next_key, raw_get, get_meta = type, pairs, ipairs, next, rawget, getmetatable
 local profile_now, profile_sample = __profile_now, __profile_sample
 local huge = math.huge
@@ -51,7 +51,7 @@ local function bounded(fn, ...)
     end
 end
 __ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings = nil, nil, nil, nil
-__ecs_query_one, __ecs_get_pair, __ecs_set_scalar, __ecs_set_vector, __ecs_set_pair, __ecs_set_vector_pair = nil, nil, nil, nil, nil, nil
+__ecs_query_one, __ecs_get_pair, __ecs_set_scalar, __ecs_set_vector, __ecs_set_pair, __ecs_set_vector_pair, __ecs_set_vector_triplet = nil, nil, nil, nil, nil, nil, nil
 __profile_now, __profile_sample = nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
@@ -199,24 +199,45 @@ function ecs.set_fields(id, name, fields)
         local first = next_key(fields)
         if type(first) == "string" and first ~= "__countersplat_array" then
             local second = next_key(fields, first)
-            if type(second) == "string" and second ~= "__countersplat_array" and next_key(fields, second) == nil then
+            if type(second) == "string" and second ~= "__countersplat_array" then
+                local third = next_key(fields, second)
                 local a, b = raw_get(fields, first), raw_get(fields, second)
                 local a_scalar, b_scalar = scalar_value(a), scalar_value(b)
-                if a_scalar and b_scalar then
-                    set_pair(id, name, first, a, second, b)
-                    return
-                end
-                if b_scalar then
-                    local x, y, z = vector3(a)
-                    if x ~= nil then
-                        set_vector_pair(id, name, first, x, y, z, second, b, true)
+                if third == nil then
+                    if a_scalar and b_scalar then
+                        set_pair(id, name, first, a, second, b)
                         return
                     end
-                end
-                if a_scalar then
-                    local x, y, z = vector3(b)
+                    if b_scalar then
+                        local x, y, z = vector3(a)
+                        if x ~= nil then
+                            set_vector_pair(id, name, first, x, y, z, second, b, true)
+                            return
+                        end
+                    end
+                    if a_scalar then
+                        local x, y, z = vector3(b)
+                        if x ~= nil then
+                            set_vector_pair(id, name, second, x, y, z, first, a, false)
+                            return
+                        end
+                    end
+                elseif type(third) == "string" and third ~= "__countersplat_array" and next_key(fields, third) == nil then
+                    -- An atomic vector plus two scalars is common for visual
+                    -- transforms. Keep original key order for host consumers.
+                    local c = raw_get(fields, third)
+                    local vector, other1, value1, other2, value2, position
+                    if b_scalar and scalar_value(c) then
+                        vector, other1, value1, other2, value2, position = a, second, b, third, c, 1
+                    elseif a_scalar and scalar_value(c) then
+                        vector, other1, value1, other2, value2, position = b, first, a, third, c, 2
+                    elseif a_scalar and b_scalar then
+                        vector, other1, value1, other2, value2, position = c, first, a, second, b, 3
+                    end
+                    local x, y, z = vector3(vector)
                     if x ~= nil then
-                        set_vector_pair(id, name, second, x, y, z, first, a, false)
+                        local key = position == 1 and first or (position == 2 and second or third)
+                        set_vector_triplet(id, name, key, x, y, z, other1, value1, other2, value2, position)
                         return
                     end
                 end
@@ -390,6 +411,15 @@ export class LuaScene {
         const fields = Object.create(null);
         if (vectorFirst) { fields[vector] = [x, y, z]; fields[other] = value; }
         else { fields[other] = value; fields[vector] = [x, y, z]; }
+        host.call({op:'set_fields', id, name, fields}, true);
+      });
+      vm.global.set('__ecs_set_vector_triplet', (id, name, vector, x, y, z, first, a, second, b, position) => {
+        const fields = Object.create(null);
+        if (position === 1) fields[vector] = [x, y, z];
+        fields[first] = a;
+        if (position === 2) fields[vector] = [x, y, z];
+        fields[second] = b;
+        if (position === 3) fields[vector] = [x, y, z];
         host.call({op:'set_fields', id, name, fields}, true);
       });
       if (profile) {

@@ -43,6 +43,8 @@ scene.vm.doStringSync(`
   local new_vector = ecs.array(); new_vector[1],new_vector[2],new_vector[3] = 1,2,3
   local old_fields = {velocity=old_vector, grounded=true}
   local new_fields = {velocity=new_vector, grounded=true}
+  local old_three = {view_offset=old_vector, view_bob_pitch=0.2, view_bob_roll=-0.1}
+  local new_three = {view_offset=new_vector, view_bob_pitch=0.2, view_bob_roll=-0.1}
   function benchmark_old_vector()
     for i=1,2000 do old_set('entity','PhysicsBody','velocity',old_vector) end
   end
@@ -55,6 +57,12 @@ scene.vm.doStringSync(`
   function benchmark_new_scalar()
     for i=1,2000 do ecs.set_field('entity','PlayerControls','enabled',false) end
   end
+  function benchmark_old_three()
+    for i=1,2000 do old_set_pair('entity','PlayerCamera',old_three) end
+  end
+  function benchmark_new_three()
+    for i=1,2000 do ecs.set_fields('entity','PlayerCamera',new_three) end
+  end
   function benchmark_old_pair()
     for i=1,2000 do old_set_pair('entity','PhysicsBody',old_fields) end
   end
@@ -62,7 +70,7 @@ scene.vm.doStringSync(`
     for i=1,2000 do ecs.set_fields('entity','PhysicsBody',new_fields) end
   end
 `);
-for (const kind of ['vector','scalar','pair']) {
+for (const kind of ['vector','scalar','pair','three']) {
   const fns = {old:scene.vm.global.get('benchmark_old_'+kind), current:scene.vm.global.get('benchmark_new_'+kind)};
   for (let i=0; i<3; i++) {fns.old(); fns.current();}
   const samples = {old:[], current:[]};

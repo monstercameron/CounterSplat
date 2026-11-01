@@ -122,7 +122,7 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
-  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil and __ecs_get_pair == nil and __ecs_set_scalar == nil and __ecs_set_vector == nil and __ecs_set_pair == nil and __ecs_set_vector_pair == nil)
+  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil and __ecs_get_pair == nil and __ecs_set_scalar == nil and __ecs_set_vector == nil and __ecs_set_pair == nil and __ecs_set_vector_pair == nil and __ecs_set_vector_triplet == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
@@ -151,6 +151,44 @@ game.vm.doStringSync(`
   ecs.set_fields('entity', 'Stats', {hp=30, optional=ecs.null})
   ecs.set_fields('entity', 'Stats', {position={7,8,9}, flag=true})
   ecs.set_fields('entity', 'Stats', {label='paired', ['__proto__']='paired-safe'})
+  -- Exercise the vector in each traversal position, including a reserved JS key.
+  local triple = {left=1, right=false, ['__proto__']='safe'}
+  local keys, key = {}, next(triple)
+  while key do keys[#keys+1], key = key, next(triple, key) end
+  for i=1,3 do
+    triple[keys[1]], triple[keys[2]], triple[keys[3]] = 1, false, 'safe'
+    triple[keys[i]] = {i, i+1, i+2}
+    ecs.set_fields('entity', 'Stats', triple)
+    local actual = ecs.get('entity', 'Stats')
+    assert(actual[keys[i]][1] == i and actual[keys[i]][3] == i+2)
+    for j=1,3 do if j ~= i then assert(actual[keys[j]] == triple[keys[j]]) end end
+  end
+  local marked = ecs.array(); marked[1], marked[2], marked[3] = 4, 5, 6
+  ecs.set_fields('entity', 'Stats', {triple_vector=marked, triple_a=true, triple_b='ok'})
+  local triple_proxy = setmetatable({a={1,2,3}, b=0, c=0}, {
+    __pairs = function() return next, {a={9,8,7}, b=2, c=3}, nil end
+  })
+  ecs.set_fields('entity', 'Stats', triple_proxy)
+  local triple_stats = ecs.get('entity', 'Stats')
+  assert(triple_stats.triple_vector[2] == 5 and triple_stats.triple_a and triple_stats.triple_b == 'ok')
+  assert(triple_stats.a[1] == 9 and triple_stats.b == 2 and triple_stats.c == 3)
+  local wrapped_vector = setmetatable({1,2,3}, {
+    __pairs = function() return next, {8,7,6}, nil end
+  })
+  ecs.set_fields('entity', 'Stats', {wrapped_vector=wrapped_vector, one=1, two=2})
+  ecs.set_fields('entity', 'Stats', {extra_vector={[1]=1,[2]=2,[3]=3,extra=4}, one=1, two=2})
+  ecs.set_fields('entity', 'Stats', {four_vector={1,2,3}, one=1, two=2, three=3})
+  ecs.set_fields('entity', 'Stats', {null_vector={1,2,3}, one=ecs.null, two=false})
+  triple_stats = ecs.get('entity', 'Stats')
+  assert(triple_stats.wrapped_vector[1] == 8 and triple_stats.extra_vector.extra == 4)
+  assert(triple_stats.four_vector[3] == 3 and triple_stats.three == 3)
+  assert(triple_stats.null_vector[2] == 2 and triple_stats.one == ecs.null and not triple_stats.two)
+  assert(not pcall(function() ecs.set_fields('entity', 'Stats', {__countersplat_array=true, one=1, two=2}) end))
+  local marked_fields = ecs.array(); marked_fields[1], marked_fields[2], marked_fields[3] = 1, 2, 3
+  assert(not pcall(function() ecs.set_fields('entity', 'Stats', marked_fields) end))
+  assert(not pcall(function() ecs.set_fields('entity', 'Stats', {x={1,2,3}, y=0/0, z=1}) end))
+  assert(not pcall(function() ecs.set_fields('entity', 'Missing', {x={1,2,3}, y=0, z=1}) end))
+  ecs.set_field('entity', 'Stats', '__proto__', 'paired-safe')
   local fields_proxy = setmetatable({hp=999, keep=false}, {
     __pairs = function() return next, {hp=30, keep=true}, nil end
   })
