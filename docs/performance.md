@@ -255,3 +255,8 @@ Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-ecs benchmark_streamed_single_query -- --ignored --nocapture
 --test-threads=1` to compare allocated and streamed one-component query
 responses across small and large dynamic stores. This excludes Lua and rendering.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-ecs benchmark_drain_next -- --ignored --nocapture --test-threads=1`
+to compare event-poll parsing and the full Rust bridge path. The benchmark
+excludes Lua callbacks, browser dispatch, and rendering.

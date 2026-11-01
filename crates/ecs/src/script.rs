@@ -162,6 +162,18 @@ impl AsRef<str> for RequestName<'_> {
     }
 }
 
+// The browser's fixed event-channel lists always send this field order. A
+// direct struct avoids buffering the internally tagged enum's other variants.
+#[derive(Deserialize)]
+struct FastDrainNext<'a> {
+    #[serde(rename = "op")]
+    _op: serde::de::IgnoredAny,
+    #[serde(borrow)]
+    names: Vec<RequestName<'a>>,
+    #[serde(default)]
+    start: usize,
+}
+
 #[derive(Serialize)]
 struct EventBatch {
     index: usize,
@@ -300,6 +312,14 @@ impl World {
         if request.len() > MAX_REQUEST_BYTES {
             return Err("ECS script request is too large".into());
         }
+        if request.starts_with(r#"{"op":"drain_next","#) {
+            let command: FastDrainNext =
+                serde_json::from_str(request).map_err(|e| e.to_string())?;
+            return script_result(
+                self.drain_next_events(&command.names, command.start)
+                    .map(|(index, events)| EventBatch { index, events }),
+            );
+        }
         let command: ScriptOperation = serde_json::from_str(request).map_err(|e| e.to_string())?;
         use ScriptOperation as S;
         use WorldOperation as O;
@@ -435,6 +455,155 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fast_drain_parser_matches_general_protocol_for_valid_and_invalid_requests() {
+        fn general(text: &str) -> Result<(Vec<String>, usize), String> {
+            match serde_json::from_str::<ScriptOperation<'_>>(text).map_err(|e| e.to_string())? {
+                ScriptOperation::DrainNext { names, start } => Ok((
+                    names.into_iter().map(|name| name.0.into_owned()).collect(),
+                    start,
+                )),
+                _ => Err("wrong operation".into()),
+            }
+        }
+        fn fast(text: &str) -> Result<(Vec<String>, usize), String> {
+            let value: FastDrainNext<'_> = serde_json::from_str(text).map_err(|e| e.to_string())?;
+            Ok((
+                value
+                    .names
+                    .into_iter()
+                    .map(|name| name.0.into_owned())
+                    .collect(),
+                value.start,
+            ))
+        }
+        for text in [
+            r#"{"op":"drain_next","names":[]}"#,
+            r#"{"op":"drain_next","names":["a","b"],"start":1}"#,
+            r#"{"op":"drain_next","names":["quoted\"name","\u00e9"],"start":0,"extra":{"x":[1,null]}}"#,
+            r#"{"op":"drain_next","names":["a"],"start":999999}"#,
+            r#"{"op":"drain_next","names":["a"],"start":-1}"#,
+            r#"{"op":"drain_next","names":["a"],"start":null}"#,
+            r#"{"op":"drain_next","names":[1]}"#,
+            r#"{"op":"drain_next","names":null}"#,
+            r#"{"op":"drain_next","start":0}"#,
+            r#"{"op":"drain_next","names":[],"names":[]}"#,
+            r#"{"op":"drain_next","names":[],"start":0,"start":1}"#,
+            r#"{"op":"drain_next","names":[],"op":"other"}"#,
+            r#"{"op":"drain_next","names":[],"extra":[}"#,
+        ] {
+            assert_eq!(general(text).ok(), fast(text).ok(), "{text}");
+        }
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_drain_next_parsing() {
+        use std::{hint::black_box, time::Instant};
+        let text = r#"{"op":"drain_next","names":["input.key","input.mouse_delta","input.mouse_button","input.reset","ui.action","editor.entity_selected","physics.ready","physics.ground_result","physics.clearance_result","physics.trace_result","physics.motion_resolved","physics.motion_error","physics.collision","physics.error","weapon.trigger","weapon.aim","weapon.reload","weapon.equip","weapon.mode","weapon.hit","weapon.die","weapon.posture"],"start":0}"#;
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..9 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let start = Instant::now();
+                for _ in 0..100_000 {
+                    if mode == 0 {
+                        black_box(
+                            serde_json::from_str::<ScriptOperation<'_>>(black_box(text)).unwrap(),
+                        );
+                    } else {
+                        black_box(
+                            serde_json::from_str::<FastDrainNext<'_>>(black_box(text)).unwrap(),
+                        );
+                    }
+                }
+                samples[mode].push(start.elapsed().as_nanos() as f64 / 100_000.0);
+            }
+        }
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        println!(
+            "drain-next parser: general {:.0} ns, direct {:.0} ns",
+            samples[0][4], samples[1][4]
+        );
+    }
+
+    #[test]
+    fn fast_and_general_drain_paths_preserve_order_and_later_events() {
+        let fast = r#"{"op":"drain_next","names":["early","hit","later"],"start":0}"#;
+        let general = r#"{"names":["early","hit","later"],"start":0,"op":"drain_next"}"#;
+        let mut a = World::new();
+        let mut b = World::new();
+        for world in [&mut a, &mut b] {
+            world.emit_event("hit", serde_json::json!(1));
+            world.emit_event("hit", serde_json::json!(2));
+            world.emit_event("later", serde_json::json!(3));
+        }
+        assert_eq!(
+            a.apply_script_json(fast).unwrap(),
+            b.apply_script_json(general).unwrap()
+        );
+        assert_eq!(a.drain_events("later"), b.drain_events("later"));
+        assert_eq!(
+            a.apply_script_json(fast).unwrap(),
+            b.apply_script_json(general).unwrap()
+        );
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_drain_next_bridge() {
+        use std::{hint::black_box, time::Instant};
+        let names = [
+            "input.key",
+            "input.mouse_delta",
+            "input.mouse_button",
+            "input.reset",
+            "ui.action",
+            "editor.entity_selected",
+            "physics.ready",
+            "physics.ground_result",
+            "physics.clearance_result",
+            "physics.trace_result",
+            "physics.motion_resolved",
+            "physics.motion_error",
+            "physics.collision",
+            "physics.error",
+            "weapon.trigger",
+            "weapon.aim",
+            "weapon.reload",
+            "weapon.equip",
+            "weapon.mode",
+            "weapon.hit",
+            "weapon.die",
+            "weapon.posture",
+        ];
+        let names_json = serde_json::to_string(&names).unwrap();
+        let fast = format!(r#"{{"op":"drain_next","names":{names_json},"start":0}}"#);
+        let general = format!(r#"{{"names":{names_json},"start":0,"op":"drain_next"}}"#);
+        let mut world = World::new();
+        assert_eq!(
+            world.apply_script_json(&fast).unwrap(),
+            world.apply_script_json(&general).unwrap()
+        );
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..9 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let request = if mode == 0 { &general } else { &fast };
+                let start = Instant::now();
+                for _ in 0..100_000 {
+                    black_box(world.apply_script_json(black_box(request)).unwrap());
+                }
+                samples[mode].push(start.elapsed().as_nanos() as f64 / 100_000.0);
+            }
+        }
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        println!(
+            "drain-next bridge: general {:.0} ns, direct {:.0} ns",
+            samples[0][4], samples[1][4]
+        );
+    }
 
     #[test]
     fn streamed_single_query_matches_allocated_query_json() {
