@@ -413,11 +413,15 @@ fn script_queries_and_liveness_match_world_operations() {
     world
         .register_serde_component::<Position>("Position")
         .unwrap();
+    world
+        .register_component_adapter("ReadOnlyHealth", ReadOnlyHealth)
+        .unwrap();
     let a = world.spawn();
     let b = world.spawn();
     let removed = world.spawn();
     world.insert(a, Position { x: 1.0, y: 2.0 }).unwrap();
     world.insert(b, Position { x: 3.0, y: 4.0 }).unwrap();
+    world.insert(a, 42u32).unwrap();
     world.set_dynamic(a, "quoted\"name", Value::Null).unwrap();
     world
         .set_dynamic(removed, "quoted\"name", json!(true))
@@ -431,6 +435,7 @@ fn script_queries_and_liveness_match_world_operations() {
     for names in [
         vec![],
         vec!["Position"],
+        vec!["ReadOnlyHealth"],
         vec!["quoted\"name"],
         vec!["Position", "quoted\"name"],
         vec!["Position", "Position"],
@@ -464,6 +469,10 @@ fn script_queries_and_liveness_match_world_operations() {
     }
     let invalid = json!({"op":"query", "components":["Missing",""]});
     assert!(world.apply_script_json(&invalid.to_string()).is_err());
+    let invalid_single = json!({"op":"query", "components":[""]});
+    assert!(world
+        .apply_script_json(&invalid_single.to_string())
+        .is_err());
 
     for (entity, alive) in [
         (a, true),

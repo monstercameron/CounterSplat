@@ -250,3 +250,8 @@ Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-ecs benchmark_empty_script_result -- --ignored --nocapture`
 to compare serialization of empty ECS bridge responses with the fixed wire
 response. This isolates response creation, not the complete bridge or frame.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-ecs benchmark_streamed_single_query -- --ignored --nocapture
+--test-threads=1` to compare allocated and streamed one-component query
+responses across small and large dynamic stores. This excludes Lua and rendering.

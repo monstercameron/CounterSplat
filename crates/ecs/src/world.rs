@@ -996,6 +996,35 @@ impl World {
         names.sort();
         Ok(names)
     }
+    /// Visits one script-visible component's entities in query order without
+    /// allocating a result list. Keep this behavior aligned with the
+    /// single-name branch of query_components, including custom adapters.
+    pub(crate) fn visit_component_entities(
+        &self,
+        name: &str,
+        mut visit: impl FnMut(Entity) -> Result<(), String>,
+    ) -> Result<(), String> {
+        validate_name(name)?;
+        if let Some(adapter) = self.adapters.get(name) {
+            if let Some(entities) = adapter.indexed_entities(self) {
+                for entity in entities {
+                    visit(entity)?;
+                }
+            } else {
+                for entity in self.iter_entities() {
+                    if adapter.contains(self, entity) {
+                        visit(entity)?;
+                    }
+                }
+            }
+        } else if let Some(store) = self.dynamic_components.get(name) {
+            for entity in store.keys().copied() {
+                visit(entity)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Matches all dynamic or registered typed component names; an empty list matches every live entity.
     pub fn query_components(&self, names: &[&str]) -> Result<Vec<Entity>, String> {
         // Validate every name even if an earlier component has no store.

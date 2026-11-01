@@ -134,6 +134,25 @@ fn script_components_result(
     String::from_utf8(output).map_err(|error| error.to_string())
 }
 
+// Stream one-component query IDs straight into the JSON response. This
+// avoids an intermediate Vec<Entity> and keeps adapter iteration order.
+fn script_single_query_result(world: &World, name: &str) -> Result<String, String> {
+    let mut output = Vec::with_capacity(128);
+    output.extend_from_slice(br#"{"found":true,"value":"#);
+    {
+        let mut serializer = serde_json::Serializer::new(&mut output);
+        let mut sequence = serializer.serialize_seq(None).map_err(|e| e.to_string())?;
+        world.visit_component_entities(name, |entity| {
+            sequence
+                .serialize_element(&ScriptEntityId(entity))
+                .map_err(|e| e.to_string())
+        })?;
+        sequence.end().map_err(|e| e.to_string())?;
+    }
+    output.push(b'}');
+    String::from_utf8(output).map_err(|error| error.to_string())
+}
+
 #[derive(Deserialize)]
 struct RequestName<'a>(#[serde(borrow)] Cow<'a, str>);
 
@@ -303,6 +322,9 @@ impl World {
                 if components.is_empty() {
                     return script_result(Some(ScriptEntities(self)));
                 }
+                if let [component] = components.as_slice() {
+                    return script_single_query_result(self, component.as_ref());
+                }
                 let names: Vec<&str> = components.iter().map(AsRef::as_ref).collect();
                 let entities = self.query_components(&names)?;
                 return script_result(Some(ScriptEntityList(&entities)));
@@ -413,6 +435,71 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streamed_single_query_matches_allocated_query_json() {
+        let mut world = World::new();
+        world.register_serde_component::<u32>("Typed").unwrap();
+        for index in 0..1536 {
+            let entity = world.spawn();
+            if index % 2 == 0 {
+                world.set_dynamic(entity, "Marker", Value::Null).unwrap();
+            }
+            if index % 3 == 0 {
+                world.insert(entity, index as u32).unwrap();
+            }
+        }
+        for name in ["Marker", "Typed", "Missing"] {
+            let expected = world.query_components(&[name]).unwrap();
+            let reference = script_result(Some(ScriptEntityList(&expected))).unwrap();
+            assert_eq!(script_single_query_result(&world, name).unwrap(), reference);
+        }
+        assert!(script_single_query_result(&world, "").is_err());
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_streamed_single_query() {
+        use std::{hint::black_box, time::Instant};
+        for size in [1usize, 1000, 10000] {
+            let mut world = World::new();
+            for _ in 0..size {
+                let entity = world.spawn();
+                world.set_dynamic(entity, "Marker", Value::Null).unwrap();
+            }
+            let iterations = if size == 1 {
+                100_000
+            } else if size == 1000 {
+                1000
+            } else {
+                100
+            };
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..9 {
+                for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                    let start = Instant::now();
+                    for _ in 0..iterations {
+                        let result = if mode == 0 {
+                            let names = vec![black_box("Marker")];
+                            let entities = world.query_components(&names).unwrap();
+                            script_result(Some(ScriptEntityList(&entities))).unwrap()
+                        } else {
+                            script_single_query_result(black_box(&world), black_box("Marker"))
+                                .unwrap()
+                        };
+                        black_box(result);
+                    }
+                    samples[mode].push(start.elapsed().as_nanos() as f64 / iterations as f64);
+                }
+            }
+            samples[0].sort_by(f64::total_cmp);
+            samples[1].sort_by(f64::total_cmp);
+            println!(
+                "entities={size} allocated_ns={:.0} streamed_ns={:.0}",
+                samples[0][4], samples[1][4]
+            );
+        }
+    }
 
     #[test]
     fn empty_script_results_match_serialization_and_keep_present_null_distinct() {
