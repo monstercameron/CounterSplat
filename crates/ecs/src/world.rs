@@ -1175,6 +1175,28 @@ impl World {
         names: &[S],
         start: usize,
     ) -> Option<(usize, Vec<Value>)> {
+        // Most polls have no queued event, or only one unrelated channel.
+        // Avoid a tree lookup per requested name in those common cases.
+        if self.events.is_empty() {
+            return None;
+        }
+        if self.events.len() <= 2 {
+            let mut queued = self.events.keys();
+            let first = queued.next().unwrap();
+            let second = queued.next();
+            let index = names
+                .iter()
+                .enumerate()
+                .skip(start)
+                .find_map(|(index, name)| {
+                    let name = name.as_ref();
+                    (name == first || second.is_some_and(|other| name == other)).then_some(index)
+                })?;
+            return self
+                .events
+                .remove(names[index].as_ref())
+                .map(|events| (index, Vec::from(events)));
+        }
         names
             .iter()
             .enumerate()
@@ -1492,5 +1514,119 @@ mod revision_tests {
         world.track_component_changes::<u32>();
         world.insert(entity, 2_u32).unwrap();
         assert_eq!(world.component_revision::<u32>(), None);
+    }
+}
+
+#[cfg(test)]
+mod event_poll_tests {
+    use super::*;
+
+    fn ordered(world: &mut World, names: &[&str], start: usize) -> Option<(usize, Vec<Value>)> {
+        names
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find_map(|(index, name)| {
+                world
+                    .events
+                    .remove(*name)
+                    .map(|events| (index, Vec::from(events)))
+            })
+    }
+    #[test]
+    fn sparse_poll_preserves_channel_order_and_unmatched_events() {
+        let names = ["a", "a", "b", "", "é"];
+        let queued = ["a", "b", "other", "", "é"];
+        for subset in 0..(1 << queued.len()) {
+            for start in 0..=names.len() + 2 {
+                let mut expected = World::new();
+                let mut actual = World::new();
+                for (i, name) in queued.iter().enumerate() {
+                    if subset & (1 << i) != 0 {
+                        expected.emit_event(name, Value::from(i));
+                        actual.emit_event(name, Value::from(i));
+                        expected.emit_event(name, Value::from(i + 10));
+                        actual.emit_event(name, Value::from(i + 10));
+                    }
+                }
+                assert_eq!(
+                    actual.drain_next_events(&names, start),
+                    ordered(&mut expected, &names, start)
+                );
+                assert_eq!(
+                    actual.events, expected.events,
+                    "subset {subset}, start {start}"
+                );
+            }
+        }
+    }
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_event_poll_sparse_queues() {
+        use std::{hint::black_box, time::Instant};
+        let names = [
+            "input.key",
+            "input.mouse_delta",
+            "input.mouse_button",
+            "input.reset",
+            "ui.action",
+            "editor.entity_selected",
+            "physics.ready",
+            "physics.ground_result",
+            "physics.clearance_result",
+            "physics.trace_result",
+            "physics.motion_resolved",
+            "physics.motion_error",
+            "physics.collision",
+            "physics.error",
+            "weapon.trigger",
+            "weapon.aim",
+            "weapon.reload",
+            "weapon.equip",
+            "weapon.mode",
+            "weapon.hit",
+            "weapon.die",
+            "weapon.posture",
+        ];
+        for (label, queued) in [
+            ("empty", vec![]),
+            ("unrelated", vec!["physics.move"]),
+            ("first", vec![names[0]]),
+            ("last", vec![names[21]]),
+            ("two late", vec![names[19], names[21]]),
+            ("two first", vec![names[0], names[1]]),
+            ("first and last", vec![names[0], names[21]]),
+            ("two unrelated", vec!["physics.move", "other"]),
+            ("many", names[..16].to_vec()),
+        ] {
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..9 {
+                for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                    let mut world = World::new();
+                    for name in &queued {
+                        world.emit_event(name, Value::from(1));
+                    }
+                    let start = Instant::now();
+                    for _ in 0..100_000 {
+                        let batch = if mode == 0 {
+                            ordered(&mut world, black_box(&names), 0)
+                        } else {
+                            world.drain_next_events(black_box(&names), 0)
+                        };
+                        if let Some((i, events)) = batch {
+                            world.emit_event(names[i], events.into_iter().next().unwrap());
+                        }
+                    }
+                    samples[mode].push(start.elapsed().as_nanos() as f64 / 100_000.0);
+                }
+            }
+            for sample in &mut samples {
+                sample.sort_by(f64::total_cmp);
+            }
+            println!(
+                "{label}: ordered {:.1} ns, adaptive {:.1} ns",
+                samples[0][4], samples[1][4]
+            );
+        }
     }
 }

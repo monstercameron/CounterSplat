@@ -153,6 +153,11 @@ measure the actual Rust/WASM path and event handlers.
 Run `cargo run --locked --release --target-dir .artifacts/target -p
 countersplat-ecs --example event_bench` to compare event burst and drain costs.
 
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-ecs --lib benchmark_event_poll_sparse_queues -- --ignored --nocapture
+--test-threads=1` to compare ordered and sparse event polling with empty,
+unrelated, matching, and busy queues. This is an isolated native ECS benchmark.
+
 ## UI layout benchmark
 
 Run `cargo run --locked --release --target-dir .artifacts/target -p
