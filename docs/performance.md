@@ -168,3 +168,7 @@ measures browser-host JSON and dispatch overhead without Rust or rendering.
 Run `node scripts/benchmark_lua_voxel_cache.mjs` to compare repeated
 voxel settings and status transfers with unchanged cached snapshots. This
 fixture measures Lua/JavaScript overhead, without Rust, collision, or rendering.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render benchmark_depth_uniform_packing -- --ignored --nocapture`
+to compare depth-sort uniform packing. This CPU microbenchmark excludes GPU work.

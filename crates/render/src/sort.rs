@@ -29,8 +29,10 @@ const PREFIX_SUM_SRC: &str = countersplat_shaders::radix::PREFIX_SUM;
 const DEPTH_KEYS_SRC: &str = include_str!("shaders/depth_keys.wgsl");
 const DRAW_ARGS_SRC: &str = include_str!("shaders/draw_args.wgsl");
 
-/// Bytes of the depth uniform: a `mat4x4f` followed by the splat count, padded to the WGSL struct size.
+/// WGSL depth uniform size, including alignment padding.
 const DEPTH_UNIFORM_SIZE: u64 = 240;
+// Payload excludes the WGSL struct's final 8 bytes of alignment padding.
+const DEPTH_UNIFORM_PAYLOAD: usize = 232;
 /// Crossfading ranges the depth-key pass can hold.
 const MAX_FADES: u32 = 8192;
 
@@ -91,15 +93,15 @@ pub struct DepthSorter {
     scan_levels: Vec<ScanLevel>,
     /// Final sorted indices live in `values[0]` after the last pass.
     values: [wgpu::Buffer; 2],
-    /// The `view_model` and `clip` the indices in `values[0]` were sorted for, bit for bit; `None` before the first sort.
-    sorted_for: std::cell::RefCell<Vec<u8>>,
+    /// Exact depth/cull inputs for the cached index order; None before the first sort.
+    sorted_for: std::cell::RefCell<Option<[u8; DEPTH_UNIFORM_PAYLOAD]>>,
     last_output: std::cell::RefCell<Option<wgpu::Buffer>>,
 }
 
 impl DepthSorter {
     /// Moving Gaussian centres invalidate the cached order even with an unchanged camera/model.
     pub fn invalidate(&self) {
-        self.sorted_for.borrow_mut().clear();
+        *self.sorted_for.borrow_mut() = None;
     }
     /// Builds every pipeline and bind group for `count` splats whose centres are in `centers`
     /// (`vec3f` per splat, tightly packed as `array<f32>`).
@@ -424,7 +426,7 @@ impl DepthSorter {
             0,
             &u32s(&[active.div_ceil(ELEMENTS_PER_WORKGROUP).max(1), active]),
         );
-        self.sorted_for.borrow_mut().clear();
+        *self.sorted_for.borrow_mut() = None;
     }
 
     /// Slot ranges crossfading, sorted by start and not overlapping: (first slot, one past the last, share drawn).
@@ -444,7 +446,7 @@ impl DepthSorter {
             queue.write_buffer(&self.fades, 0, &u32s(&data));
         }
         self.fade_count.set(fades.len() as u32);
-        self.sorted_for.borrow_mut().clear();
+        *self.sorted_for.borrow_mut() = None;
     }
 
     /// `draw_indirect` arguments for the splats in view (all of them before the first sort).
@@ -489,31 +491,9 @@ impl DepthSorter {
         let active = self.active.get();
         let bytes = u64::from(active.max(1)) * 4;
 
-        let mut uniform = f32s(view_model);
-        uniform.extend_from_slice(&f32s(clip));
-        match cutout {
-            Some((cut, view, model)) => {
-                let target = crate::camera::transform_point(view, cut.target);
-                uniform.extend_from_slice(&f32s(model));
-                uniform.extend_from_slice(&f32s(&[
-                    target[0],
-                    target[1],
-                    target[2],
-                    cut.splat_reach,
-                ]));
-                uniform.extend_from_slice(&f32s(&[
-                    cut.radius,
-                    cut.floor_y,
-                    cut.depth_margin,
-                    cut.soft.max(1.001),
-                ]));
-            }
-            None => uniform.extend_from_slice(&[0u8; 96]),
-        }
-        uniform.extend_from_slice(&active.to_le_bytes());
-        uniform.extend_from_slice(&self.fade_count.get().to_le_bytes());
+        let uniform = pack_depth_uniform(view_model, clip, cutout, active, self.fade_count.get());
         // Nothing changed since the last sort (an unchanged camera and scene): the order is still right.
-        if *self.sorted_for.borrow() == uniform {
+        if self.sorted_for.borrow().as_ref() == Some(&uniform) {
             self.metrics.borrow_mut().count("cache_hits", 1);
             if self.last_output.borrow().as_ref() != Some(output) {
                 encoder.copy_buffer_to_buffer(&self.values[0], 0, output, 0, bytes);
@@ -523,7 +503,7 @@ impl DepthSorter {
         }
         self.metrics.borrow_mut().count("sorts", 1);
         queue.write_buffer(&self.depth_uniform, 0, &uniform);
-        *self.sorted_for.borrow_mut() = uniform;
+        *self.sorted_for.borrow_mut() = Some(uniform);
 
         encoder.clear_buffer(&self.visible, 0, None);
         // Block sums past the active workgroups would hold a previous sort's counts; the scan reads all of them.
@@ -713,6 +693,184 @@ fn u32s(values: &[u32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
-fn f32s(values: &[f32]) -> Vec<u8> {
-    values.iter().flat_map(|v| v.to_le_bytes()).collect()
+// Match the WGSL layout exactly without allocating temporary byte vectors
+// for every matrix and cutout field on each submitted frame.
+fn pack_depth_uniform(
+    view_model: &Mat4,
+    clip: &Mat4,
+    cutout: Option<(&Cutout, &Mat4, &Mat4)>,
+    active: u32,
+    fade_count: u32,
+) -> [u8; DEPTH_UNIFORM_PAYLOAD] {
+    fn put_f32s(output: &mut [u8], offset: usize, values: &[f32]) {
+        for (dst, value) in output[offset..offset + values.len() * 4]
+            .chunks_exact_mut(4)
+            .zip(values)
+        {
+            dst.copy_from_slice(&value.to_le_bytes());
+        }
+    }
+    let mut bytes = [0; DEPTH_UNIFORM_PAYLOAD];
+    put_f32s(&mut bytes, 0, view_model);
+    put_f32s(&mut bytes, 64, clip);
+    if let Some((cut, view, model)) = cutout {
+        let target = crate::camera::transform_point(view, cut.target);
+        put_f32s(&mut bytes, 128, model);
+        put_f32s(
+            &mut bytes,
+            192,
+            &[target[0], target[1], target[2], cut.splat_reach],
+        );
+        put_f32s(
+            &mut bytes,
+            208,
+            &[
+                cut.radius,
+                cut.floor_y,
+                cut.depth_margin,
+                cut.soft.max(1.001),
+            ],
+        );
+    }
+    bytes[224..228].copy_from_slice(&active.to_le_bytes());
+    bytes[228..232].copy_from_slice(&fade_count.to_le_bytes());
+    bytes
+}
+
+#[cfg(test)]
+mod uniform_tests {
+    use super::*;
+
+    fn reference(
+        view_model: &Mat4,
+        clip: &Mat4,
+        cutout: Option<(&Cutout, &Mat4, &Mat4)>,
+        active: u32,
+        fade_count: u32,
+    ) -> Vec<u8> {
+        fn f32s(values: &[f32]) -> Vec<u8> {
+            values.iter().flat_map(|v| v.to_le_bytes()).collect()
+        }
+        let mut bytes = f32s(view_model);
+        bytes.extend_from_slice(&f32s(clip));
+        if let Some((cut, view, model)) = cutout {
+            let target = crate::camera::transform_point(view, cut.target);
+            bytes.extend_from_slice(&f32s(model));
+            bytes.extend_from_slice(&f32s(&[target[0], target[1], target[2], cut.splat_reach]));
+            bytes.extend_from_slice(&f32s(&[
+                cut.radius,
+                cut.floor_y,
+                cut.depth_margin,
+                cut.soft.max(1.001),
+            ]));
+        } else {
+            bytes.extend_from_slice(&[0; 96]);
+        }
+        bytes.extend_from_slice(&active.to_le_bytes());
+        bytes.extend_from_slice(&fade_count.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn packed_uniform_matches_previous_bytes_with_and_without_cutouts() {
+        let special = [
+            0.0,
+            -0.0,
+            1.0,
+            -123.5,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::from_bits(0x7fc0_1234),
+            f32::MIN_POSITIVE,
+        ];
+        for seed in 0..32 {
+            let view_model = std::array::from_fn(|i| special[(i + seed) % special.len()]);
+            let clip = std::array::from_fn(|i| special[(i * 3 + seed) % special.len()]);
+            let model = std::array::from_fn(|i| (i as f32 - seed as f32) * 0.03125);
+            let cut = Cutout {
+                target: [1.0, -2.0, 3.0],
+                radius: 0.75,
+                floor_y: -0.0,
+                depth_margin: 0.4,
+                soft: if seed % 2 == 0 { 0.5 } else { 2.5 },
+                splat_reach: 0.12,
+            };
+            for cutout in [None, Some((&cut, &model, &model))] {
+                let old = reference(
+                    &view_model,
+                    &clip,
+                    cutout,
+                    seed as u32,
+                    u32::MAX - seed as u32,
+                );
+                let new = pack_depth_uniform(
+                    &view_model,
+                    &clip,
+                    cutout,
+                    seed as u32,
+                    u32::MAX - seed as u32,
+                );
+                assert_eq!(old.as_slice(), new.as_slice());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_depth_uniform_packing() {
+        use std::{hint::black_box, time::Instant};
+        let matrix = crate::camera::IDENTITY;
+        let cut = Cutout {
+            target: [1.0, 2.0, -3.0],
+            radius: 1.0,
+            floor_y: 0.0,
+            depth_margin: 0.1,
+            soft: 1.5,
+            splat_reach: 0.2,
+        };
+        for (scenario, cutout) in [("normal", None), ("cutout", Some((&cut, &matrix, &matrix)))] {
+            let mut old_samples = Vec::new();
+            let mut new_samples = Vec::new();
+            for sample in 0..11 {
+                for old in if sample % 2 == 0 {
+                    [true, false]
+                } else {
+                    [false, true]
+                } {
+                    let start = Instant::now();
+                    for i in 0..300_000 {
+                        if old {
+                            black_box(reference(
+                                black_box(&matrix),
+                                black_box(&matrix),
+                                black_box(cutout),
+                                black_box(i),
+                                2,
+                            ));
+                        } else {
+                            black_box(pack_depth_uniform(
+                                black_box(&matrix),
+                                black_box(&matrix),
+                                black_box(cutout),
+                                black_box(i),
+                                2,
+                            ));
+                        }
+                    }
+                    let ns = start.elapsed().as_nanos() as f64 / 300_000.0;
+                    if old {
+                        old_samples.push(ns);
+                    } else {
+                        new_samples.push(ns);
+                    }
+                }
+            }
+            old_samples.sort_by(f64::total_cmp);
+            new_samples.sort_by(f64::total_cmp);
+            println!(
+                "{scenario} depth uniform: old {:.1} ns, new {:.1} ns",
+                old_samples[5], new_samples[5]
+            );
+        }
+    }
 }
