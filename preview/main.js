@@ -163,6 +163,33 @@ const gameplayEventChannels = ['input.key', 'input.mouse_delta', 'input.mouse_bu
   'weapon.equip', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.posture'];
 const tickEventChannels = ['weapon.shot', 'weapon.dry_fire', 'projectile.spawned',
   'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death'];
+const outputChannels = ['player.controls_changed', 'camera.lens_changed', 'camera.zoom_lens_changed',
+  'camera.controller_changed', 'image.correction_changed', 'first_person.frame'];
+const trailingOutputChannels = ['projectile.visuals', 'player.rig_changed'];
+const outputConsumers = [
+  savePlayerControls, saveCameraLens, saveCameraZoomLens, saveCameraController, saveImageCorrection,
+  frame => {
+    firstPersonFrames?.request(frame);
+    metrics.dataset.weapon = JSON.stringify({clip:frame.clip,index:frame.index,
+      motion_x:frame.motion_x,motion_y:frame.motion_y,motion_roll:frame.motion_roll});
+  },
+];
+function consumeGameplayOutput(index, events) {
+  for (const event of events) outputConsumers[index](event);
+}
+function consumeTrailingOutput(index, events) {
+  if (index === 1) {
+    for (const rig of events) savePlayerRig(currentLevel, rig);
+    return;
+  }
+  const snapshot = events[events.length - 1];
+  if (snapshot) {
+    const packed = [];
+    for (const segment of (snapshot.segments || []).slice(0, 256))
+      packed.push(...segment.start, ...segment.finish, segment.alpha);
+    active.set_projectile_traces(new Float32Array(packed));
+  }
+}
 function dispatchGameplayEvents(runtime) {
   runtime.dispatchPending(gameplayEventChannels);
 }
@@ -839,26 +866,9 @@ function tick(timestamp) {
               if (frameProfiler) stages.tick_events_ms = (stages.tick_events_ms || 0) + performance.now() - tickEventsStart;
             }
             const outputStart = frameProfiler ? performance.now() : 0;
-            for (const settings of runtime.drain('player.controls_changed')) savePlayerControls(settings);
-            for (const lens of runtime.drain('camera.lens_changed')) saveCameraLens(lens);
-            for (const lens of runtime.drain('camera.zoom_lens_changed')) saveCameraZoomLens(lens);
-            for (const controller of runtime.drain('camera.controller_changed')) saveCameraController(controller);
-            for (const grade of runtime.drain('image.correction_changed')) saveImageCorrection(grade);
-            for (const frame of runtime.drain('first_person.frame')) {
-              firstPersonFrames?.request(frame);
-              metrics.dataset.weapon = JSON.stringify({clip:frame.clip,index:frame.index,
-                motion_x:frame.motion_x,motion_y:frame.motion_y,motion_roll:frame.motion_roll});
-            }
+            runtime.consumePending(outputChannels, consumeGameplayOutput);
             firstPersonFrames?.update(timestamp);
-            let traceSnapshot = null;
-            for (const snapshot of runtime.drain('projectile.visuals')) traceSnapshot = snapshot;
-            if (traceSnapshot) {
-              const packed = [];
-              for (const segment of (traceSnapshot.segments || []).slice(0, 256))
-                packed.push(...segment.start, ...segment.finish, segment.alpha);
-              active.set_projectile_traces(new Float32Array(packed));
-            }
-            for (const rig of runtime.drain('player.rig_changed')) savePlayerRig(currentLevel, rig);
+            runtime.consumePending(trailingOutputChannels, consumeTrailingOutput);
             if (frameProfiler) stages.output_ms = performance.now() - outputStart;
             const voxelStart = frameProfiler ? performance.now() : 0;
             voxelRuntime?.tick(runtime, timestamp);

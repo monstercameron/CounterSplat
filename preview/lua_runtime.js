@@ -275,6 +275,17 @@ export class LuaScene {
       for (const event of batch.events) this.dispatch(names[batch.index], event);
     }
   }
+  // Consume only the current channel before visiting the next. A consumer may
+  // enqueue later channels, and an exception leaves those channels untouched.
+  consumePending(names, consume) {
+    let start = 0;
+    while (start < names.length) {
+      const batch = this.call({op: 'drain_next', names, start}).value;
+      if (batch === null) return;
+      start = batch.index + 1;
+      consume(batch.index, batch.events);
+    }
+  }
   run(dt) { this.runSystems(dt); }
   dispatch(name, payload) { this.dispatchEvent(name, payload); }
   close() { if (this.vm) { this.vm.global.close(); this.vm = null; } }

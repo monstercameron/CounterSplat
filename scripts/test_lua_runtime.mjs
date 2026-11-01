@@ -267,6 +267,23 @@ assert.deepEqual(ordered.drain('seen'), [{name:'later'}]);
 ordered.dispatchPending(['earlier', 'first', 'later']);
 assert.deepEqual(ordered.drain('seen'), [{name:'earlier'}, {name:'first'}]);
 assert.deepEqual(ordered.drain('later'), []);
+// Host output consumers obey the same ordering, including reentrant events.
+// A failing consumer must not remove later channels before they are processed.
+const channels = ['earlier', 'first', 'later'];
+const seen = [];
+ordered.emit('first', {number:1});
+ordered.consumePending(channels, (index, events) => {
+  seen.push([channels[index], events]);
+  if (index === 1) {
+    ordered.emit('earlier', {next:true});
+    ordered.emit('later', {same:true});
+  }
+});
+assert.deepEqual(seen, [['first', [{number:1}]], ['later', [{same:true}]]]);
+assert.deepEqual(ordered.drain('earlier'), [{next:true}]);
+ordered.emit('first', {number:2}); ordered.emit('later', {keep:true});
+assert.throws(() => ordered.consumePending(channels, () => { throw new Error('consumer failed'); }), /consumer failed/);
+assert.deepEqual(ordered.drain('later'), [{keep:true}]);
 ordered.close();
 
 // Time spent inside an ECS host call must not exhaust a healthy Lua tick.

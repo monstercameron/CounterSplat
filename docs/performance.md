@@ -160,3 +160,7 @@ Run `cargo run --locked --release --target-dir .artifacts/target -p
 countersplat-ecs --example dynamic_revision_bench` for dynamic reads and
 writes, and `node scripts/benchmark_lua_weapon_cache.mjs` for the
 first-person Lua/JavaScript transfer fixture. Neither measures GPU frame rate.
+
+Run `node scripts/benchmark_output_drain.mjs` to compare individual
+output-channel drains with ordered nonempty-channel consumption. The fixture
+measures browser-host JSON and dispatch overhead without Rust or rendering.
