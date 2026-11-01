@@ -67,6 +67,12 @@ pub enum WorldOperation {
         entity: Entity,
         name: String,
     },
+    /// Read one object field, distinguishing a missing field from JSON null.
+    ReadComponentField {
+        entity: Entity,
+        name: String,
+        field: String,
+    },
     /// Read only when an adapter's scoped content revision has changed.
     ReadComponentIfChanged {
         entity: Entity,
@@ -232,6 +238,13 @@ impl World {
             Op::ReadComponent { entity, name } => {
                 Ok(Out::Value(self.read_component_value(entity, &name)?))
             }
+            Op::ReadComponentField {
+                entity,
+                name,
+                field,
+            } => Ok(Out::Value(
+                self.read_component_field(entity, &name, &field)?,
+            )),
             Op::ReadComponentIfChanged {
                 entity,
                 name,

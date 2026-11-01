@@ -12,6 +12,7 @@ function directString(value, limit) {
 const BOOTSTRAP = `
 local call, call_flat = __ecs_call, __ecs_call_flat
 local call_changed, call_strings, query_one, get_pair = __ecs_call_changed, __ecs_call_strings, __ecs_query_one, __ecs_get_pair
+local get_field = __ecs_get_field
 local set_scalar, set_vector = __ecs_set_scalar, __ecs_set_vector
 local set_pair, set_vector_pair, set_vector_triplet = __ecs_set_pair, __ecs_set_vector_pair, __ecs_set_vector_triplet
 local emit_vector_triplet = __ecs_emit_vector_triplet
@@ -58,6 +59,7 @@ local function bounded(fn, ...)
 end
 __ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings = nil, nil, nil, nil
 __ecs_query_one, __ecs_get_pair, __ecs_set_scalar, __ecs_set_vector, __ecs_set_pair, __ecs_set_vector_pair, __ecs_set_vector_triplet = nil, nil, nil, nil, nil, nil, nil
+__ecs_get_field = nil
 __ecs_emit_vector_triplet = nil
 __profile_now, __profile_sample = nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
@@ -140,6 +142,14 @@ function ecs.query(components)
     return invoke("query", { components = components })
 end
 function ecs.get(id, name) return invoke_two_strings("get", "id", id, "name", name) end
+function ecs.get_field(id, name, field)
+    if type(id) == "string" and type(name) == "string" and type(field) == "string" then
+        local result = get_field(id, name, field)
+        if result ~= nil then return decode(result) end
+        return
+    end
+    return invoke("get_field", {id = id, name = name, field = field})
+end
 function ecs.get_if_changed(id, name, revision)
     if type(id) == "string" and type(name) == "string" and
         (revision == nil or type(revision) == "string") then
@@ -434,6 +444,13 @@ export class LuaScene {
         const result = host.call(request, true);
         return result.found ? encodeResult(result.value) : undefined;
       });
+      vm.global.set('__ecs_get_field', (id, name, field) => {
+        if (typeof host.target.ecs_get_field === 'function' && directString(id, 64) &&
+            directString(name, 256) && directString(field, 256)) return host.readField(id, name, field);
+        if (host.profile) host.profile.bridge_paths.field_json++;
+        const result = host.call({op:'get_field', id, name, field}, true);
+        return result.found ? encodeResult(result.value) : undefined;
+      });
       vm.global.set('__ecs_query_one', component => {
         const result = host.call({op:'query', components:[component]}, true);
         return result.found ? encodeResult(result.value) : undefined;
@@ -500,7 +517,7 @@ export class LuaScene {
     this.vm = vm; this.target = target; this.layer = layer;
     this.profile = profile ? {systems:Object.create(null), operations:Object.create(null),
       bridge_paths:{changed_direct:0, changed_json:0, alive_direct:0, has_direct:0,
-        resource_direct:0, resource_field_direct:0}} : null;
+        resource_direct:0, resource_field_direct:0, field_direct:0, field_json:0}} : null;
   }
   recordProfile(group, name, elapsed) {
     if (!this.profile || !Number.isFinite(elapsed) || elapsed < 0) return;
@@ -527,6 +544,14 @@ export class LuaScene {
       if (raw != null) { found = true; value = JSON.parse(raw); }
     } finally { if (this.profile) this.recordProfile('operations', op, performance.now()-start); }
     return found ? encodeResult(value) : undefined;
+  }
+  readField(id, name, field) {
+    const start = this.profile ? performance.now() : 0;
+    if (this.profile) this.profile.bridge_paths.field_direct++;
+    try {
+      const raw = this.target.ecs_get_field(this.layer, id, name, field);
+      return raw == null ? undefined : encodeResult(JSON.parse(raw));
+    } finally { if (this.profile) this.recordProfile('operations', 'get_field', performance.now()-start); }
   }
   readAlive(id) {
     const start = this.profile ? performance.now() : 0;

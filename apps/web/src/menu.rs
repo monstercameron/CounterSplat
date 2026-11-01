@@ -43,6 +43,14 @@ impl MenuUi {
     pub fn script_resource_field(&self, name: &str, field: &str) -> Result<Option<String>, String> {
         self.world.script_resource_field_json(name, field)
     }
+    pub fn script_component_field(
+        &self,
+        id: &str,
+        name: &str,
+        field: &str,
+    ) -> Result<Option<String>, String> {
+        self.world.script_component_field_json(id, name, field)
+    }
     pub fn script_entity_alive(&self, id: &str) -> Result<bool, String> {
         self.world.script_entity_alive(id)
     }

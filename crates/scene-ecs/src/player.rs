@@ -43,6 +43,28 @@ macro_rules! adapter {
                 world.insert(entity, component)
             }
             $(
+            fn read_field(&self, world: &World, entity: Entity, field: &str) -> Result<Option<Value>, String> {
+                if !matches!(field, $(stringify!($fast_field))|+) {
+                    return Ok(self.read(world, entity)?.and_then(|value| value.get(field).cloned()));
+                }
+                let Some(component) = world.get::<$component>(entity) else { return Ok(None); };
+                match field {
+                    $(stringify!($fast_field) => serde_json::to_value(&component.$fast_field)
+                        .map(Some).map_err(|error| error.to_string()),)+
+                    _ => unreachable!(),
+                }
+            }
+            fn write_field_json(&self, world: &World, entity: Entity, field: &str, output: &mut Vec<u8>) -> Result<bool, String> {
+                if !matches!(field, $(stringify!($fast_field))|+) {
+                    return countersplat_ecs::write_object_field_json_via_adapter(self, world, entity, field, output);
+                }
+                let Some(component) = world.get::<$component>(entity) else { return Ok(false); };
+                match field {
+                    $(stringify!($fast_field) => serde_json::to_writer(output, &component.$fast_field),)+
+                    _ => unreachable!(),
+                }.map_err(|error| error.to_string())?;
+                Ok(true)
+            }
             fn write_field(
                 &self,
                 world: &mut World,

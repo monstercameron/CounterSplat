@@ -30,6 +30,13 @@ class WorldFixture {
         value = components.get(op.name);
         break;
       }
+      case 'get_field': {
+        const component = (this.components.get(op.id) || new Map()).get(op.name);
+        found = component !== null && typeof component === 'object' && !Array.isArray(component) &&
+          Object.hasOwn(component, op.field);
+        value = found ? component[op.field] : null;
+        break;
+      }
       case 'set_fields': {
         const component = (this.components.get(op.id) || new Map()).get(op.name);
         if (component === null || typeof component !== 'object' || Array.isArray(component) ||
@@ -123,7 +130,7 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
-  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil and __ecs_get_pair == nil and __ecs_set_scalar == nil and __ecs_set_vector == nil and __ecs_set_pair == nil and __ecs_set_vector_pair == nil and __ecs_set_vector_triplet == nil and __ecs_emit_vector_triplet == nil)
+  assert(__ecs_get_field == nil and __ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil and __ecs_get_pair == nil and __ecs_set_scalar == nil and __ecs_set_vector == nil and __ecs_set_pair == nil and __ecs_set_vector_pair == nil and __ecs_set_vector_triplet == nil and __ecs_emit_vector_triplet == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
@@ -143,6 +150,14 @@ game.vm.doStringSync(`
   ecs.set_field('entity', 'Stats', 'velocity', vector)
   ecs.set_field('entity', 'Stats', 'flag', false)
   ecs.set_field('entity', 'Stats', 'label', 'safe')
+  assert(ecs.get_field('entity', 'Stats', 'hp') == 25)
+  assert(ecs.get_field('entity', 'Stats', 'optional') == ecs.null)
+  assert(ecs.get_field('entity', 'Stats', 'flag') == false)
+  assert(ecs.get_field('entity', 'Stats', 'position')[3] == 3.5)
+  assert(ecs.get_field('entity', 'Stats', 'missing') == nil)
+  assert(ecs.get_field('entity', 'Health', 'missing') == nil)
+  assert(select('#', ecs.get_field('entity', 'Stats', 'missing')) == 0)
+  assert(select('#', ecs.get_field('entity', 'Stats', 'optional')) == 1)
   local wrapped = setmetatable({1,2,3}, {__pairs=function() return next, {7,8,9}, nil end})
   ecs.set_field('entity', 'Stats', 'wrapped', wrapped)
   ecs.set_field('entity', 'Stats', 'object', {[1]=1, [2]=2, [3]=3, extra=4})
@@ -425,12 +440,12 @@ queryScene.close();
 // The scalar change-read path must behave like the JSON protocol, including
 // stale handles, mutations, request bounds, and unusual UTF-16 strings.
 const changedWorld = new WorldFixture({});
-changedWorld.components.set('entity', new Map([['Stats', {hp:10}], ['Nullable', null], ['False', false]]));
+changedWorld.components.set('entity', new Map([['Stats', {hp:10, nil:null, flag:false, items:[1,2]}], ['Nullable', null], ['False', false]]));
 changedWorld.resources.set('null-resource', null);
 changedWorld.resources.set('false-resource', false);
 changedWorld.resources.set('object-resource', {nil:null, value:false});
 let changedDirectCalls = 0, changedJsonCalls = 0, aliveDirectCalls = 0, hasDirectCalls = 0;
-let resourceDirectCalls = 0, fieldDirectCalls = 0;
+let resourceDirectCalls = 0, fieldDirectCalls = 0, componentFieldDirectCalls = 0;
 const changedTarget = {
   ecs_operation(layer, raw) { changedJsonCalls++; return changedWorld.ecs_operation(layer, raw); },
   ecs_get_resource(layer, name) {
@@ -441,6 +456,11 @@ const changedTarget = {
   ecs_get_resource_field(layer, name, field) {
     fieldDirectCalls++;
     const response = JSON.parse(changedWorld.ecs_operation(layer, JSON.stringify({op:'get_resource_field',name,field})));
+    return response.found ? JSON.stringify(response.value) : undefined;
+  },
+  ecs_get_field(layer, id, name, field) {
+    componentFieldDirectCalls++;
+    const response = JSON.parse(changedWorld.ecs_operation(layer, JSON.stringify({op:'get_field',id,name,field})));
     return response.found ? JSON.stringify(response.value) : undefined;
   },
   ecs_is_alive(layer, id) {
@@ -461,6 +481,14 @@ const changedScene = await LuaScene.create(factory, changedTarget, 'gameplay', e
 changedScene.vm.doStringSync(`
   assert(ecs.get('entity','Stats').hp == 10 and ecs.get('entity','False') == false)
   assert(ecs.get('entity','Nullable') == ecs.null and ecs.get('entity','Missing') == nil)
+  assert(ecs.get_field('entity','Stats','hp') == 10)
+  assert(ecs.get_field('entity','Stats','nil') == ecs.null)
+  assert(ecs.get_field('entity','Stats','flag') == false)
+  assert(ecs.get_field('entity','Stats','items')[2] == 2)
+  assert(ecs.get_field('entity','Stats','missing') == nil)
+  assert(ecs.get_field('entity','Stats',string.rep('x',257)) == nil)
+  local cycle = {}; cycle.self = cycle
+  assert(not pcall(function() ecs.get_field(cycle,'Stats','hp') end))
   assert(select('#',ecs.get('entity','Nullable')) == 1 and select('#',ecs.get('entity','Missing')) == 0)
   assert(ecs.get_resource('null-resource') == ecs.null and ecs.get_resource('false-resource') == false)
   assert(ecs.get_resource('missing') == nil)
@@ -497,6 +525,8 @@ assert.equal(changedScene.profileReport().bridge_paths.alive_direct, aliveDirect
 assert.equal(changedScene.profileReport().bridge_paths.has_direct, hasDirectCalls);
 assert.equal(changedScene.profileReport().bridge_paths.resource_direct, resourceDirectCalls);
 assert.equal(changedScene.profileReport().bridge_paths.resource_field_direct, fieldDirectCalls);
+assert.equal(changedScene.profileReport().bridge_paths.field_direct, componentFieldDirectCalls);
+assert(changedScene.profileReport().bridge_paths.field_json >= 1);
 if (typeof String.prototype.isWellFormed === 'function') assert(resourceDirectCalls > 0 && fieldDirectCalls > 0);
 assert(changedScene.profileReport().bridge_paths.changed_json >= 3);
 changedScene.close();

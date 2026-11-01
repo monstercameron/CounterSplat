@@ -141,8 +141,10 @@ ecs.system("camera.neural_controller", function(dt)
             if aiming then desired = desired * config.aim_tilt_scale end
             roll = roll + (desired - roll) * (1 - math.exp(-step * config.turn_tilt_response))
             if math.abs(rate) < 0.00002 and math.abs(roll) < 0.000002 then rate, roll = 0, 0 end
-            local camera = ecs.get(target, "PlayerCamera")
-            if camera.view_turn_roll ~= roll then
+            local current_roll = ecs.get_field(target, "PlayerCamera", "view_turn_roll")
+            -- Preserve custom cameras whose exposed object omits this field.
+            if current_roll == nil then current_roll = ecs.get(target, "PlayerCamera").view_turn_roll end
+            if current_roll ~= roll then
                 ecs.set_field(target, "PlayerCamera", "view_turn_roll", roll)
             end
         end

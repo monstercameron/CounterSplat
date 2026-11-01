@@ -154,6 +154,31 @@ pub trait ComponentAdapter: Send + Sync + 'static {
         serde_json::to_writer(output, &value).map_err(|error| error.to_string())?;
         Ok(true)
     }
+    /// Read one object field. Missing components and fields return None; a
+    /// present JSON null remains Some(Value::Null). Adapters may specialize
+    /// this while retaining the exact object exposed by `read`.
+    fn read_field(
+        &self,
+        world: &World,
+        entity: Entity,
+        field: &str,
+    ) -> Result<Option<Value>, String> {
+        Ok(self
+            .read(world, entity)?
+            .and_then(|value| value.get(field).cloned()))
+    }
+    /// Write one field in the same JSON representation as `write_json`.
+    /// The default extracts it from the adapter's serialized object, preserving
+    /// formatting-sensitive numeric values. On error output may be partial.
+    fn write_field_json(
+        &self,
+        world: &World,
+        entity: Entity,
+        field: &str,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        write_object_field_json_via_adapter(self, world, entity, field, output)
+    }
     /// Validates and writes a value; return an error to reject the operation.
     fn write(&self, world: &mut World, entity: Entity, value: Value) -> Result<(), String>;
     /// Updates one field of an existing object-valued component. The default
@@ -199,6 +224,27 @@ pub trait ComponentAdapter: Send + Sync + 'static {
     fn indexed_entities<'a>(&self, _world: &'a World) -> Option<EntityIndex<'a>> {
         None
     }
+}
+
+/// Extract a field from an adapter's ordinary JSON representation. Specialized
+/// adapters may call this for fields that do not have a faster implementation.
+pub fn write_object_field_json_via_adapter<A: ComponentAdapter + ?Sized>(
+    adapter: &A,
+    world: &World,
+    entity: Entity,
+    field: &str,
+    output: &mut Vec<u8>,
+) -> Result<bool, String> {
+    let mut component = Vec::new();
+    if !adapter.write_json(world, entity, &mut component)? {
+        return Ok(false);
+    }
+    let component: Value = serde_json::from_slice(&component).map_err(|error| error.to_string())?;
+    let Some(value) = component.get(field) else {
+        return Ok(false);
+    };
+    serde_json::to_writer(output, value).map_err(|error| error.to_string())?;
+    Ok(true)
 }
 
 /// Implements an adapter field write through its ordinary read/write API.
@@ -780,6 +826,28 @@ impl World {
             .map(Cow::into_owned))
     }
 
+    /// Reads one field from a script-visible object component. Missing fields
+    /// and components return None, while a present JSON null remains present.
+    pub fn read_component_field(
+        &self,
+        entity: Entity,
+        name: &str,
+        field: &str,
+    ) -> Result<Option<Value>, String> {
+        self.require_alive(entity)?;
+        validate_name(name)?;
+        if let Some(adapter) = self.adapters.get(name) {
+            adapter.read_field(self, entity, field)
+        } else {
+            Ok(self
+                .dynamic_components
+                .get(name)
+                .and_then(|store| store.get(&entity))
+                .and_then(|value| value.get(field))
+                .cloned())
+        }
+    }
+
     /// Reads a component without cloning dynamic values. Native adapters return
     /// owned values; dynamic values remain borrowed until this world is released.
     pub fn borrow_component_value(
@@ -819,6 +887,32 @@ impl World {
             .dynamic_components
             .get(name)
             .and_then(|store| store.get(&entity))
+        {
+            serde_json::to_writer(output, value).map_err(|error| error.to_string())?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Writes one component field using the same JSON representation as a
+    /// full component read. Returns false when the component or field is absent.
+    pub fn write_component_field_json(
+        &self,
+        entity: Entity,
+        name: &str,
+        field: &str,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        self.require_alive(entity)?;
+        validate_name(name)?;
+        if let Some(adapter) = self.adapters.get(name) {
+            adapter.write_field_json(self, entity, field, output)
+        } else if let Some(value) = self
+            .dynamic_components
+            .get(name)
+            .and_then(|store| store.get(&entity))
+            .and_then(|value| value.get(field))
         {
             serde_json::to_writer(output, value).map_err(|error| error.to_string())?;
             Ok(true)

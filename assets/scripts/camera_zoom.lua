@@ -64,8 +64,14 @@ ecs.on("ui.action", function(action)
 end)
 
 ecs.system("player.camera_zoom", function(dt)
-    local camera, controls = ecs.get(player, "PlayerCamera"), read_controls()
-    if not camera or not controls then return end
+    local current_view_fov, controls = ecs.get_field(player, "PlayerCamera", "view_fov_degrees"), read_controls()
+    if current_view_fov == nil then
+        -- A missing component still stops the system; a custom camera may
+        -- expose an object without the optional field.
+        local camera = ecs.get(player, "PlayerCamera")
+        if not camera or not controls then return end
+        current_view_fov = camera.view_fov_degrees
+    elseif not controls then return end
     dt = math.max(0, math.min(dt, 0.25))
     if dt == 0 then return end
     local target = held and controls.enabled and controls.zoom_factor or 1
@@ -79,9 +85,11 @@ ecs.system("player.camera_zoom", function(dt)
     local view_fov = ecs.null
     if magnification ~= 1 then
         -- Magnification is proportional to focal length, not to FOV angle.
-        view_fov = math.deg(2 * math.atan(math.tan(math.rad(camera.fov_degrees) / 2) / magnification))
+        local base_fov = ecs.get_field(player, "PlayerCamera", "fov_degrees")
+        if base_fov == nil then base_fov = ecs.get(player, "PlayerCamera").fov_degrees end
+        view_fov = math.deg(2 * math.atan(math.tan(math.rad(base_fov) / 2) / magnification))
     end
-    if camera.view_fov_degrees ~= view_fov then
+    if current_view_fov ~= view_fov then
         ecs.set_field(player, "PlayerCamera", "view_fov_degrees", view_fov)
     end
 end)

@@ -486,6 +486,21 @@ impl Viewer {
         }
         .map_err(js_error)
     }
+    /// Read one component field without encoding a JSON request.
+    pub fn ecs_get_field(
+        &self,
+        layer: &str,
+        id: &str,
+        name: &str,
+        field: &str,
+    ) -> Result<Option<String>, JsValue> {
+        match layer {
+            "gameplay" => self.ui.script_component_field(id, name, field),
+            "menu" => self.menu.script_component_field(id, name, field),
+            _ => Err("unknown script world".into()),
+        }
+        .map_err(js_error)
+    }
     /// Check a script-visible entity handle without a JSON request.
     pub fn ecs_is_alive(&self, layer: &str, id: &str) -> Result<bool, JsValue> {
         match layer {

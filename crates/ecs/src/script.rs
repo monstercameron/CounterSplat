@@ -86,6 +86,21 @@ fn script_component_result(world: &World, entity: Entity, name: &str) -> Result<
     String::from_utf8(output).map_err(|error| error.to_string())
 }
 
+fn script_component_field_result(
+    world: &World,
+    entity: Entity,
+    name: &str,
+    field: &str,
+) -> Result<String, String> {
+    let mut output = Vec::with_capacity(64);
+    output.extend_from_slice(br#"{"found":true,"value":"#);
+    if !world.write_component_field_json(entity, name, field, &mut output)? {
+        return script_result::<Value>(None);
+    }
+    output.push(b'}');
+    String::from_utf8(output).map_err(|error| error.to_string())
+}
+
 fn script_components_result(
     world: &World,
     entity: Entity,
@@ -243,6 +258,14 @@ enum ScriptOperation<'a> {
         #[serde(borrow)]
         name: Cow<'a, str>,
     },
+    GetField {
+        #[serde(borrow)]
+        id: Cow<'a, str>,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
+        #[serde(borrow)]
+        field: Cow<'a, str>,
+    },
     GetIfChanged {
         #[serde(borrow)]
         id: Cow<'a, str>,
@@ -366,6 +389,31 @@ impl World {
             .transpose()
     }
 
+    /// Read one component field without a request wrapper. JSON null is
+    /// returned as "null"; a missing field or component returns None.
+    pub fn script_component_field_json(
+        &self,
+        id: &str,
+        name: &str,
+        field: &str,
+    ) -> Result<Option<String>, String> {
+        if id
+            .len()
+            .saturating_add(name.len())
+            .saturating_add(field.len())
+            > MAX_REQUEST_BYTES
+        {
+            return Err("ECS script request is too large".into());
+        }
+        let mut output = Vec::with_capacity(32);
+        if !self.write_component_field_json(Entity::from_str(id)?, name, field, &mut output)? {
+            return Ok(None);
+        }
+        String::from_utf8(output)
+            .map(Some)
+            .map_err(|error| error.to_string())
+    }
+
     /// Check a script entity handle without encoding an intermediate request.
     pub fn script_entity_alive(&self, id: &str) -> Result<bool, String> {
         if id.len() > MAX_REQUEST_BYTES {
@@ -467,6 +515,9 @@ impl World {
             }
             S::Get { id, name } => {
                 return script_component_result(self, Entity::from_str(&id)?, &name);
+            }
+            S::GetField { id, name, field } => {
+                return script_component_field_result(self, Entity::from_str(&id)?, &name, &field);
             }
             S::GetIfChanged { id, name, revision } => {
                 return script_result(self.read_component_if_changed(
@@ -863,6 +914,66 @@ mod tests {
         compare(&mut world, "get_resource_field", "null", Some("nil"));
         let oversized = "x".repeat(MAX_REQUEST_BYTES + 1);
         compare(&mut world, "get_resource", &oversized, None);
+    }
+
+    #[test]
+    fn component_field_reads_match_json_protocol() {
+        fn compare(world: &mut World, id: &str, name: &str, field: &str) {
+            let request =
+                serde_json::json!({"op":"get_field", "id":id, "name":name, "field":field});
+            let json = world.apply_script_json(&request.to_string());
+            let direct = world.script_component_field_json(id, name, field);
+            match (json, direct) {
+                (Ok(json), Ok(direct)) => {
+                    let json: Value = serde_json::from_str(&json).unwrap();
+                    let direct = direct.map(|text| serde_json::from_str::<Value>(&text).unwrap());
+                    assert_eq!(json["found"], direct.is_some());
+                    assert_eq!(json["value"], direct.unwrap_or(Value::Null));
+                }
+                (Err(_), Err(_)) => {}
+                other => panic!("field protocol mismatch: {other:?}"),
+            }
+        }
+        let mut world = World::new();
+        let entity = world.spawn();
+        let id = entity.to_string();
+        world
+            .set_dynamic(
+                entity,
+                "café",
+                serde_json::json!({
+                    "nil":null, "flag":false, "array":[1,2], "__proto__":1, "quote\"":7
+                }),
+            )
+            .unwrap();
+        world
+            .set_dynamic(entity, "array", serde_json::json!([1, 2]))
+            .unwrap();
+        for field in [
+            "nil",
+            "flag",
+            "array",
+            "__proto__",
+            "quote\"",
+            "missing",
+            "",
+        ] {
+            compare(&mut world, &id, "café", field);
+        }
+        compare(&mut world, &id, "array", "0");
+        compare(&mut world, &id, "missing", "nil");
+        compare(&mut world, &id, "", "nil");
+        compare(&mut world, "bad", "café", "nil");
+        let foreign = World::new().spawn().to_string();
+        compare(&mut world, &foreign, "café", "nil");
+        world.despawn(entity);
+        compare(&mut world, &id, "café", "nil");
+        compare(
+            &mut world,
+            &"x".repeat(MAX_REQUEST_BYTES + 1),
+            "café",
+            "nil",
+        );
     }
 
     #[test]

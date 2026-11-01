@@ -60,6 +60,11 @@ fn scripting_worker_operates_on_a_separate_ecs_owner() {
         assert(not pcall(function() ecs.set_fields(root, "Position", patch_cycle) end))
         ecs.set_field(child, "Position", "marker", ecs.null)
         assert(ecs.get(root, "Position").y == 4 and ecs.get(child, "Position").marker == ecs.null)
+        assert(ecs.get_field(root, "Position", "y") == 4)
+        assert(ecs.get_field(child, "Position", "marker") == ecs.null)
+        assert(ecs.get_field(root, "Position", "missing") == nil)
+        assert(ecs.get_field(root, "Health", "missing") == nil)
+        assert(not pcall(function() ecs.get_field("bad", "Position", "y") end))
         assert(not pcall(function() ecs.set_field(root, "Health", "x", 1) end))
         assert(not pcall(function() ecs.set_field(root, "Position", "x", 0/0) end))
         local field_cycle = {}; field_cycle.self = field_cycle

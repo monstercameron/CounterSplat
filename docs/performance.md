@@ -9,7 +9,9 @@ frames to finish. Queue writes remain ordered with their submission; see the
 
 Lua still owns gameplay decisions. The physics step reuses data it already read,
 and `ecs.get_resource_field(name, field)` reads individual resource fields
-without copying whole maps while still observing runtime changes. The level and
+without copying whole maps while still observing runtime changes. Camera systems
+use `ecs.get_field(id, component, field)` to read individual component fields;
+typed adapters may optimize this, while other adapters use their regular read. The level and
 voxel panels fetch their controls only when their source settings
 change; the level panel also reuses revision-tracked settings between changes.
 The player controls panel skips unchanged widget writes while still
@@ -116,13 +118,15 @@ WebAssembly ECS fixture, without a GPU:
 cargo build --locked --release --target-dir .artifacts/target -p countersplat-ecs-wasm-bench --target wasm32-unknown-unknown
 wasm-bindgen --target web --out-dir .artifacts/ecs-wasm-bench/pkg --out-name ecs_bench .artifacts/target/wasm32-unknown-unknown/release/countersplat_ecs_wasm_bench.wasm
 node scripts/benchmark_lua_wasm_changed.mjs
+node scripts/benchmark_lua_wasm_field.mjs
 node scripts/benchmark_lua_wasm_values.mjs
 node scripts/benchmark_lua_wasm_events.mjs
 ```
 
 The fixture uses a tracked typed component and alternates both paths in the same
 Lua VM. It checks changes and stale handles, then reports the median of 21
-samples of unchanged, liveness, presence, and resource reads. The event fixture
+samples of unchanged, liveness, presence, and resource reads. The field fixture
+compares one scalar read with copying its whole typed component. The event fixture
 compares the cost of an empty split versus unsplit dispatch. These benchmarks
 exclude rendering and worker scheduling. The in-scene `?profile=1` report
 includes `lua.bridge_paths` counters so the chosen paths can be checked in a

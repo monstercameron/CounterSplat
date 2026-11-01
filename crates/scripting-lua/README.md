@@ -53,6 +53,10 @@ script handles them.
 - ecs.get(id, name), ecs.has(id, name), ecs.set(id, name, value), and
   ecs.remove(id, name) access dynamic components and registered Rust component
   adapters. get and remove return nil when the component is absent.
+- ecs.get_field(id, name, field) reads one field from an object-valued
+  component. Missing components, non-objects, and missing fields return nil;
+  a present JSON null remains ecs.null. Compound values are detached snapshots.
+  Adapters can optimize field reads while preserving their ordinary exposed data.
 - ecs.get_many(id, names) reads several components into a name-keyed table;
   missing components are omitted and JSON null remains ecs.null.
 - ecs.get_if_changed(id, name, revision_or_nil) returns nil when a tracked

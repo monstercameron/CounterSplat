@@ -500,6 +500,25 @@ fn install_ecs_api(lua: &Lua, bridge: &Bridge, order: &SystemOrder) -> mlua::Res
         lua,
         &api,
         bridge,
+        "get_field",
+        |lua, bridge, (id, name, field): (String, String, String)| {
+            maybe_value(
+                lua,
+                request(
+                    bridge,
+                    WorldOperation::ReadComponentField {
+                        entity: entity(id)?,
+                        name,
+                        field,
+                    },
+                )?,
+            )
+        },
+    )?;
+    bind(
+        lua,
+        &api,
+        bridge,
         "get_if_changed",
         |lua, bridge, (id, name, revision): (String, String, Option<String>)| {
             maybe_value(

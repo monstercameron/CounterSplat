@@ -21,6 +21,52 @@ impl ComponentAdapter for ControlsAdapter {
             .transpose()
             .map_err(|e| e.to_string())
     }
+    fn write_json(
+        &self,
+        world: &World,
+        entity: Entity,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        let Some(value) = world.get::<Controls>(entity) else {
+            return Ok(false);
+        };
+        serde_json::to_writer(output, value).map_err(|error| error.to_string())?;
+        Ok(true)
+    }
+    fn read_field(
+        &self,
+        world: &World,
+        entity: Entity,
+        field: &str,
+    ) -> Result<Option<Value>, String> {
+        if field != "speed" {
+            return Ok(self
+                .read(world, entity)?
+                .and_then(|value| value.get(field).cloned()));
+        }
+        world
+            .get::<Controls>(entity)
+            .map(|value| serde_json::to_value(value.speed).map_err(|e| e.to_string()))
+            .transpose()
+    }
+    fn write_field_json(
+        &self,
+        world: &World,
+        entity: Entity,
+        field: &str,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        if field != "speed" {
+            return countersplat_ecs::write_object_field_json_via_adapter(
+                self, world, entity, field, output,
+            );
+        }
+        let Some(value) = world.get::<Controls>(entity) else {
+            return Ok(false);
+        };
+        serde_json::to_writer(output, &value.speed).map_err(|error| error.to_string())?;
+        Ok(true)
+    }
     fn write(&self, world: &mut World, entity: Entity, value: Value) -> Result<(), String> {
         world.insert(
             entity,
@@ -90,6 +136,20 @@ impl BenchWorld {
     }
     pub fn set_speed(&mut self, value: f32) {
         self.world.get_mut::<Controls>(self.entity).unwrap().speed = value;
+    }
+    pub fn ecs_get_field(
+        &self,
+        layer: &str,
+        id: &str,
+        name: &str,
+        field: &str,
+    ) -> Result<Option<String>, JsValue> {
+        if layer != "gameplay" {
+            return Err(js_error("unknown script world"));
+        }
+        self.world
+            .script_component_field_json(id, name, field)
+            .map_err(js_error)
     }
     pub fn ecs_operation(&mut self, layer: &str, request: &str) -> Result<String, JsValue> {
         if layer != "gameplay" {
