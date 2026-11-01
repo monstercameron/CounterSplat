@@ -86,6 +86,7 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
+  assert(__ecs_call == nil and __ecs_call_flat == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
@@ -95,6 +96,15 @@ game.vm.doStringSync(`
   assert(not pcall(function() ecs.get(cycle, 'Health') end))
   assert(not pcall(function() ecs.get_resource_field('scene.entities', cycle) end))
   assert(not pcall(function() ecs.get_resource(0/0) end))
+  -- Replacing Lua globals must not let a nested value into the scalar-only callback.
+  local saved_type, saved_pairs = type, pairs
+  type = function() return 'string' end
+  local accepted_cycle = pcall(function() ecs.get(cycle, 'Health') end)
+  type = saved_type
+  assert(not accepted_cycle)
+  pairs = function() return function() return nil end end
+  assert(ecs.get('entity', 'Health') == 50)
+  pairs = saved_pairs
   local batch = ecs.get_many('entity', {'Health', 'Nullable', 'Missing', '__proto__'})
   assert(batch.Health == 50 and batch.Nullable == ecs.null and batch.Missing == nil)
   assert(batch.__proto__ == 'safe' and next(ecs.get_many('entity', {})) == nil)

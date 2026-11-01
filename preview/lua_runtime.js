@@ -5,7 +5,8 @@
 const INSTRUCTION_LIMIT = 10_000_000;
 const HOOK_INTERVAL = 1_000;
 const BOOTSTRAP = `
-local call = __ecs_call
+local call, call_flat = __ecs_call, __ecs_call_flat
+local type, pairs, ipairs = type, pairs, ipairs
 local profile_now, profile_sample = __profile_now, __profile_sample
 local set_hook, raw_pcall, raw_xpcall, raise, select_value =
     debug.sethook, pcall, xpcall, error, select
@@ -45,7 +46,7 @@ local function bounded(fn, ...)
         raise(result, 0)
     end
 end
-__ecs_call, __profile_now, __profile_sample = nil, nil, nil
+__ecs_call, __ecs_call_flat, __profile_now, __profile_sample = nil, nil, nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
     count.n = count.n + 1
@@ -82,7 +83,7 @@ end
 -- Keep the general encoder for arbitrary Lua values and invalid argument types.
 local function invoke_flat(op, args)
     args.op = op
-    local result = call(args)
+    local result = call_flat(args)
     if result.found then return decode(result.value) end
 end
 local function invoke_one_string(op, key, value)
@@ -207,6 +208,9 @@ export class LuaScene {
       vm.global.setMemoryMax(32 * 1024 * 1024);
       const host = new LuaScene(vm, target, layer, profile);
       vm.global.set('__ecs_call', request => { const result = host.call(request); return {found: result.found, value: encodeResult(result.value)}; });
+      // This callback is private to the bootstrap and accepts only internally
+      // constructed requests whose arguments have been checked as strings.
+      vm.global.set('__ecs_call_flat', request => { const result = host.call(request, true); return {found: result.found, value: encodeResult(result.value)}; });
       if (profile) {
         vm.global.set('__profile_now', () => performance.now());
         vm.global.set('__profile_sample', (name, elapsed) => host.recordProfile('systems', name, elapsed));
@@ -237,9 +241,9 @@ export class LuaScene {
     entry.count++; entry.total_ms += elapsed; entry.max_ms = Math.max(entry.max_ms, elapsed);
   }
   profileReport() { return this.profile; }
-  call(request) {
+  call(request, scalarOnly = false) {
     const start = this.profile ? performance.now() : 0;
-    const op = normalize(request);
+    const op = scalarOnly ? request : normalize(request);
     // An empty Lua table is ambiguous; a query explicitly expects a sequence.
     if (op.op === 'query' && !Array.isArray(op.components) && Object.keys(op.components || {}).length === 0) op.components = [];
     if (op.op === 'get_many' && !Array.isArray(op.names) && Object.keys(op.names || {}).length === 0) op.names = [];
