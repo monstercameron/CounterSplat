@@ -219,13 +219,19 @@ impl FrameHistory {
     /// Points for a line graph: x is seconds from the left edge of a rolling 60-second window,
     /// y is the slowest submitted-frame interval in milliseconds in that quarter-second bucket.
     pub fn points(&self, now: Duration) -> Vec<[f32; 2]> {
-        self.buckets
-            .iter()
-            .filter_map(|bucket| {
-                let age = now.checked_sub(bucket.at)?.as_secs_f32();
-                (age <= Self::WINDOW_SECONDS).then_some([Self::WINDOW_SECONDS - age, bucket.max_ms])
-            })
-            .collect()
+        let mut points = Vec::with_capacity(self.buckets.len());
+        self.write_points(now, &mut points);
+        points
+    }
+
+    /// Replace a caller-owned buffer with the current graph points, reusing its allocation.
+    pub fn write_points(&self, now: Duration, points: &mut Vec<[f32; 2]>) {
+        points.clear();
+        points.reserve(self.buckets.len());
+        points.extend(self.buckets.iter().filter_map(|bucket| {
+            let age = now.checked_sub(bucket.at)?.as_secs_f32();
+            (age <= Self::WINDOW_SECONDS).then_some([Self::WINDOW_SECONDS - age, bucket.max_ms])
+        }));
     }
 }
 
@@ -276,6 +282,13 @@ mod tests {
             history.record(Duration::from_millis(i * 100));
         }
         let points = history.points(Duration::from_secs(80));
+        let mut reused = vec![[999.0, 999.0]];
+        history.write_points(Duration::from_secs(80), &mut reused);
+        assert_eq!(reused, points);
+        let capacity = reused.capacity();
+        history.write_points(Duration::from_secs(80), &mut reused);
+        assert_eq!(reused.capacity(), capacity);
+        assert_eq!(reused, points);
         assert!(points.len() <= 241 && points.len() >= 238);
         assert!(points.iter().all(|point| (0.0..=60.0).contains(&point[0])));
         assert!(

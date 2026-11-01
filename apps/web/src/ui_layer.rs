@@ -47,6 +47,7 @@ pub struct SceneUi {
     graph_scale: Entity,
     frame_meter: FrameMeter,
     frame_history: FrameHistory,
+    graph_scale_cache: Option<(f32, String)>,
 }
 
 /// Resolve a configured UI role and check its widget type at startup.
@@ -266,6 +267,7 @@ impl SceneUi {
             graph_scale,
             frame_meter: FrameMeter::new(),
             frame_history: FrameHistory::new(),
+            graph_scale_cache: None,
         })
     }
 
@@ -503,23 +505,40 @@ impl SceneUi {
         }
     }
     fn refresh_graph(&mut self, now: Duration) {
-        let points = self.frame_history.points(now);
-        let peak = points.iter().map(|point| point[1]).fold(50.0_f32, f32::max);
-        let ceiling = (peak / 25.0).ceil() * 25.0;
-        if let Some(element) = self.world.get_mut::<UiElement>(self.graph) {
-            if let Widget::LineGraph {
-                points: current,
-                y_max,
+        let ceiling_for = |points: &[[f32; 2]]| {
+            let peak = points.iter().map(|point| point[1]).fold(50.0_f32, f32::max);
+            (peak / 25.0).ceil() * 25.0
+        };
+        let ceiling = match self.world.get_mut::<UiElement>(self.graph) {
+            Some(UiElement {
+                widget: Widget::LineGraph { points, y_max, .. },
                 ..
-            } = &mut element.widget
-            {
-                *current = points;
+            }) => {
+                self.frame_history.write_points(now, points);
+                let ceiling = ceiling_for(points);
                 *y_max = ceiling;
+                ceiling
             }
+            // A script may replace/remove the graph; keep the scale correct.
+            _ => ceiling_for(&self.frame_history.points(now)),
+        };
+        if self
+            .graph_scale_cache
+            .as_ref()
+            .is_none_or(|(old, _)| *old != ceiling)
+        {
+            self.graph_scale_cache = Some((ceiling, format!("0-{ceiling:.0} ms")));
         }
         if let Some(element) = self.world.get_mut::<UiElement>(self.graph_scale) {
             if let Widget::Text { text, .. } = &mut element.widget {
-                *text = format!("0-{ceiling:.0} ms");
+                let expected = &self
+                    .graph_scale_cache
+                    .as_ref()
+                    .expect("scale cache populated")
+                    .1;
+                if text != expected {
+                    text.clone_from(expected);
+                }
             }
         }
     }

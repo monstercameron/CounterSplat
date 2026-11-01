@@ -84,3 +84,9 @@ its separate per-script wall-clock deadline.
 
 Run `node scripts/benchmark_lua_tick.mjs` to compare the overhead of the
 browser Lua tick and its ECS bridge using a small fixture.
+
+## Frame-history benchmark
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-ui --example frame_history_bench` to compare fresh and reused
+buffers for a full minute of frame-time history.
