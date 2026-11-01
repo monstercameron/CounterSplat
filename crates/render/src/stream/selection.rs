@@ -83,3 +83,68 @@ pub(super) fn box_in_frustum(planes: &[[f32; 4]; 5], min: [f32; 3], max: [f32; 3
 pub(super) fn coarsest_available(lods: &[Option<Range>]) -> Option<usize> {
     (0..lods.len()).rev().find(|&l| lods[l].is_some())
 }
+
+/// Conservative intersection between a level leaf and a horizontal, forward-biased oval.
+/// The footprint is an ellipse extending `reach` ahead and `rear_fraction * reach` behind.
+/// Transforming its rectangle into ellipse space makes edge intersection exact in the ground plane.
+pub(super) fn forward_ellipse_intersects(
+    eye: [f32; 3],
+    forward: [f32; 3],
+    min: [f32; 3],
+    max: [f32; 3],
+    reach: f32,
+    rear_fraction: f32,
+    side_fraction: f32,
+    margin: f32,
+) -> bool {
+    let reach = reach.max(0.001);
+    let rear = rear_fraction.clamp(0.05, 1.0);
+    let side = side_fraction.clamp(0.05, 2.0);
+    let margin = margin.max(0.001);
+    let horizontal = (forward[0] * forward[0] + forward[2] * forward[2]).sqrt();
+    let direction = if horizontal > 0.00001 {
+        [forward[0] / horizontal, forward[2] / horizontal]
+    } else {
+        [0.0, -1.0]
+    };
+    let center = [
+        eye[0] + direction[0] * reach * (1.0 - rear) * 0.5,
+        eye[2] + direction[1] * reach * (1.0 - rear) * 0.5,
+    ];
+    let vertical = (min[1] - eye[1]).max(0.0).max(eye[1] - max[1]);
+    if vertical > reach * margin {
+        return false;
+    }
+    if center[0] >= min[0] && center[0] <= max[0] && center[1] >= min[2] && center[1] <= max[2] {
+        return true;
+    }
+    let along = reach * (1.0 + rear) * 0.5 * margin;
+    let across = reach * side * margin;
+    let project = |x: f32, z: f32| {
+        let dx = x - center[0];
+        let dz = z - center[1];
+        [
+            (dx * direction[0] + dz * direction[1]) / along,
+            (-dx * direction[1] + dz * direction[0]) / across,
+        ]
+    };
+    let corners = [
+        project(min[0], min[2]),
+        project(max[0], min[2]),
+        project(max[0], max[2]),
+        project(min[0], max[2]),
+    ];
+    (0..4).any(|i| {
+        let a = corners[i];
+        let b = corners[(i + 1) % 4];
+        let edge = [b[0] - a[0], b[1] - a[1]];
+        let length_sq = edge[0] * edge[0] + edge[1] * edge[1];
+        let t = if length_sq > 0.0 {
+            (-(a[0] * edge[0] + a[1] * edge[1]) / length_sq).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let closest = [a[0] + t * edge[0], a[1] + t * edge[1]];
+        closest[0] * closest[0] + closest[1] * closest[1] <= 1.0
+    })
+}

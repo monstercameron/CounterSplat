@@ -1,11 +1,14 @@
 //! Script-neutral ECS integration for scene layers.
 //!
 //! The ECS owner extracts owned snapshots; GPU resources and asset I/O remain in the host.
+mod level;
 mod loading;
+mod physics;
 mod player;
+mod voxel;
 
 use countersplat_ecs::{ComponentAdapter, Entity, Value, World};
-use countersplat_scene::{ComponentStorage, SceneManifest, Skybox, SkyboxSnapshot};
+use countersplat_scene::{ComponentStorage, LevelAssets, SceneManifest, Skybox, SkyboxSnapshot};
 use std::collections::BTreeMap;
 
 pub const SKYBOX_COMPONENT: &str = "Skybox";
@@ -37,6 +40,9 @@ impl ComponentAdapter for SkyboxAdapter {
 pub fn register(world: &mut World) -> Result<(), String> {
     world.register_component_adapter(SKYBOX_COMPONENT, SkyboxAdapter)?;
     player::register(world)?;
+    physics::register(world)?;
+    level::register(world)?;
+    voxel::register(world)?;
     loading::register(world)
 }
 
@@ -106,6 +112,19 @@ pub fn instantiate_layers(
                         "is not registered"
                     }
                 ));
+            }
+            if name == "LevelAssets" {
+                let level: LevelAssets = serde_json::from_value(value.clone())
+                    .map_err(|error| format!("entity `{}` LevelAssets: {error}", item.id))?;
+                level
+                    .validate()
+                    .map_err(|error| format!("entity `{}` LevelAssets: {error}", item.id))?;
+                if !manifest.resources.assets.contains_key(&level.source) {
+                    return Err(format!(
+                        "entity `{}` references missing level asset `{}`",
+                        item.id, level.source
+                    ));
+                }
             }
             if name == SKYBOX_COMPONENT {
                 let sky: Skybox = serde_json::from_value(value.clone())

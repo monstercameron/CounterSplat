@@ -97,6 +97,7 @@ impl Pipelines {
 
 /// A splat asset resident on the GPU, with its bind groups and sorter.
 pub struct GsplatScene {
+    device: wgpu::Device,
     color_groups: Vec<wgpu::BindGroup>,
     depth_groups: Vec<wgpu::BindGroup>,
     /// Uniform and storage buffers, keyed by the binding name from the tables.
@@ -460,6 +461,7 @@ fn assemble(
     );
 
     Ok(GsplatScene {
+        device: device.clone(),
         color_groups,
         depth_groups,
         buffers,
@@ -505,6 +507,83 @@ impl GsplatScene {
             u64::from(start) * 12,
             centres_le_bytes(centres).as_ref(),
         );
+        self.sorter.invalidate();
+    }
+
+    /// Relocates a pool range through GPU scratch space, including overlapping ranges.
+    /// The caller releases the vacated tail and updates its allocation bookkeeping.
+    pub(crate) fn move_slots(&self, queue: &wgpu::Queue, from: u32, to: u32, count: u32) {
+        if from == to || count == 0 {
+            return;
+        }
+        debug_assert!(from + count <= self.count && to + count <= self.count);
+        let scratch = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("stream compaction scratch"),
+            size: u64::from(count) * 12,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("stream compact"),
+            });
+        // Copy single rows so differently aligned source and destination ranges can share
+        // the same tightly packed scratch buffer without row-stride padding.
+        for name in ["quats", "scales", "sh0", "sh_labels"] {
+            let texture = &self.textures[name];
+            for (start, into_scratch) in [(from, true), (to, false)] {
+                let (mut slot, mut offset) = (start, 0u32);
+                while offset < count {
+                    let width = (self.splat_width - slot % self.splat_width).min(count - offset);
+                    let texture_copy = wgpu::TexelCopyTextureInfo {
+                        texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: slot % self.splat_width,
+                            y: slot / self.splat_width,
+                            z: 0,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    };
+                    let buffer_copy = wgpu::TexelCopyBufferInfo {
+                        buffer: &scratch,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: u64::from(offset) * 4,
+                            bytes_per_row: None,
+                            rows_per_image: None,
+                        },
+                    };
+                    let extent = wgpu::Extent3d {
+                        width,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    };
+                    if into_scratch {
+                        encoder.copy_texture_to_buffer(texture_copy, buffer_copy, extent);
+                    } else {
+                        encoder.copy_buffer_to_texture(buffer_copy, texture_copy, extent);
+                    }
+                    slot += width;
+                    offset += width;
+                }
+            }
+        }
+        encoder.copy_buffer_to_buffer(
+            &self.centers,
+            u64::from(from) * 12,
+            &scratch,
+            0,
+            u64::from(count) * 12,
+        );
+        encoder.copy_buffer_to_buffer(
+            &scratch,
+            0,
+            &self.centers,
+            u64::from(to) * 12,
+            u64::from(count) * 12,
+        );
+        queue.submit(Some(encoder.finish()));
         self.sorter.invalidate();
     }
 
@@ -858,6 +937,106 @@ impl Buffers<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn moving_overlapping_slots_preserves_centres_and_all_texture_streams() {
+        let Some((device, queue)) = crate::try_device() else {
+            return;
+        };
+        let pipelines = Pipelines::new(&device, crate::COLOR_FORMAT).unwrap();
+        let meta = sog::Meta {
+            count: 0,
+            means_mins: [-1.0; 3],
+            means_maxs: [1.0; 3],
+            scales_codebook: vec![0.0; 256],
+            sh0_codebook: vec![0.0; 256],
+            sh_n_codebook: vec![0.0; 256],
+            sh_n_count: 0,
+        };
+        let pool =
+            pool_with_centroid_rows(&device, &queue, &pipelines, &meta, 4096, 0.5, 1).unwrap();
+        let count = 300u32;
+        let from = 1900u32;
+        let to = 1770u32;
+        let centres: Vec<[f32; 3]> = (0..count).map(|i| [i as f32, -(i as f32), 1.0]).collect();
+        let streams: Vec<Vec<u8>> = (0..4u32)
+            .map(|stream| {
+                (0..count)
+                    .flat_map(|i| (stream * 10000 + i).to_le_bytes())
+                    .collect()
+            })
+            .collect();
+        let names = ["quats", "scales", "sh0", "sh_labels"];
+        let inputs: Vec<_> = names
+            .iter()
+            .zip(&streams)
+            .map(|(&name, data)| (name, data.as_slice()))
+            .collect();
+        pool.write_splats(&queue, from, &inputs, &centres);
+        pool.move_slots(&queue, from, to, count);
+
+        let row_bytes = u64::from(POOL_WIDTH) * 4;
+        let texture_bytes = row_bytes * 2;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("compaction readback"),
+            size: 4096 + 4 * texture_bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(
+            &pool.centers,
+            u64::from(to) * 12,
+            &readback,
+            0,
+            u64::from(count) * 12,
+        );
+        for (i, name) in names.iter().enumerate() {
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &pool.textures[*name],
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &readback,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 4096 + i as u64 * texture_bytes,
+                        bytes_per_row: Some(row_bytes as u32),
+                        rows_per_image: Some(2),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: POOL_WIDTH,
+                    height: 2,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        queue.submit(Some(encoder.finish()));
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        let bytes = slice.get_mapped_range().unwrap();
+        assert_eq!(
+            &bytes[..count as usize * 12],
+            centres_le_bytes(&centres).as_ref()
+        );
+        for (i, expected) in streams.iter().enumerate() {
+            let start = 4096 + i * texture_bytes as usize + to as usize * 4;
+            assert_eq!(
+                &bytes[start..start + expected.len()],
+                expected.as_slice(),
+                "{}",
+                names[i]
+            );
+        }
+    }
 
     #[test]
     fn centre_bytes_preserve_float_bits_and_little_endian_order() {

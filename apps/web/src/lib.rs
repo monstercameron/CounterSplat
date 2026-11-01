@@ -14,15 +14,15 @@ pub use selector::Selector;
 
 use countersplat_assets::{environment, lod::LodMeta, sog, viewer::CameraHint};
 use countersplat_core::{rate::Rate, scheduler::Scheduler, time::FixedClock};
-use countersplat_ecs::{Entity, World};
 use countersplat_render::{
     camera, env,
     scene::{self, GsplatScene, Pipelines, View},
-    stream::{LevelStream, StreamSettings},
+    stream::{DrawRegion, LevelStream, StreamSettings},
+    voxel_debug::VoxelDebug,
     worker_decode::StagedChunk,
     DEPTH_FORMAT,
 };
-use countersplat_scene::{SceneManifest, Skybox};
+use countersplat_scene::{LevelAssets, SceneManifest, Skybox};
 use countersplat_ui::{InputEvent, Modifiers, PointerButton};
 use js_sys::{Array, Uint8Array};
 use std::{
@@ -72,6 +72,7 @@ pub struct Viewer {
     pipelines: Pipelines,
     pool: GsplatScene,
     stream: LevelStream,
+    voxel_debug: VoxelDebug,
     scheduler: Scheduler,
     frame_limit: Option<u32>,
     pending_gpu: Arc<AtomicBool>,
@@ -87,8 +88,6 @@ pub struct Viewer {
     ui: ui_layer::SceneUi,
     menu: menu::MenuUi,
     menu_visible: bool,
-    scene_world: World,
-    skybox_entity: Entity,
     sky_assets: BTreeMap<String, env::Sky>,
     ui_css_width: f32,
 }
@@ -116,6 +115,7 @@ impl Viewer {
         capacity: u32,
         rotate_z_180: bool,
         retain_preloaded_chunks: bool,
+        level_assets_json: String,
     ) -> Result<Viewer, JsValue> {
         if capacity == 0 {
             return Err(js_error("streaming capacity must be positive"));
@@ -128,6 +128,14 @@ impl Viewer {
         let manifest = SceneManifest::from_json(&gameplay_json).map_err(js_error)?;
         let menu_manifest = SceneManifest::from_json(&menu_json).map_err(js_error)?;
         let meta = LodMeta::parse(&lod_json).map_err(js_error)?;
+        let level_assets: LevelAssets =
+            serde_json::from_str(&level_assets_json).map_err(js_error)?;
+        level_assets.validate().map_err(js_error)?;
+        if level_assets.lod_count as usize != meta.levels() {
+            return Err(js_error(
+                "level asset LOD count does not match the manifest",
+            ));
+        }
         let first = meta
             .leaves
             .first()
@@ -155,12 +163,24 @@ impl Viewer {
             .collect();
         let settings = StreamSettings {
             capacity,
-            max_distance_m: (size * 4.0).max(150.0),
+            max_distance_m: 150.0,
+            draw_region: DrawRegion::ForwardEllipse {
+                rear_fraction: 0.3,
+                side_fraction: 0.55,
+            },
+            fade_s: 0.8,
+            keep_s: 2.5,
+            near_lod0_m: 24.0,
+            center_lod0_m: 1000.0,
+            offscreen_keep_m: 12.0,
+            allow_fade_cuts: false,
+            // The browser has one serial decoder; keep it free to reprioritize as the player moves.
+            max_in_flight: 1,
             // Keep explicitly preloaded chunks available for the lifetime of this level.
             cache_chunks: if retain_preloaded_chunks {
                 metas.len()
             } else {
-                StreamSettings::default().cache_chunks
+                16
             },
             ..Default::default()
         };
@@ -223,6 +243,7 @@ impl Viewer {
         };
         surface.configure(&device, &config);
         let depth = depth_view(&device, width, height);
+        let voxel_debug = VoxelDebug::new(&device, surface_view_format);
         let pipelines = Pipelines::new(&device, surface_view_format).map_err(js_error)?;
         let rows = stream.palette_texture_rows(device.limits().max_texture_dimension_2d);
         let pool = scene::pool_with_centroid_rows(
@@ -238,32 +259,9 @@ impl Viewer {
         stream.init_pool(&pool, &queue);
         let mut ui =
             ui_layer::SceneUi::new(&device, surface_view_format, &manifest).map_err(js_error)?;
+        ui.set_level_assets(level_assets).map_err(js_error)?;
         let menu =
             menu::MenuUi::new(&device, surface_view_format, &menu_manifest).map_err(js_error)?;
-        let mut scene_world = World::new();
-        countersplat_scene_ecs::register(&mut scene_world).map_err(js_error)?;
-        let entities =
-            countersplat_scene_ecs::instantiate_layer(&mut scene_world, &manifest, "scene")
-                .map_err(js_error)?;
-        let sky_id = manifest
-            .resources
-            .values
-            .get("preview")
-            .and_then(|value| value.get("skybox_entity"))
-            .and_then(|value| value.as_str())
-            .ok_or_else(|| {
-                js_error("scene resource `preview.skybox_entity` must be an entity ID")
-            })?;
-        let skybox_entity = *entities.get(sky_id).ok_or_else(|| {
-            js_error(format!(
-                "skybox entity `{sky_id}` is missing from the scene layer"
-            ))
-        })?;
-        if !scene_world.has::<Skybox>(skybox_entity) {
-            return Err(js_error(format!(
-                "scene entity `{sky_id}` lacks a Skybox component"
-            )));
-        }
         let hint = CameraHint::from_json(&viewer_settings).ok();
         let center = [0, 1, 2].map(|axis| (min[axis] + max[axis]) * 0.5);
         let fallback_eye = [center[0], center[1] + size * 0.2, center[2] + size * 1.8];
@@ -310,6 +308,7 @@ impl Viewer {
             pipelines,
             pool,
             stream,
+            voxel_debug,
             scheduler: Scheduler::new(fixed, rate),
             frame_limit: None,
             pending_gpu: Arc::new(AtomicBool::new(false)),
@@ -325,8 +324,6 @@ impl Viewer {
             ui,
             menu,
             menu_visible: false,
-            scene_world,
-            skybox_entity,
             sky_assets: BTreeMap::new(),
             ui_css_width: width as f32,
         })
@@ -501,8 +498,8 @@ impl Viewer {
             return Err(js_error("skybox asset is not loaded"));
         }
         let skybox = self
-            .scene_world
-            .get_mut::<Skybox>(self.skybox_entity)
+            .ui
+            .skybox_mut()
             .ok_or_else(|| js_error("skybox entity is missing"))?;
         skybox.asset = asset;
         Ok(())
@@ -546,7 +543,7 @@ impl Viewer {
             self.missed_deadlines = self.missed_deadlines.saturating_add(plan.frame.missed);
         }
         let edits = self.ui.take_sky_edits();
-        if let Some(skybox) = self.scene_world.get_mut::<Skybox>(self.skybox_entity) {
+        let sky_settings = self.ui.skybox_mut().map(|skybox| {
             if let Some(value) = edits.enabled {
                 skybox.enabled = value;
             }
@@ -556,10 +553,12 @@ impl Viewer {
             if let Some(value) = edits.rotation_degrees {
                 skybox.rotation_degrees = value;
             }
-            self.ui
-                .show_sky_settings(skybox.enabled, skybox.exposure, skybox.rotation_degrees);
+            (skybox.enabled, skybox.exposure, skybox.rotation_degrees)
+        });
+        if let Some((enabled, exposure, rotation)) = sky_settings {
+            self.ui.show_sky_settings(enabled, exposure, rotation);
         }
-        let selected_sky = countersplat_scene_ecs::extract(&self.scene_world);
+        let selected_sky = self.ui.selected_sky();
         let seconds = (plan.total_ticks as f64 + f64::from(plan.simulation.alpha))
             * self.scheduler.tick_seconds();
         let angle = self.ui.angle(seconds);
@@ -592,6 +591,11 @@ impl Viewer {
         let local_target = camera::transform_point(&inverse, target);
         let local_direction = [0, 1, 2].map(|axis| local_target[axis] - local_eye[axis]);
         let clip = camera::mul(&view.projection, &camera::mul(&view.view, &view.model));
+        let level_lod = self.ui.level_lod().map_err(js_error)?;
+        self.stream.settings.max_distance_m = self.ui.level_draw_distance().map_err(js_error)?;
+        self.stream
+            .set_fixed_lod(level_lod.map(|lod| lod as usize))
+            .map_err(js_error)?;
         self.stream
             .set_focal_px(view.projection[5] * self.config.height as f32);
         self.stream
@@ -655,6 +659,10 @@ impl Viewer {
                 );
             }
             self.pool.draw_color(&mut pass, &self.pipelines);
+            if !self.menu_visible && self.ui.show_voxels() {
+                self.voxel_debug
+                    .draw(&self.queue, &mut pass, &view.view, &view.projection);
+            }
         }
         let pixels_per_point = (self.config.width as f32 / self.ui_css_width).clamp(0.25, 8.0);
         let ui_target = countersplat_ui_wgpu::UiTarget {
@@ -696,6 +704,16 @@ impl Viewer {
         self.ui.observe_frame(ui_submitted_at).map_err(js_error)?;
         self.submitted_frames = self.submitted_frames.saturating_add(1);
         Ok(true)
+    }
+
+    /// Install a bounded, world-space snapshot of occupied voxel centers for the debug overlay.
+    pub fn set_voxel_debug(&mut self, centers: Vec<f32>, size: f32) -> Result<(), JsValue> {
+        self.voxel_debug
+            .set(&self.queue, &centers, size)
+            .map_err(js_error)
+    }
+    pub fn clear_voxel_debug(&mut self) {
+        self.voxel_debug.clear();
     }
 
     /// Chunk folders requested by the streaming system, as JSON `[file, folder]` pairs.
@@ -746,7 +764,7 @@ impl Viewer {
     pub fn status(&self) -> String {
         let stats = self.stream.stats();
         let (ui_animate, ui_sway) = self.ui.values();
-        let skybox = self.scene_world.get::<Skybox>(self.skybox_entity);
+        let skybox = self.ui.skybox();
         let sky_loaded = skybox.is_some_and(|sky| self.sky_assets.contains_key(&sky.asset));
         let timing = self.ui.frame_measurement();
         let history_seconds = self.ui.history_seconds();
@@ -755,6 +773,15 @@ impl Viewer {
             "sky_asset": skybox.map(|sky| sky.asset.as_str()), "ui_history_seconds": history_seconds, "ui_frame_fps": timing.map(|value| value.fps), "ui_frame_ms": timing.map(|value| value.frame_time_ms),
             "ui_animate": ui_animate, "ui_sway": ui_sway, "ticks": self.total_ticks.to_string(), "submitted_frames": self.submitted_frames,
             "resident_splats": stats.resident_splats, "busy_skips": self.busy_skips,
+            "player_camera": self.ui.player_camera().ok(), "player_physics": self.ui.player_physics(), "player_rig": self.ui.player_rig(),
+            "level_lod": self.ui.level_lod().ok().flatten(), "level_asset_count": self.ui.level_file_count(),
+            "leaves_per_lod": stats.leaves_per_lod,
+            "octree_nodes": stats.octree_nodes, "lod_pending": stats.leaves_pending + stats.leaves_empty,
+            "lod_wanted_splats": stats.wanted_splats, "lod_active_slots": stats.active_slots,
+            "lod_free_slots": stats.free_slots, "lod_largest_free": stats.largest_free_range,
+            "lod_pending_details": self.stream.pending_details(8),
+            "lod_chunks_loaded": stats.chunks_loaded, "lod_chunks_in_flight": stats.chunks_in_flight,
+            "lod_fading": stats.fading, "lod_switches": stats.switches, "fade_cuts": stats.fades_cut, "hard_swaps": stats.hard_swaps,
             "missed_deadlines": self.missed_deadlines.to_string(), "discarded_ms": self.discarded_time.as_secs_f64() * 1000.0,
             "target_fps": self.frame_limit,
             "presentation": "browser_vsync",
@@ -772,6 +799,82 @@ fn ui_modifiers(mask: u8) -> Modifiers {
 }
 
 /// An HDR cubemap prepared on an asset worker for upload by the GPU owner.
+/// Worker-owned PlayCanvas voxel collision data; never stores GPU or ECS objects.
+#[wasm_bindgen]
+pub struct VoxelCollisionData {
+    inner: countersplat_physics::voxel_collision::VoxelCollider,
+}
+#[wasm_bindgen]
+impl VoxelCollisionData {
+    #[wasm_bindgen(constructor)]
+    pub fn new(metadata: Vec<u8>, data: Vec<u8>) -> Result<VoxelCollisionData, JsValue> {
+        let inner = countersplat_physics::voxel_collision::VoxelCollider::from_json_and_bin(
+            &metadata, &data,
+        )
+        .map_err(js_error)?;
+        Ok(Self { inner })
+    }
+    pub fn resolution(&self) -> f32 {
+        self.inner.resolution()
+    }
+    pub fn move_sphere(
+        &self,
+        position: Vec<f32>,
+        delta: Vec<f32>,
+        radius: f32,
+    ) -> Result<Vec<f32>, JsValue> {
+        let position: [f32; 3] = position
+            .try_into()
+            .map_err(|_| js_error("expected a 3D position"))?;
+        let delta: [f32; 3] = delta
+            .try_into()
+            .map_err(|_| js_error("expected a 3D movement"))?;
+        Ok(self
+            .inner
+            .move_sphere(position, delta, radius)
+            .map_err(js_error)?
+            .to_vec())
+    }
+    /// Probe voxel ground below a camera without moving the collider.
+    pub fn ground_height(
+        &self,
+        position: Vec<f32>,
+        sample_radius: f32,
+        max_drop: f32,
+    ) -> Result<JsValue, JsValue> {
+        let position: [f32; 3] = position
+            .try_into()
+            .map_err(|_| js_error("expected a 3D position"))?;
+        Ok(
+            match self
+                .inner
+                .ground_height(position, sample_radius, max_drop)
+                .map_err(js_error)?
+            {
+                Some(height) => JsValue::from_f64(f64::from(height)),
+                None => JsValue::NULL,
+            },
+        )
+    }
+    pub fn nearby(
+        &self,
+        position: Vec<f32>,
+        radius: f32,
+        limit: usize,
+    ) -> Result<Vec<f32>, JsValue> {
+        let position: [f32; 3] = position
+            .try_into()
+            .map_err(|_| js_error("expected a 3D position"))?;
+        Ok(self
+            .inner
+            .nearby_centers(position, radius, limit)
+            .map_err(js_error)?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+}
+
 #[wasm_bindgen]
 pub struct DecodedSkybox {
     size: u32,

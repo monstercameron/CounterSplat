@@ -2,7 +2,10 @@
 
 use crate::ui_layout::UiLayout;
 use countersplat_ecs::{Entity, World};
-use countersplat_scene::{PlayerCamera, PlayerControls, SceneManifest};
+use countersplat_scene::{
+    LevelAssets, LevelSettings, PhysicsBody, PlayerCamera, PlayerControls, PlayerRig,
+    SceneManifest, Skybox, SkyboxSnapshot, VoxelCollider, VoxelColliderState, VoxelStatus,
+};
 use countersplat_ui::{
     FrameCounter, FrameHistory, FrameMeasurement, FrameMeter, FrameUpdate, InputEvent, Rect,
     UiElement, UiEventKind, Widget,
@@ -24,6 +27,8 @@ pub struct SceneUi {
     renderer: UiRenderer,
     layout: UiLayout,
     player: Entity,
+    level: Entity,
+    skybox: Entity,
     viewport: Rect,
     animate: Entity,
     sway: Entity,
@@ -102,14 +107,62 @@ impl SceneUi {
         let mut world = World::new();
         register(&mut world)?;
         countersplat_scene_ecs::register(&mut world)?;
-        let entities =
-            countersplat_scene_ecs::instantiate_layers(&mut world, manifest, &["ui", "player"])?;
+        let entities = countersplat_scene_ecs::instantiate_layers(
+            &mut world,
+            manifest,
+            &["ui", "player", "level", "scene"],
+        )?;
         let player = *entities
             .get("player")
             .ok_or("gameplay scene needs a player entity")?;
         if !world.has::<PlayerCamera>(player) || !world.has::<PlayerControls>(player) {
             return Err("player entity needs PlayerCamera and PlayerControls".into());
         }
+        let level_id = manifest
+            .resources
+            .values
+            .get("preview")
+            .and_then(|value| value.get("level_entity"))
+            .and_then(|value| value.as_str())
+            .ok_or("preview.level_entity must name a level entity")?;
+        let level = *entities
+            .get(level_id)
+            .ok_or("gameplay scene needs the configured level entity")?;
+        let assets = world
+            .get::<LevelAssets>(level)
+            .ok_or("level entity needs LevelAssets")?;
+        if !world.has::<LevelSettings>(level)
+            || !manifest
+                .resources
+                .assets
+                .get(&assets.source)
+                .is_some_and(|asset| asset.kind == "sog_level")
+        {
+            return Err("level entity needs LevelSettings and a declared sog_level asset".into());
+        }
+        let sky_id = manifest
+            .resources
+            .values
+            .get("preview")
+            .and_then(|value| value.get("skybox_entity"))
+            .and_then(|value| value.as_str())
+            .ok_or("preview.skybox_entity must name a scene entity")?;
+        let skybox = *entities
+            .get(sky_id)
+            .ok_or("configured skybox entity is missing")?;
+        if !world.has::<Skybox>(skybox) {
+            return Err("configured skybox entity needs Skybox".into());
+        }
+        if !world.has::<PlayerRig>(player) {
+            world.insert(player, PlayerRig::default())?;
+        }
+        if !world.has::<PhysicsBody>(player) {
+            world.insert(player, PhysicsBody::default())?;
+        }
+        let default_rig =
+            serde_json::to_value(world.get::<PlayerRig>(player).expect("inserted player rig"))
+                .map_err(|error| error.to_string())?;
+        world.set_dynamic_resource("player.default_rig", default_rig);
         let default_controls = world
             .get::<PlayerControls>(player)
             .expect("checked player controls");
@@ -151,6 +204,8 @@ impl SceneUi {
             renderer: UiRenderer::new(device, format),
             layout,
             player,
+            level,
+            skybox,
             viewport: Rect::new(0.0, 0.0, 1.0, 1.0),
             animate,
             sway,
@@ -169,6 +224,62 @@ impl SceneUi {
             frame_meter: FrameMeter::new(),
             frame_history: FrameHistory::new(),
         })
+    }
+
+    /// Publish selected level references without moving asset bytes into the ECS world.
+    pub fn set_level_assets(&mut self, assets: LevelAssets) -> Result<(), String> {
+        assets.validate().map_err(str::to_owned)?;
+        let previous = self
+            .world
+            .get::<LevelAssets>(self.level)
+            .ok_or("level assets were removed")?;
+        if previous.source != assets.source {
+            return Err("level asset source does not match the scene".into());
+        }
+        self.world
+            .get::<LevelSettings>(self.level)
+            .ok_or("level settings were removed")?
+            .validate_for(&assets)
+            .map_err(str::to_owned)?;
+        self.world.insert(self.level, assets)
+    }
+    pub fn level_lod(&self) -> Result<Option<u32>, String> {
+        let assets = self
+            .world
+            .get::<LevelAssets>(self.level)
+            .ok_or("level assets were removed")?;
+        let settings = self
+            .world
+            .get::<LevelSettings>(self.level)
+            .ok_or("level settings were removed")?;
+        settings.validate_for(assets).map_err(str::to_owned)?;
+        Ok(settings.lod)
+    }
+    pub fn level_draw_distance(&self) -> Result<f32, String> {
+        let assets = self
+            .world
+            .get::<LevelAssets>(self.level)
+            .ok_or("level assets were removed")?;
+        let settings = self
+            .world
+            .get::<LevelSettings>(self.level)
+            .ok_or("level settings were removed")?;
+        settings.validate_for(assets).map_err(str::to_owned)?;
+        Ok(settings.draw_distance)
+    }
+    pub fn show_voxels(&self) -> bool {
+        self.world
+            .get::<VoxelCollider>(self.level)
+            .is_some_and(|settings| settings.enabled && settings.visible)
+            && self
+                .world
+                .get::<VoxelColliderState>(self.level)
+                .is_some_and(|state| state.status == VoxelStatus::Ready)
+    }
+    pub fn level_file_count(&self) -> usize {
+        self.world
+            .get::<LevelAssets>(self.level)
+            .map_or(0, |assets| assets.files.len())
     }
 
     /// Seed the player pose from the selected level and publish the reset position to Lua.
@@ -198,6 +309,22 @@ impl SceneUi {
             .ok_or("player camera was removed")?;
         camera.validate().map_err(str::to_owned)?;
         Ok(camera.clone())
+    }
+    pub fn skybox(&self) -> Option<&Skybox> {
+        self.world.get::<Skybox>(self.skybox)
+    }
+    pub fn skybox_mut(&mut self) -> Option<&mut Skybox> {
+        self.world.get_mut::<Skybox>(self.skybox)
+    }
+    pub fn selected_sky(&self) -> Option<SkyboxSnapshot> {
+        countersplat_scene_ecs::extract(&self.world)
+    }
+
+    pub fn player_rig(&self) -> Option<PlayerRig> {
+        self.world.get::<PlayerRig>(self.player).cloned()
+    }
+    pub fn player_physics(&self) -> Option<PhysicsBody> {
+        self.world.get::<PhysicsBody>(self.player).cloned()
     }
     pub fn mouse_look_enabled(&self) -> bool {
         self.world

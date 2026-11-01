@@ -17,3 +17,8 @@ python scripts/download_supersplat.py --verify-only
 
 The downloaded scene directories are excluded from version control; this README and the level catalog are tracked. Scene files remain subject to the applicable creator
 permissions and licenses. The greenhouse page identifies its license as CC BY 4.0; see its `source.json` for credit.
+
+A catalog entry may include `"player_units_per_meter": 1.2` to calibrate the player's initial
+size and movement against that scan. The allowed range is 0.5–2.5; omitted values use the
+gameplay scene default. This calibrates the player rig rather than changing the scan geometry.
+Users can adjust and save their own per-level value through **Player controls**.

@@ -24,7 +24,7 @@ ALLOWED = {
     "countersplat-physics": {"countersplat-assets"},
     "countersplat-render": {"countersplat-assets", "countersplat-shaders"},
     "countersplat-threaded-demo": {"countersplat-audio", "countersplat-audio-ecs", "countersplat-core", "countersplat-ecs", "countersplat-scripting-lua", "countersplat-runtime", "countersplat-physics", "countersplat-ui", "countersplat-ui-ecs", "countersplat-scene", "countersplat-scene-ecs"},
-    "countersplat-web": {"countersplat-core", "countersplat-assets", "countersplat-render", "countersplat-ecs", "countersplat-ui", "countersplat-ui-ecs", "countersplat-ui-wgpu", "countersplat-scene", "countersplat-scene-ecs"},
+    "countersplat-web": {"countersplat-core", "countersplat-assets", "countersplat-render", "countersplat-physics", "countersplat-ecs", "countersplat-ui", "countersplat-ui-ecs", "countersplat-ui-wgpu", "countersplat-scene", "countersplat-scene-ecs"},
     "countersplat-viewer": {"countersplat-core", "countersplat-assets", "countersplat-render", "countersplat-runtime", "countersplat-ecs", "countersplat-scene", "countersplat-scene-ecs"},
 }
 INCLUDE = re.compile(r'include_(?:str|bytes)!\s*\(\s*"([^"\n]+)"')

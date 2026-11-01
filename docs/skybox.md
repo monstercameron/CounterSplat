@@ -42,8 +42,8 @@ ecs.set(sky, "Skybox", settings)
 ```
 
 Invalid script writes return an error without replacing the previous value. The native Lua integration test runs
-this bridge against a real ECS world. The browser example owns its UI and scene worlds on the page thread and does
-not yet run the native Lua VM; a future host should bridge Lua to the same scene world.
+this bridge against a real ECS world. The browser uses its Lua 5.4 host against the shared gameplay ECS world,
+which includes scene, player, level, and UI entities.
 
 ## Asset and renderer contract
 

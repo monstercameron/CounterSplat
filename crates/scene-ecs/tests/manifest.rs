@@ -148,3 +148,18 @@ fn native_component_requires_an_adapter_and_resource_collisions_are_rejected() {
         true
     );
 }
+
+#[test]
+fn level_component_requires_a_declared_source_asset() {
+    let mut value = fixture();
+    value["component_types"]["LevelAssets"] = json!({"storage":"native"});
+    value["entities"].as_array_mut().unwrap().push(json!({
+        "id":"level", "layer":"scene", "components":{"LevelAssets":{"source":"missing"}}
+    }));
+    let mut world = World::new();
+    countersplat_scene_ecs::register(&mut world).unwrap();
+    let result =
+        countersplat_scene_ecs::instantiate_layer(&mut world, &parse(value).unwrap(), "scene");
+    assert!(result.unwrap_err().contains("missing level asset"));
+    assert!(world.is_empty());
+}

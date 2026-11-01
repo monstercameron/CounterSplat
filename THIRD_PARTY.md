@@ -28,3 +28,8 @@ Audio uses [Kira 0.12](https://github.com/tesselode/kira) (MIT or Apache-2.0), [
 Rust dependencies and their licenses are identified in `Cargo.lock` and their upstream packages.
 
 The browser Lua 5.4 runtime uses [Wasmoon 1.16.0](https://github.com/ceifa/wasmoon), MIT licensed; its distribution and license are in [third_party/wasmoon](third_party/wasmoon/). Lua is distributed under the MIT license by Lua.org, PUC-Rio.
+
+The sparse-voxel sphere collision and iterative push-out approach in `crates/physics/src/voxel_collision.rs`
+is adapted from [SuperSplat Viewer](https://github.com/playcanvas/supersplat-viewer), commit
+`06d1c880edc4756a0ccf0a9f03f90fd1182ef178`, Copyright (c) 2011-2026 PlayCanvas Ltd., MIT licensed;
+see [third_party/supersplat-viewer/LICENSE](third_party/supersplat-viewer/LICENSE).

@@ -5,4 +5,5 @@
 
 pub mod floor;
 pub mod voxel;
+pub mod voxel_collision;
 pub mod world;

@@ -468,6 +468,7 @@ version = "0.1.0"
 dependencies = [
  "countersplat-assets",
  "rapier3d",
+ "serde_json",
 ]
 
 [[package]]
@@ -591,6 +592,7 @@ dependencies = [
  "countersplat-assets",
  "countersplat-core",
  "countersplat-ecs",
+ "countersplat-physics",
  "countersplat-render",
  "countersplat-scene",
  "countersplat-scene-ecs",

@@ -26,9 +26,9 @@ The canvas streams a scan and supports a Lua-controlled free-flying player camer
 | `countersplat-assets` | SOG v2, level-of-detail metadata, sparse voxel octrees, and optional camera hints. |
 | `countersplat-shaders` | WGSL source catalogue, preprocessing, and Gaussian-splat shader composition. |
 | `countersplat-render` | GPU scene upload, depth sorting, streaming pools, camera math, and sky rendering. |
-| `countersplat-physics` | Game-neutral Rapier bodies and scan-derived floor and obstacle colliders. |
+| `countersplat-physics` | Game-neutral Rapier bodies and sparse voxel collision queries. |
 | `countersplat-viewer` | A native CLI with separate asset-loading and GPU-rendering workers. |
-| `countersplat-web` | Browser WebGPU canvas host with scan decoding in a Web Worker. |
+| `countersplat-web` | Browser WebGPU canvas host with scan decoding and voxel collision workers. |
 | `countersplat-threaded-demo` | A native ECS, Lua, and physics worker integration example. |
 
 Dependencies point toward the lower-level crates; no crate includes another crate's source files. See
@@ -37,7 +37,7 @@ Dependencies point toward the lower-level crates; no crate includes another crat
 worker design, current integration, and browser constraints. See [timing](docs/timing.md) for fixed ticks,
 frame deadlines, adaptive pacing, and host integration. See [UI](docs/ui.md) for controls, ECS/Lua hooks,
 frame counters, and the rendering contract. See [skyboxes](docs/skybox.md) for HDR assets, ECS selection,
-and host integration. See [audio](docs/audio.md) for layered mixing, stereo and ECS/Lua hooks. See [scene JSON](docs/scenes.md) for entity, component, asset, and script definitions, and [asset loading](docs/asset-loading.md) for preload policies and level transitions. The [4DGS research](docs/4dgs-research.md) records a proposed path for dynamic splat playback.
+and host integration. See [audio](docs/audio.md) for layered mixing, stereo and ECS/Lua hooks. See [scene JSON](docs/scenes.md) for entity, component, asset, and script definitions, [asset loading](docs/asset-loading.md) for preload policies and level transitions, and [level assets](docs/level-assets.md) for ECS inventory and LOD controls, and [entity physics](docs/entity-physics.md) for per-entity settings, collision and Lua exports. See [voxel collision](docs/voxel-collision.md) for the level collider and debug view. The [4DGS research](docs/4dgs-research.md) records a proposed path for dynamic splat playback.
 
 ## Build and test
 
@@ -116,14 +116,14 @@ it, or `--no-sky` to disable loading. The HDR is converted on the native asset w
 ## Live browser canvas
 
 The browser host opens an ECS level selector on the WebGPU canvas. Click a local level and press **Launch**;
-use **Levels** in gameplay to return to the selector. Use WASD, E/Q, and Left Shift to move, and drag the scene to
-look; see [player controls](docs/player-controls.md) for remapping and camera settings. The selector reads `assets/levels/catalog.json`,
+use **Levels** in gameplay to return to the selector. Use WASD, E/Q, Left Shift, and Space to move and jump.
+Click the scene for mouse look and press `~` to release it; where pointer lock is unavailable, drag to look. The Player controls panel tunes eye height and player scale per level; see [player controls](docs/player-controls.md). The selector reads `assets/levels/catalog.json`,
 `assets/scenes/level-selector.json`, and `assets/scenes/gameplay.json`.
 
 The in-canvas frame-pacing panel offers an optional
 FPS cap; its uncapped request cadence follows browser animation callbacks. The browser controls presentation and
 cannot provide true VSync off. Its fixed-step clock runs from animation callbacks;
-scene fetching and SOG decoding run in a Web Worker, and the renderer limits frames in flight. An ECS-owned UI
+scene fetching, SOG decoding, and voxel collision use browser workers, and the renderer limits frames in flight. An ECS-owned UI
 layer draws controls and a submitted-frame FPS / frame-time counter over the scan. A scene ECS skybox layer draws
 behind the splats; its HDR decode runs on a separate worker. Use the sky panel to change exposure or rotation, or
 drop a local Radiance `.hdr` file onto the canvas to replace the example. A WebGPU-capable

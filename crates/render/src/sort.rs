@@ -32,7 +32,7 @@ const DRAW_ARGS_SRC: &str = include_str!("shaders/draw_args.wgsl");
 /// Bytes of the depth uniform: a `mat4x4f` followed by the splat count, padded to the WGSL struct size.
 const DEPTH_UNIFORM_SIZE: u64 = 240;
 /// Crossfading ranges the depth-key pass can hold.
-const MAX_FADES: u32 = 1024;
+const MAX_FADES: u32 = 8192;
 
 /// A hole cut through the scene to keep a target visible: splats between the camera and `target` (world space),
 /// within `radius` metres of it on screen, are culled; the road (world height below `floor_y`) is kept.

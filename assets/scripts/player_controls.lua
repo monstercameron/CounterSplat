@@ -3,10 +3,14 @@
 local ids = assert(ecs.get_resource("scene.entities"), "gameplay entities are missing")
 local player = assert(ids.player, "player entity is missing")
 local held = {}
+-- The free-fly player can make one ballistic hop at a time. The physics host
+-- still resolves every movement intent against the active level's voxels.
+local jump = nil
 local waiting_for_key = nil
-local sliders = { [ids.controls_speed] = "move_speed", [ids.controls_sprint] = "sprint_multiplier", [ids.controls_sensitivity] = "mouse_sensitivity", [ids.controls_fov] = "fov_degrees" }
+local sliders = { [ids.controls_speed] = "move_speed", [ids.controls_sprint] = "sprint_multiplier", [ids.controls_sensitivity] = "mouse_sensitivity", [ids.controls_fov] = "fov_degrees", [ids.controls_jump_speed] = "jump_speed", [ids.controls_jump_gravity] = "jump_gravity" }
+local rig_sliders = { [ids.controls_eye_height] = "eye_height_m", [ids.controls_player_scale] = "units_per_meter" }
 local checks = { [ids.controls_enabled] = "enabled", [ids.controls_mouse] = "mouse_look", [ids.controls_invert] = "invert_y" }
-local keys = { [ids.key_forward] = "forward", [ids.key_backward] = "backward", [ids.key_left] = "left", [ids.key_right] = "right", [ids.key_up] = "up", [ids.key_down] = "down", [ids.key_sprint] = "sprint" }
+local keys = { [ids.key_forward] = "forward", [ids.key_backward] = "backward", [ids.key_left] = "left", [ids.key_right] = "right", [ids.key_up] = "up", [ids.key_down] = "down", [ids.key_sprint] = "sprint", [ids.key_jump] = "jump" }
 
 local function notice(text)
     local element = ecs.get(ids.controls_notice, "UiElement")
@@ -15,6 +19,7 @@ end
 local function key_label(code)
     if code:match("^Key%u$") then return code:sub(4) end
     if code:match("^Digit%d$") then return code:sub(6) end
+    if code == "Space" then return "Space" end
     if code == "ShiftLeft" then return "Left Shift" end
     if code == "ShiftRight" then return "Right Shift" end
     if code == "ControlLeft" then return "Left Ctrl" end
@@ -29,6 +34,12 @@ local function sync_controls(controls)
         element.widget.value = math.max(element.widget.min, math.min(element.widget.max, value))
         ecs.set(id, "UiElement", element)
     end
+    local rig = assert(ecs.get(player, "PlayerRig"), "player rig is missing")
+    for id, field in pairs(rig_sliders) do
+        local element = ecs.get(id, "UiElement")
+        element.widget.value = math.max(element.widget.min, math.min(element.widget.max, rig[field]))
+        ecs.set(id, "UiElement", element)
+    end
     for id, field in pairs(checks) do
         local element = ecs.get(id, "UiElement"); element.widget.checked = controls[field]; ecs.set(id, "UiElement", element)
     end
@@ -36,11 +47,112 @@ local function sync_controls(controls)
         local element = ecs.get(id, "UiElement"); element.widget.label = key_label(controls.bindings[field]); ecs.set(id, "UiElement", element)
     end
 end
+-- Level calibration and saved preferences are data supplied by the host. Lua
+-- chooses the final rig and keeps scene defaults available for reset.
+local authored_rig = assert(ecs.get(player, "PlayerRig"), "player rig is missing")
+local level_units = ecs.get_resource("player.level_units_per_meter")
+if type(level_units) == "number" then authored_rig.units_per_meter = level_units end
+ecs.set(player, "PlayerRig", authored_rig)
+ecs.set_resource("player.default_rig", authored_rig)
+local saved_rig = ecs.get_resource("player.saved_rig")
+if type(saved_rig) == "table" then pcall(function() ecs.set(player, "PlayerRig", saved_rig) end) end
+
+-- Exports are references to ECS fields, so the inspector edits the same values
+-- the player system reads rather than a separate set of tuning variables.
+engine.export(player, "move_speed", {component="PlayerControls", field="move_speed", label="Move speed", min=0.1, max=100})
+engine.export(player, "eye_height", {component="PlayerRig", field="eye_height_m", label="Eye height (m)", min=0.7, max=2.5})
+engine.export(player, "level_scale", {component="PlayerRig", field="units_per_meter", label="Scale vs level", min=0.5, max=2.5})
+engine.export(player, "jump_speed", {component="PlayerControls", field="jump_speed", label="Jump speed", min=0.5, max=15})
+engine.export(player, "invert_y", {component="PlayerControls", field="invert_y", label="Invert mouse Y"})
 local initial = assert(ecs.get(player, "PlayerControls"), "player settings are missing")
 if initial.fov_degrees ~= ecs.null then
     local camera = ecs.get(player, "PlayerCamera"); camera.fov_degrees = initial.fov_degrees; ecs.set(player, "PlayerCamera", camera)
 end
+local initial_rig = assert(ecs.get(player, "PlayerRig"), "player rig is missing")
+local last_rig = nil
+-- Keep the camera-to-feet distance, collider and world-unit motion in agreement.
+-- Changes preserve the current foot position; initial setup preserves the source view.
+local function apply_rig(preserve_feet)
+    local rig = assert(ecs.get(player, "PlayerRig"))
+    if last_rig and last_rig.eye_height_m == rig.eye_height_m and
+        last_rig.radius_m == rig.radius_m and last_rig.units_per_meter == rig.units_per_meter then return end
+    local body = assert(ecs.get(player, "PhysicsBody"), "player physics is missing")
+    local old_height = body.radius - body.collision_offset_y
+    local new_height = rig.eye_height_m * rig.units_per_meter
+    local previous_scale = last_rig and last_rig.units_per_meter or 1
+    local ratio = rig.units_per_meter / previous_scale
+    body.radius = rig.radius_m * rig.units_per_meter
+    body.collision_offset_y = body.radius - new_height
+    if ratio ~= 1 then
+        body.gravity = math.max(0, math.min(100, body.gravity * ratio))
+        for i = 1, 3 do body.velocity[i] = math.max(-200, math.min(200, body.velocity[i] * ratio)) end
+    end
+    ecs.set(player, "PhysicsBody", body)
+    if preserve_feet then
+        local camera = assert(ecs.get(player, "PlayerCamera"))
+        local height_change = new_height - old_height
+        camera.position[2] = math.max(-10000000, math.min(10000000, camera.position[2] + height_change))
+        ecs.set(player, "PlayerCamera", camera)
+        local spawn = ecs.get_resource("player.spawn_camera")
+        if spawn then
+            spawn.position[2] = math.max(-10000000, math.min(10000000, spawn.position[2] + height_change))
+            ecs.set_resource("player.spawn_camera", spawn)
+        end
+    end
+    last_rig = {eye_height_m=rig.eye_height_m, radius_m=rig.radius_m, units_per_meter=rig.units_per_meter}
+end
+apply_rig(false)
 sync_controls(initial)
+ecs.system("player.rig", function() apply_rig(true) end)
+
+-- Imported viewer cameras are not necessarily player-height. Probe only a
+-- nearby floor and reject late results after movement or an authored scene pose.
+local pending_ground = nil
+local ground_sequence = 0
+local function near(a, b)
+    for i = 1, 3 do if math.abs(a[i] - b[i]) >= 0.001 then return false end end
+    return true
+end
+ecs.on("physics.ready", function()
+    local rig = ecs.get(player, "PlayerRig")
+    local camera = ecs.get(player, "PlayerCamera")
+    local body = ecs.get(player, "PhysicsBody")
+    local spawn = ecs.get_resource("player.spawn_camera")
+    local preview = ecs.get_resource("preview") or {}
+    if not rig or not rig.auto_align_spawn or not camera or not body or not spawn or
+        preview.player_spawn == "scene" or not near(camera.position, spawn.position) then return end
+    ground_sequence = ground_sequence + 1
+    local token = "player-spawn-" .. ground_sequence
+    pending_ground = {token=token, position=camera.position, version=engine.physics.motion_version(player)}
+    engine.physics.probe_ground(player, camera.position, math.min(1, body.radius * 0.5),
+        math.min(8, 4 * rig.units_per_meter), token)
+end)
+ecs.on("physics.ground_result", function(result)
+    if not pending_ground or result.entity ~= player or result.token ~= pending_ground.token then return end
+    local request = pending_ground; pending_ground = nil
+    local rig = ecs.get(player, "PlayerRig")
+    local camera = ecs.get(player, "PlayerCamera")
+    local spawn = ecs.get_resource("player.spawn_camera")
+    if not rig or not rig.auto_align_spawn or not camera or not spawn or type(result.height) ~= "number" or
+        request.version ~= engine.physics.motion_version(player) or not near(camera.position, request.position) or
+        not near(spawn.position, request.position) then return end
+    local eye = result.height + rig.eye_height_m * rig.units_per_meter
+    if eye ~= eye or math.abs(eye) > 10000000 then return end
+    camera.position[2] = eye; spawn.position[2] = eye
+    ecs.set(player, "PlayerCamera", camera)
+    ecs.set_resource("player.spawn_camera", spawn)
+end)
+
+local controls_refresh = 0
+ecs.system("player.controls_ui_sync", function(dt)
+    controls_refresh = controls_refresh + dt
+    if controls_refresh < 0.25 then return end
+    controls_refresh = 0
+    local panel = ecs.get(ids.controls_panel, "UiElement")
+    if panel and not panel.collapsible.collapsed and not waiting_for_key then
+        sync_controls(ecs.get(player, "PlayerControls"))
+    end
+end)
 
 local function cancel_binding()
     waiting_for_key = nil
@@ -69,8 +181,29 @@ ecs.on("input.key", function(event)
         return
     end
     if type(event.code) ~= "string" then return end
-    if not event.pressed then held[event.code] = nil
-    elseif event.gameplay and not event.is_repeat then held[event.code] = true end
+    if not event.pressed then
+        held[event.code] = nil
+    elseif event.gameplay and not event.is_repeat then
+        if not held[event.code] then
+            local settings = ecs.get(player, "PlayerControls")
+            if settings and settings.enabled and event.code == settings.bindings.jump and not jump then
+                local body = ecs.get(player, "PhysicsBody")
+                if body and body.enabled and body.gravity_enabled then
+                    if body.grounded then
+                        local rig = assert(ecs.get(player, "PlayerRig"))
+                        body.velocity[2] = settings.jump_speed * rig.units_per_meter
+                        body.grounded = false
+                        ecs.set(player, "PhysicsBody", body)
+                    end
+                else
+                    local rig = assert(ecs.get(player, "PlayerRig"))
+                    jump = { elapsed = 0, offset = 0, speed = settings.jump_speed * rig.units_per_meter,
+                        gravity = settings.jump_gravity * rig.units_per_meter }
+                end
+            end
+        end
+        held[event.code] = true
+    end
 end)
 ecs.on("input.mouse_delta", function(event)
     local settings = ecs.get(player, "PlayerControls")
@@ -91,7 +224,9 @@ ecs.on("ui.action", function(action)
             if settings.fov_degrees ~= ecs.null then spawn.fov_degrees = settings.fov_degrees end
             ecs.set(player, "PlayerCamera", spawn)
         end
-        held = {}
+        held = {}; jump = nil
+        local body = ecs.get(player, "PhysicsBody")
+        if body then body.velocity = ecs.array(); body.velocity[1] = 0; body.velocity[2] = 0; body.velocity[3] = 0; body.grounded = false; ecs.set(player, "PhysicsBody", body) end
         return
     end
     local controls = ecs.get(player, "PlayerControls")
@@ -107,11 +242,26 @@ ecs.on("ui.action", function(action)
         waiting_for_key = nil; ecs.set_resource("input.binding_capture", false)
         controls = assert(ecs.get_resource("player.default_controls"))
         ecs.set(player, "PlayerControls", controls)
+        local default_rig = ecs.get_resource("player.default_rig") or initial_rig
+        ecs.set(player, "PlayerRig", default_rig)
+        apply_rig(true)
+        ecs.emit("player.rig_changed", default_rig)
         local camera = ecs.get(player, "PlayerCamera")
         camera.fov_degrees = ecs.get_resource("player.spawn_camera").fov_degrees
         ecs.set(player, "PlayerCamera", camera)
-        sync_controls(controls); notice("Defaults restored"); held = {}
+        sync_controls(controls); notice("Defaults restored"); held = {}; jump = nil
         ecs.emit("player.controls_changed", controls)
+        return
+    end
+    local rig_field = rig_sliders[action.id]
+    if rig_field and action.kind.type == "number_changed" then
+        local rig = assert(ecs.get(player, "PlayerRig"))
+        rig[rig_field] = action.kind.value
+        local ok = pcall(function() ecs.set(player, "PlayerRig", rig) end)
+        if ok then
+            apply_rig(true); sync_controls(controls); notice(""); held = {}
+            ecs.emit("player.rig_changed", rig)
+        else notice("Invalid player scale") end
         return
     end
     local field = sliders[action.id]
@@ -134,19 +284,33 @@ end)
 
 ecs.system("player.camera", function(dt)
     local settings = ecs.get(player, "PlayerControls")
-    if not settings or not settings.enabled then return end
+    if not settings or not settings.enabled then jump = nil; return end
     local b = settings.bindings
     local function down(code) return held[code] and 1 or 0 end
     local forward = down(b.forward) - down(b.backward)
     local right = down(b.right) - down(b.left)
     local up = down(b.up) - down(b.down)
     local length = math.sqrt(forward * forward + right * right + up * up)
-    if length == 0 then return end
+    local hop = 0
+    local body = ecs.get(player, "PhysicsBody")
+    if body and body.enabled and body.gravity_enabled then jump = nil end
+    if jump then
+        -- Integrate the arc analytically so its height and duration do not depend on the tick rate.
+        local duration = 2 * jump.speed / jump.gravity
+        jump.elapsed = math.min(duration, jump.elapsed + math.max(0, dt))
+        local offset = math.max(0, jump.speed * jump.elapsed - 0.5 * jump.gravity * jump.elapsed * jump.elapsed)
+        hop = offset - jump.offset
+        jump.offset = offset
+        if jump.elapsed >= duration then jump = nil end
+    end
+    if length == 0 and hop == 0 then return end
     local camera = ecs.get(player, "PlayerCamera")
-    local speed = settings.move_speed * (held[b.sprint] and settings.sprint_multiplier or 1) * dt / length
+    local rig = assert(ecs.get(player, "PlayerRig"))
+    local speed = length > 0 and settings.move_speed * rig.units_per_meter * (held[b.sprint] and settings.sprint_multiplier or 1) * dt / length or 0
     local sine, cosine = math.sin(camera.yaw), math.cos(camera.yaw)
-    camera.position[1] = math.max(-10000000, math.min(10000000, camera.position[1] + (forward * sine + right * cosine) * speed))
-    camera.position[2] = math.max(-10000000, math.min(10000000, camera.position[2] + up * speed))
-    camera.position[3] = math.max(-10000000, math.min(10000000, camera.position[3] + (-forward * cosine + right * sine) * speed))
-    ecs.set(player, "PlayerCamera", camera)
+    local delta = ecs.array()
+    delta[1] = (forward * sine + right * cosine) * speed
+    delta[2] = up * speed + hop
+    delta[3] = (-forward * cosine + right * sine) * speed
+    engine.physics.move(player, delta)
 end)

@@ -135,3 +135,295 @@ fn lua_player_moves_looks_rebinds_and_resets_through_ecs() {
         }
     );
 }
+
+#[test]
+fn jump_uses_the_bound_key_and_emits_collision_checked_movement() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &manifest,
+        &["ui", "player"],
+    )
+    .unwrap();
+    let player = ids["player"];
+    world.borrow_mut().set_dynamic_resource(
+        "player.default_controls",
+        serde_json::to_value(PlayerControls::default()).unwrap(),
+    );
+    world.borrow_mut().set_dynamic_resource(
+        "player.spawn_camera",
+        serde_json::to_value(PlayerCamera::default()).unwrap(),
+    );
+    world
+        .borrow_mut()
+        .set_dynamic_resource("voxel.capture_movement", json!(true));
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    lua.execute(&std::fs::read_to_string(root.join("assets/scripts/player_controls.lua")).unwrap())
+        .unwrap();
+
+    let key = |code: &str, pressed: bool, repeat: bool| {
+        json!({
+            "code":code,"pressed":pressed,"is_repeat":repeat,"gameplay":true
+        })
+    };
+    lua.dispatch("input.key", &key("Space", true, false))
+        .unwrap();
+    lua.run_systems(0.1).unwrap();
+    let first = world.borrow().get::<PlayerCamera>(player).unwrap().position[1];
+    assert!(
+        first > 0.3 && first < 0.5,
+        "the player should rise: {first}"
+    );
+    let moves = world.borrow_mut().drain_events("physics.move");
+    assert!(
+        moves[0]["delta"][1].as_f64().unwrap() > 0.3,
+        "jump must go through the collision host"
+    );
+    // Releasing and pressing again in midair must not restart the arc.
+    lua.dispatch("input.key", &key("Space", false, false))
+        .unwrap();
+    lua.dispatch("input.key", &key("Space", true, false))
+        .unwrap();
+    for _ in 0..6 {
+        lua.run_systems(0.1).unwrap();
+    }
+    let landed = world.borrow().get::<PlayerCamera>(player).unwrap().position[1];
+    assert!(
+        landed.abs() < 0.001,
+        "jump must return to its starting height: {landed}"
+    );
+    lua.run_systems(0.1).unwrap();
+    assert!(
+        world.borrow().get::<PlayerCamera>(player).unwrap().position[1].abs() < 0.001,
+        "holding Space must not auto-repeat"
+    );
+    lua.dispatch("input.key", &key("Space", false, false))
+        .unwrap();
+    lua.dispatch("input.key", &key("Space", true, false))
+        .unwrap();
+    lua.run_systems(0.1).unwrap();
+    assert!(world.borrow().get::<PlayerCamera>(player).unwrap().position[1] > 0.3);
+
+    // Resolve the same Lua intents against a voxel floor and ceiling, as the browser worker does.
+    lua.dispatch(
+        "ui.action",
+        &json!({"id":ids["reset"].to_string(),"kind":{"type":"clicked"}}),
+    )
+    .unwrap();
+    world.borrow_mut().drain_events("physics.move");
+    world
+        .borrow_mut()
+        .get_mut::<PlayerCamera>(player)
+        .unwrap()
+        .position = [1.5, 1.2, 1.5];
+    let metadata = json!({"version":"1.1","gridBounds":{"min":[0,0,0],"max":[4,4,4]},
+        "voxelResolution":1.0,"leafSize":4,"treeDepth":0,"nodeCount":1,"leafDataCount":2});
+    let mut mask = 0u64;
+    for z in 0..4 {
+        for x in 0..4 {
+            for y in [0, 2] {
+                mask |= 1 << (x + y * 4 + z * 16);
+            }
+        }
+    }
+    let binary: Vec<u8> = [0u32, mask as u32, (mask >> 32) as u32]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    let collider = countersplat_physics::voxel_collision::VoxelCollider::from_json_and_bin(
+        metadata.to_string().as_bytes(),
+        &binary,
+    )
+    .unwrap();
+    lua.dispatch("input.key", &key("Space", false, false))
+        .unwrap();
+    lua.dispatch("input.key", &key("Space", true, false))
+        .unwrap();
+    let mut peak = 1.2f32;
+    for _ in 0..45 {
+        let start = world.borrow().get::<PlayerCamera>(player).unwrap().position;
+        lua.run_systems(1.0 / 60.0).unwrap();
+        let intents = world.borrow_mut().drain_events("physics.move");
+        let mut position = start;
+        for intent in intents {
+            let delta = [0, 1, 2].map(|i| intent["delta"][i].as_f64().unwrap() as f32);
+            position = collider.move_sphere(position, delta, 0.2).unwrap();
+        }
+        world
+            .borrow_mut()
+            .get_mut::<PlayerCamera>(player)
+            .unwrap()
+            .position = position;
+        peak = peak.max(position[1]);
+        assert!(
+            position[1] >= 1.199 && position[1] <= 1.801,
+            "floor and ceiling must contain the jump: {position:?}"
+        );
+    }
+    assert!(peak > 1.7, "jump should reach the ceiling: {peak}");
+    let landed = world.borrow().get::<PlayerCamera>(player).unwrap().position[1];
+    assert!(
+        (landed - 1.2).abs() < 0.01,
+        "jump should return to the voxel floor: {landed}"
+    );
+}
+
+#[test]
+fn lua_rig_aligns_spawn_and_keeps_scale_motion_and_collider_consistent() {
+    use countersplat_scene::{PhysicsBody, PlayerRig};
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &manifest,
+        &["ui", "player", "level"],
+    )
+    .unwrap();
+    let player = ids["player"];
+    world.borrow_mut().set_dynamic_resource(
+        "player.default_controls",
+        serde_json::to_value(PlayerControls::default()).unwrap(),
+    );
+    world.borrow_mut().set_dynamic_resource(
+        "player.spawn_camera",
+        serde_json::to_value(PlayerCamera::default()).unwrap(),
+    );
+    world
+        .borrow_mut()
+        .get_mut::<countersplat_ui::UiElement>(ids["controls_panel"])
+        .unwrap()
+        .collapsible
+        .as_mut()
+        .unwrap()
+        .collapsed = false;
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    lua.execute(&std::fs::read_to_string(root.join("assets/scripts/player_controls.lua")).unwrap())
+        .unwrap();
+    lua.dispatch("physics.ready", &json!({"resolution":0.05}))
+        .unwrap();
+    let probe = world
+        .borrow_mut()
+        .drain_events("physics.ground_request")
+        .pop()
+        .unwrap();
+    assert_eq!(probe["entity"], player.to_string());
+    assert_eq!(probe["max_drop"], 4.0);
+    // A missing floor leaves the source camera untouched.
+    let original_eye = world.borrow().get::<PlayerCamera>(player).unwrap().position[1];
+    lua.dispatch(
+        "physics.ground_result",
+        &json!({"entity":player.to_string(),"token":probe["token"],"height":null}),
+    )
+    .unwrap();
+    assert_eq!(
+        world.borrow().get::<PlayerCamera>(player).unwrap().position[1],
+        original_eye
+    );
+    lua.dispatch("physics.ready", &json!({"resolution":0.05}))
+        .unwrap();
+    let probe = world
+        .borrow_mut()
+        .drain_events("physics.ground_request")
+        .pop()
+        .unwrap();
+    lua.dispatch(
+        "physics.ground_result",
+        &json!({"entity":player.to_string(),"token":probe["token"],"height":-1.1}),
+    )
+    .unwrap();
+    let eye = world.borrow().get::<PlayerCamera>(player).unwrap().position[1];
+    assert!(
+        (eye - 0.6).abs() < 0.0001,
+        "eye should be 1.7 units above floor: {eye}"
+    );
+    let spawn = world
+        .borrow()
+        .get_dynamic_resource("player.spawn_camera")
+        .unwrap()["position"][1]
+        .as_f64()
+        .unwrap();
+    assert!(
+        (spawn - 0.6).abs() < 0.0001,
+        "reset should use aligned height"
+    );
+    // A result arriving after movement must not snap the player, even if the pose is restored.
+    lua.dispatch("physics.ready", &json!({"resolution":0.05}))
+        .unwrap();
+    let stale = world
+        .borrow_mut()
+        .drain_events("physics.ground_request")
+        .pop()
+        .unwrap();
+    lua.execute("local p=ecs.get_resource('scene.entities').player; local before=ecs.get(p,'PlayerCamera'); engine.physics.move(p,{1,0,0}); ecs.set(p,'PlayerCamera',before)").unwrap();
+    lua.dispatch(
+        "physics.ground_result",
+        &json!({"entity":player.to_string(),"token":stale["token"],"height":-0.5}),
+    )
+    .unwrap();
+    assert!((world.borrow().get::<PlayerCamera>(player).unwrap().position[1] - 0.6).abs() < 0.0001);
+    // A scale adjustment preserves feet while scaling the collider and movement.
+    lua.dispatch("ui.action", &json!({"id":ids["controls_player_scale"].to_string(),"kind":{"type":"number_changed","value":1.5}})).unwrap();
+    {
+        let w = world.borrow();
+        let rig = w.get::<PlayerRig>(player).unwrap();
+        let body = w.get::<PhysicsBody>(player).unwrap();
+        let camera = w.get::<PlayerCamera>(player).unwrap();
+        assert!((rig.units_per_meter - 1.5).abs() < 0.0001);
+        assert!((body.radius - 0.375).abs() < 0.0001);
+        assert!((body.radius - body.collision_offset_y - 2.55).abs() < 0.0001);
+        assert!((camera.position[1] - 1.45).abs() < 0.0001);
+        assert!((body.gravity - 27.0).abs() < 0.0001);
+    }
+    lua.dispatch(
+        "input.key",
+        &json!({"code":"KeyW","pressed":true,"is_repeat":false,"gameplay":true}),
+    )
+    .unwrap();
+    let before = world.borrow().get::<PlayerCamera>(player).unwrap().position;
+    lua.run_systems(0.1).unwrap();
+    let after = world.borrow().get::<PlayerCamera>(player).unwrap().position;
+    let distance = ((after[0] - before[0]).powi(2) + (after[2] - before[2]).powi(2)).sqrt();
+    assert!(
+        (distance - 0.6).abs() < 0.0001,
+        "movement should scale with the rig: {distance}"
+    );
+    // Return to the spawn first, so the scene-mode assertion cannot pass merely
+    // because the player moved away from it.
+    lua.execute("local p=ecs.get_resource('scene.entities').player; ecs.set(p,'PlayerCamera',ecs.get_resource('player.spawn_camera'))").unwrap();
+    world.borrow_mut().drain_events("physics.ground_request");
+    lua.dispatch("physics.ready", &json!({"resolution":0.05}))
+        .unwrap();
+    assert_eq!(
+        world
+            .borrow_mut()
+            .drain_events("physics.ground_request")
+            .len(),
+        1
+    );
+    // Explicit scene spawns are authoritative and must not request auto alignment.
+    let mut preview = world
+        .borrow()
+        .get_dynamic_resource("preview")
+        .unwrap()
+        .clone();
+    preview["player_spawn"] = json!("scene");
+    world.borrow_mut().set_dynamic_resource("preview", preview);
+    world.borrow_mut().drain_events("physics.ground_request");
+    lua.dispatch("physics.ready", &json!({"resolution":0.05}))
+        .unwrap();
+    assert!(world
+        .borrow_mut()
+        .drain_events("physics.ground_request")
+        .is_empty());
+}

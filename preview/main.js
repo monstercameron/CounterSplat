@@ -1,7 +1,10 @@
 // Browser host: both the selector and gameplay render directly to the WebGPU canvas.
 import init, { Selector, Viewer } from '/pkg/countersplat_web.js';
 import { LuaScene } from '/lua_runtime.js';
-import { LoadingProgress, levelPolicies, loadPolicy, planScripts } from '/asset_loader.js';
+import { VoxelRuntime } from '/pkg/voxel_runtime.js';
+import { MouseCapture } from '/pkg/mouse_capture.js';
+import { publishPlayerRigData, savePlayerRig } from '/pkg/player_rig.js';
+import { LoadingProgress, levelPolicies, loadPolicy, planScripts, describeLevelAssets } from '/asset_loader.js';
 
 const canvas = document.getElementById('canvas');
 const status = document.getElementById('status');
@@ -10,6 +13,7 @@ const metrics = document.getElementById('metrics');
 const arrangeButton = document.getElementById('arrange');
 const resetLayoutButton = document.getElementById('reset-layout');
 const inFlight = new Set();
+const mouseCapture = new MouseCapture(canvas, document);
 let active = null;
 let arrangeMode = false;
 let mode = 'boot';
@@ -19,8 +23,7 @@ let stopped = false;
 let selectorBytes, catalogBytes, gameplayBytes, menuBytes, catalog, gameplayScene, menuScene;
 let selectorUrl, gameplayUrl, menuUrl, engineApi, gameplayScripts, menuScripts, luaFactory;
 let gameplayLua = null, menuLua = null, lastScriptTime = null;
-let dragLook = false, hadPointerLock = false, expectedUnlock = false, lastEscapeTime = -Infinity;
-let pointerLockAvailable = true;
+let dragLook = false, lastEscapeTime = -Infinity;
 const playerControlsKey = 'countersplat.player-controls.v1';
 let loadingAbort = null, preloadedSceneAssets = new Map();
 const MAX_PRELOAD_BYTES = 512 * 1024 * 1024;
@@ -30,6 +33,7 @@ let levelBase = null;
 let chunkMetas = [];
 let decoder = null;
 let skyDecoder = null;
+let voxelRuntime = null;
 let skyRequest = 0;
 let skyLoadState = 'loading';
 let skyErrorUntil = 0;
@@ -51,7 +55,7 @@ function layoutScene() { return mode === 'menu' ? 'menu' : mode === 'gameplay' ?
 function resetPlayerInput() { if (gameplayLua) gameplayLua.emit('input.reset', {}); }
 function releaseMouseLook() {
   dragLook = false;
-  if (document.pointerLockElement === canvas) { expectedUnlock = true; document.exitPointerLock(); }
+  mouseCapture.release();
 }
 function restorePlayerControls(game) {
   try {
@@ -67,7 +71,7 @@ function savePlayerControls(settings) {
   catch (error) { console.warn('Could not save player controls:', error); }
 }
 function dispatchGameplayEvents(runtime) {
-  for (const name of ['input.key', 'input.mouse_delta', 'input.reset', 'ui.action']) {
+  for (const name of ['input.key', 'input.mouse_delta', 'input.reset', 'ui.action', 'physics.ready', 'physics.ground_result', 'physics.motion_resolved', 'physics.motion_error', 'physics.collision', 'physics.error']) {
     for (const event of runtime.drain(name)) runtime.dispatch(name, event);
   }
 }
@@ -86,6 +90,7 @@ function processSceneRequests(runtime) {
   for (const request of runtime.drain('engine.scene')) {
     if (mode === 'gameplay' && request.action === 'push' && sceneAsset(gameplayScene, gameplayUrl, request.scene) === menuUrl.href) {
       runtime.dispatch('input.reset', {});
+      voxelRuntime?.suspend();
       releaseMouseLook();
       active.ui_focus(false); active.ui_pointer_gone();
       active.set_menu_visible(true); active.set_paused(true); mode = 'menu';
@@ -290,6 +295,7 @@ function startSkyWorker(game, token, preloaded) {
   }
 }
 function stopWorkers() {
+  voxelRuntime?.stop(); voxelRuntime = null;
   if (decoder) decoder.terminate();
   if (skyDecoder) skyDecoder.terminate();
   decoder = null;
@@ -350,31 +356,33 @@ async function launchLevel(id) {
     if (loadPolicy(gameplayScene.resources?.assets?.pause_menu?.load) !== 'preload')
       throw new Error('The gameplay pause menu must be preloaded by this host.');
     levelBase = new URL(`/assets/levels/${encodeURIComponent(id)}/`, location.href);
-    tracker.update('Reading level manifest', 0, 0.1, 0, 2);
+    tracker.update('Reading level manifest', 0, 0.1, 0, 4);
     let manifestTasks = 0;
     const fetchManifest = async (path, optional = false) => {
       const bytes = await getBytes(path, signal, optional);
-      tracker.update('Reading level manifest', 0, 0.1, ++manifestTasks, 2);
+      tracker.update('Reading level manifest', 0, 0.1, ++manifestTasks, 4);
       return bytes;
     };
-    const [primary, settings] = await Promise.all([
+    const [primary, settings, inventoryBytes, sourceBytes] = await Promise.all([
       fetchManifest(new URL(selected.format === 'single_sog' ? 'meta.json' : 'lod-meta.json', levelBase)),
       fetchManifest(new URL('viewer-settings.json', levelBase), true),
+      fetchManifest(new URL('download-inventory.json', levelBase), true),
+      fetchManifest(new URL('source.json', levelBase), true),
     ]);
-    let lodBytes = primary, metas, filenames;
+    let lodBytes = primary, metas, filenames, lodCount;
     let capacity = gameplayScene.resources?.preview?.capacity;
     if (!Number.isInteger(capacity) || capacity <= 0) throw new Error('Gameplay scene capacity is invalid.');
     if (selected.format === 'single_sog') {
       const synthetic = singleSogManifest(parseJson(primary));
       lodBytes = new TextEncoder().encode(JSON.stringify(synthetic));
-      metas = [primary]; filenames = synthetic.filenames;
+      metas = [primary]; filenames = synthetic.filenames; lodCount = synthetic.lodLevels;
       capacity = Math.max(capacity, Math.ceil(synthetic.counts[0] * 100 / 85) + 1);
       tracker.update('Reading chunk metadata', 0.1, 0.5, 1, 1);
     } else if (selected.format === 'streamed_sog') {
       const lod = parseJson(primary);
       if (!Array.isArray(lod.filenames) || !lod.filenames.length || lod.filenames.length > 10_000)
         throw new Error('The level does not contain a valid chunk list.');
-      filenames = lod.filenames;
+      filenames = lod.filenames; lodCount = lod.lodLevels;
       let done = 0;
       tracker.update('Reading chunk metadata', 0.1, 0.5, 0, filenames.length);
       metas = await mapLimit(filenames, 12, async path => {
@@ -385,6 +393,11 @@ async function launchLevel(id) {
     } else throw new Error('This level format is not supported.');
     if (generation !== token) return;
 
+    const levelAssets = describeLevelAssets(selected, lodCount, metas.map(parseJson), filenames, {
+      viewerSettings: settings.length > 0,
+      inventory: inventoryBytes.length ? parseJson(inventoryBytes) : null,
+      source: sourceBytes.length > 0,
+    }, gameplayScene.resources?.preview?.level_asset || 'level');
     const sceneAssets = new Map([[selectorUrl.href, selectorBytes], [gameplayUrl.href, gameplayBytes]]);
     await preloadSceneAssets(gameplayScene, gameplayUrl, sceneAssets, signal, tracker, 0.5, 0.6);
     menuBytes = sceneAssets.get(menuUrl.href);
@@ -408,11 +421,12 @@ async function launchLevel(id) {
     mode = 'starting';
     active = null;
     selector.free();
-    pendingGame = await Viewer.create(canvas, lodBytes, metas, settings, [gameplayBytes, menuBytes], capacity, selected.rotate_z_180 !== false, policies.splat_chunks === 'preload');
+    pendingGame = await Viewer.create(canvas, lodBytes, metas, settings, [gameplayBytes, menuBytes], capacity, selected.rotate_z_180 !== false, policies.splat_chunks === 'preload', JSON.stringify(levelAssets));
     if (generation !== token) { pendingGame.free(); pendingGame = null; return; }
     for (const sky of skies) pendingGame.install_skybox(sky.id, sky.size, sky.pixels);
     for (const chunk of chunks) pendingGame.insert_decoded_chunk(chunk.index, chunk.metadata, chunk.dimensions, chunk.pixels);
     restorePlayerControls(pendingGame);
+    publishPlayerRigData(pendingGame, selected);
     gameplayScripts = scripts.gameplay; menuScripts = scripts.menu; engineApi = scripts.engine;
     gameplayLua = await LuaScene.create(luaFactory, pendingGame, 'gameplay', engineApi, gameplayScripts);
     menuLua = await LuaScene.create(luaFactory, pendingGame, 'menu', engineApi, menuScripts);
@@ -438,6 +452,7 @@ async function launchLevel(id) {
     };
     decoder.onerror = event => { if (generation === token) showError(new Error(`Asset worker failed: ${event.message}`)); };
     startSkyWorker(game, token, new Set(skies.map(sky => sky.id)));
+    voxelRuntime = new VoxelRuntime(game, levelBase, () => generation === token && active === game);
     status.textContent = 'Streaming scan';
     message.hidden = true;
   } catch (error) {
@@ -522,10 +537,7 @@ function attachInput() {
     if (world && which === 0 && event.pointerType === 'mouse' && document.pointerLockElement !== canvas) {
       // Drag-to-look remains available when an embedded browser does not support pointer lock.
       dragLook = true; canvas.setPointerCapture(event.pointerId); scene.ui_pointer_gone();
-      if (pointerLockAvailable && canvas.requestPointerLock) {
-        try { Promise.resolve(canvas.requestPointerLock()).catch(() => { pointerLockAvailable = false; }); }
-        catch (_) { pointerLockAvailable = false; }
-      }
+      mouseCapture.request();
       return;
     }
     if (world && which === 1 && event.pointerType === 'mouse') { dragLook = true; canvas.setPointerCapture(event.pointerId); return; }
@@ -564,6 +576,13 @@ function attachInput() {
   canvas.addEventListener('keyup', key);
   // Forward physical key events to the current ECS world. Lua decides what they mean.
   const gameKey = event => {
+    if (mode === 'gameplay' && event.code === 'Backquote' && event.type === 'keydown' && !event.repeat &&
+        (mouseCapture.locked || mouseCapture.requested || dragLook)) {
+      event.preventDefault();
+      releaseMouseLook();
+      if (active) active.ui_pointer_gone();
+      return;
+    }
     const script = mode === 'gameplay' ? gameplayLua : mode === 'menu' ? menuLua : null;
     if (!script || event.isComposing || event.key.length > 128) return;
     const gameplay = mode === 'gameplay' && document.activeElement === canvas && !active.ui_wants_keyboard() &&
@@ -575,12 +594,13 @@ function attachInput() {
   window.addEventListener('keydown', gameKey);
   window.addEventListener('keyup', gameKey);
   window.addEventListener('blur', resetPlayerInput);
+  document.addEventListener('pointerlockerror', () => mouseCapture.error());
   document.addEventListener('pointerlockchange', () => {
-    if (document.pointerLockElement === canvas) { hadPointerLock = true; return; }
-    if (!hadPointerLock) return;
-    hadPointerLock = false;
+    const change = mouseCapture.changed(mode === 'gameplay' && !arrangeMode);
+    if (change === 'locked') { dragLook = false; return; }
+    if (change !== 'released' && change !== 'unexpected') return;
     resetPlayerInput();
-    if (expectedUnlock) { expectedUnlock = false; return; }
+    if (change === 'released') return;
     // Some browsers consume Escape while releasing pointer lock; preserve the menu shortcut.
     const lostAt = performance.now();
     setTimeout(() => {
@@ -632,6 +652,8 @@ function tick(timestamp) {
             const ticks = active.take_script_ticks();
             for (let i = 0; i < ticks; i++) runtime.run(active.script_tick_seconds());
             for (const settings of runtime.drain('player.controls_changed')) savePlayerControls(settings);
+            for (const rig of runtime.drain('player.rig_changed')) savePlayerRig(currentLevel, rig);
+            voxelRuntime?.tick(runtime, timestamp);
             processSceneRequests(runtime);
           }
         } else {
@@ -651,7 +673,18 @@ function tick(timestamp) {
           status.textContent = state.resident_splats ? 'Live WebGPU canvas' : 'Streaming scan';
           const timing = state.ui_frame_fps == null ? 'measuring frames' : `${state.ui_frame_fps.toFixed(1)} submitted fps · ${state.ui_frame_ms.toFixed(1)} ms/frame`;
           const sky = state.sky_loaded ? (state.sky_enabled ? 'HDR sky on' : 'HDR sky off') : (skyLoadState === 'error' ? 'HDR sky unavailable' : 'loading HDR sky');
-          metrics.textContent = `${currentLevel.name} · ${state.resident_splats.toLocaleString()} splats · ${timing} · ${sky}`;
+          const lod = state.level_lod == null ? 'LOD auto' : `LOD ${state.level_lod}`;
+          const finest = Array.isArray(state.leaves_per_lod) ? (state.leaves_per_lod[0] || 0) : 0;
+          // Structured, read-only diagnostics help verify the streaming state during development.
+          metrics.dataset.streaming = JSON.stringify({lods:state.leaves_per_lod, pending:state.lod_pending,
+            wanted:state.lod_wanted_splats, activeSlots:state.lod_active_slots, free:state.lod_free_slots,
+            largestFree:state.lod_largest_free, pendingDetails:state.lod_pending_details, loaded:state.lod_chunks_loaded,
+            inFlight:state.lod_chunks_in_flight, fading:state.lod_fading, switches:state.lod_switches,
+            fadeCuts:state.fade_cuts, hardSwaps:state.hard_swaps, octreeNodes:state.octree_nodes});
+          metrics.dataset.player = JSON.stringify({camera:state.player_camera, physics:state.player_physics, rig:state.player_rig});
+          const mouse = document.pointerLockElement === canvas ? 'Mouse locked · ~ releases' :
+            mouseCapture.failed ? 'Drag to look' : 'Click scene to lock mouse';
+          metrics.textContent = `${currentLevel.name} · ${state.resident_splats.toLocaleString()} splats · ${lod} · ${finest} LOD 0 regions · ${timing} · ${sky} · ${mouse}`;
         } else if (mode === 'menu') {
           status.textContent = 'Paused';
           metrics.textContent = `${currentLevel.name} · Paused`;

@@ -42,6 +42,9 @@ pub struct LevelEntry {
     /// Rotate source splats into the viewer camera coordinate system (default: true).
     #[serde(default = "default_splat_rotation")]
     pub rotate_z_180: bool,
+    /// Optional authored calibration: level coordinate units per physical metre.
+    #[serde(default)]
+    pub player_units_per_meter: Option<f32>,
     #[serde(default)]
     pub lod_levels: Option<u32>,
     #[serde(default)]
@@ -102,6 +105,12 @@ impl LevelCatalog {
                     "level `{}` requires preloaded manifest, viewer settings, and chunk metadata",
                     level.id
                 ));
+            }
+            if level
+                .player_units_per_meter
+                .is_some_and(|scale| !scale.is_finite() || !(0.5..=2.5).contains(&scale))
+            {
+                return Err(format!("invalid player scale for `{}`", level.id));
             }
             if level.lod_levels.is_some_and(|n| n == 0 || n > 64) {
                 return Err(format!("invalid LOD level count for `{}`", level.id));
@@ -170,6 +179,14 @@ mod tests {
         let entry = bad["levels"][0].clone();
         bad["levels"].as_array_mut().unwrap().push(entry);
         assert!(parse(bad).is_err());
+        let mut scaled = catalog();
+        scaled["levels"][0]["player_units_per_meter"] = json!(1.5);
+        assert_eq!(
+            parse(scaled.clone()).unwrap().levels[0].player_units_per_meter,
+            Some(1.5)
+        );
+        scaled["levels"][0]["player_units_per_meter"] = json!(0.01);
+        assert!(parse(scaled).is_err());
         let mut bad = catalog();
         bad["levels"][0]["id"] = json!("../etc");
         assert!(parse(bad).is_err());

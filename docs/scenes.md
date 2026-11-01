@@ -34,19 +34,20 @@ A small scene has this shape (see the project file for the complete UI):
 validated ECS adapter; `dynamic` stores arbitrary JSON through the ECS dynamic component API. An unknown or mismatched
 component declaration fails the load. JSON values for native components follow the type's serde representation and
 validation rules. The built-in `Skybox`, `UiElement`, and `FrameCounter` types have adapters; games can register their
-own. Native type implementations and system behavior remain Rust code, while the scene owns their initial values.
+own. Native component types provide validated data; scene values and Lua scripts define gameplay behavior.
 
 Entity IDs are stable names within the manifest, not runtime ECS handles. Each entity specifies a layer and optional
 `parent` ID. IDs must be unique, parents must exist in the same layer, and cycles are rejected. The preview instantiates
-the skybox `scene` layer separately, while its `player` and `ui` layers share a gameplay ECS world and runtime
-handles. The application resource `preview` binds specific IDs to this example's camera, sky, FPS, and UI behavior. Its UI controls address the
+the `scene`, `level`, `player`, and `ui` layers in one gameplay ECS world with shared runtime handles. The application resource `preview` binds specific IDs to this example's camera, sky, FPS, and UI behavior. Its UI controls address the
 skybox ID named by `preview.skybox_entity`; general scene extraction still selects enabled skyboxes by priority. The preview's panel `UiElement` values set
 `collapsible` headers and initial collapsed state; see [UI panels](ui.md#collapsible-panels).
 
-Assets have a host-defined `kind` and a `uri`; relative paths resolve from the scene file. Asset and script `load` policies, the loading component, and level-transition behavior are described in [asset loading](asset-loading.md). Browser levels and their
+Assets have a host-defined `kind` and a `uri`; relative paths resolve from the scene file. The active level publishes its asset inventory and LOD settings as ECS components; see [level assets](level-assets.md). Asset and script `load` policies, the loading component, and level-transition behavior are described in [asset loading](asset-loading.md). Browser levels and their
 validated catalog live under `assets/levels`; the selector loads the chosen scan before starting gameplay. Catalog entries
 default to a 180-degree Z rotation for exported SuperSplat coordinates; set `rotate_z_180` to `false` for a scan already
-stored in viewer coordinates. Images and
+stored in viewer coordinates. An optional `player_units_per_meter` number (0.5–2.5) sets the initial
+player scale for that level; the default is 1.0, and browser-saved per-level tuning takes precedence.
+The scan is not rescaled. Images and
 scripts are stored under `assets/images` and `assets/scripts`, with `assets/sound` and `assets/music` reserved for audio.
 Browser and native examples load up to eight
 referenced HDR sky assets. The native `window-level` command uses the project `assets/scenes/gameplay.json` by default, accepts
@@ -64,8 +65,8 @@ The browser preview runs Lua 5.4 using Wasmoon. It loads scripts marked `autoloa
 ECS world. [`gameplay_navigation.lua`](../assets/scripts/gameplay_navigation.lua) receives `input.key` and
 `ui.action` events to open the menu or select levels; [`player_controls.lua`](../assets/scripts/player_controls.lua)
 uses the same events and fixed ticks to control the player camera. [`menu_navigation.lua`](../assets/scripts/menu_navigation.lua)
-handles Escape, Resume, and Choose level. The browser bridge exposes the gameplay player/UI world to Lua; the
-separate gameplay skybox world remains independent. See [player controls](player-controls.md) for input and camera configuration. The native window example has no Lua UI
+handles Escape, Resume, and Choose level. The browser bridge exposes all gameplay layers, including the skybox,
+to Lua and the entity inspector. See [player controls](player-controls.md) for input and camera configuration. The native window example has no Lua UI
 host, so the gameplay browser entry script is explicitly listed rather than marked for native autoload.
 
 `engine.scene.push(id)`, `engine.scene.pop()`, and `engine.scene.replace(id)` emit requests on the `engine.scene`

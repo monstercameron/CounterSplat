@@ -68,6 +68,42 @@ impl PlayerCamera {
     }
 }
 
+/// Player dimensions in metres and the number of level units in one metre.
+/// Scan scale is not inferred; it can be calibrated independently for each level.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PlayerRig {
+    pub eye_height_m: f32,
+    pub radius_m: f32,
+    pub units_per_meter: f32,
+    /// Align imported level-viewer spawns with nearby voxel ground when available.
+    pub auto_align_spawn: bool,
+}
+impl Default for PlayerRig {
+    fn default() -> Self {
+        Self {
+            eye_height_m: 1.7,
+            radius_m: 0.25,
+            units_per_meter: 1.0,
+            auto_align_spawn: true,
+        }
+    }
+}
+impl PlayerRig {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.eye_height_m.is_finite()
+            || !(0.7..=2.5).contains(&self.eye_height_m)
+            || !self.radius_m.is_finite()
+            || !(0.1..=0.33).contains(&self.radius_m)
+            || !self.units_per_meter.is_finite()
+            || !(0.5..=2.5).contains(&self.units_per_meter)
+        {
+            return Err("invalid player eye height, radius, or level scale");
+        }
+        Ok(())
+    }
+}
+
 /// Physical key codes, independent of keyboard character layout.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -79,6 +115,7 @@ pub struct PlayerBindings {
     pub up: String,
     pub down: String,
     pub sprint: String,
+    pub jump: String,
 }
 impl Default for PlayerBindings {
     fn default() -> Self {
@@ -90,6 +127,7 @@ impl Default for PlayerBindings {
             up: "KeyE".into(),
             down: "KeyQ".into(),
             sprint: "ShiftLeft".into(),
+            jump: "Space".into(),
         }
     }
 }
@@ -103,6 +141,7 @@ impl PlayerBindings {
             &self.up,
             &self.down,
             &self.sprint,
+            &self.jump,
         ] {
             if key.is_empty() || key.len() > 32 || !key.bytes().all(|c| c.is_ascii_alphanumeric()) {
                 return Err("player key bindings must be nonempty physical key codes of at most 32 letters or digits");
@@ -112,7 +151,8 @@ impl PlayerBindings {
     }
 }
 
-/// Script-visible movement settings. Mouse sensitivity is radians per pointer pixel.
+/// Script-visible movement settings. Movement and jump speeds are in metres per second;
+/// the player rig converts them to level units. Mouse sensitivity is radians per pointer pixel.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlayerControls {
@@ -121,6 +161,10 @@ pub struct PlayerControls {
     pub move_speed: f32,
     pub sprint_multiplier: f32,
     pub mouse_sensitivity: f32,
+    /// Initial upward velocity and downward acceleration for a free-fly jump, in world units.
+    /// Gravity-enabled bodies use PhysicsBody.gravity for downward acceleration.
+    pub jump_speed: f32,
+    pub jump_gravity: f32,
     /// Optional user FOV override; None retains the level or scene camera's FOV.
     pub fov_degrees: Option<f32>,
     pub invert_y: bool,
@@ -134,6 +178,8 @@ impl Default for PlayerControls {
             move_speed: 4.0,
             sprint_multiplier: 3.0,
             mouse_sensitivity: 0.003,
+            jump_speed: 5.0,
+            jump_gravity: 18.0,
             fov_degrees: None,
             invert_y: false,
             bindings: PlayerBindings::default(),
@@ -148,13 +194,15 @@ impl PlayerControls {
             || !(1.0..=10.0).contains(&self.sprint_multiplier)
             || !self.mouse_sensitivity.is_finite()
             || !(0.0001..=0.03).contains(&self.mouse_sensitivity)
+            || !self.jump_speed.is_finite()
+            || !(0.5..=15.0).contains(&self.jump_speed)
+            || !self.jump_gravity.is_finite()
+            || !(2.0..=60.0).contains(&self.jump_gravity)
             || self
                 .fov_degrees
                 .is_some_and(|fov| !fov.is_finite() || !(1.0..179.0).contains(&fov))
         {
-            return Err(
-                "player movement speed, sprint multiplier, or mouse sensitivity is invalid",
-            );
+            return Err("player movement, jump, or mouse sensitivity is invalid");
         }
         self.bindings.validate()
     }
@@ -177,12 +225,25 @@ mod tests {
         .is_err());
     }
     #[test]
+    fn player_rig_validates_height_and_scale() {
+        let mut rig = PlayerRig::default();
+        assert!(rig.validate().is_ok());
+        rig.eye_height_m = 0.1;
+        assert!(rig.validate().is_err());
+        rig.eye_height_m = 1.7;
+        rig.units_per_meter = f32::NAN;
+        assert!(rig.validate().is_err());
+    }
+    #[test]
     fn control_configuration_rejects_invalid_inputs() {
         let mut controls = PlayerControls::default();
         assert!(controls.validate().is_ok());
         controls.mouse_sensitivity = f32::INFINITY;
         assert!(controls.validate().is_err());
         controls.mouse_sensitivity = 0.003;
+        controls.jump_gravity = 0.0;
+        assert!(controls.validate().is_err());
+        controls.jump_gravity = 18.0;
         controls.bindings.forward = "bad key".into();
         assert!(controls.validate().is_err());
     }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {loadPolicy, levelPolicies, planScripts, LoadingProgress} from '../preview/asset_loader.js';
+import {loadPolicy, levelPolicies, planScripts, LoadingProgress, describeLevelAssets} from '../preview/asset_loader.js';
 assert.equal(loadPolicy(), 'preload');
 assert.equal(levelPolicies().splat_chunks, 'streamable');
 assert.equal(levelPolicies({splat_chunks:'preload'}).splat_chunks, 'preload');
@@ -19,3 +19,14 @@ assert.ok(Math.abs(reports[0][1] - 0.3) < 1e-9);
 assert.deepEqual(reports.slice(1).map(report => report[1]), [0.5, 0.5]);
 assert.throws(() => tracker.update('Bad',0,1,2,1));
 console.log('Asset loading policies and progress tests passed.');
+
+const example = {id:'1234abcd', name:'Example', format:'streamed_sog', assets:{splat_chunks:'streamable'}};
+const inventory = {scene_id:'1234abcd', files:[{path:'lod-meta.json'},{path:'scene.voxel.bin'}]};
+const described = describeLevelAssets(example, 2, [{means:{files:['means_l.webp','means_u.webp']}}], ['0_0/meta.json'],
+  {viewerSettings:true, inventory, source:true});
+assert.equal(described.lod_count, 2);
+assert.deepEqual(described.files.find(f => f.path === '0_0/means_l.webp'), {path:'0_0/means_l.webp',kind:'splat_data',load:'streamable'});
+assert.equal(described.files.find(f => f.path === 'scene.voxel.bin').kind, 'collision');
+assert.equal(described.files.filter(f => f.path === 'lod-meta.json').length, 1);
+assert.throws(() => describeLevelAssets(example,2,[{means:{files:['../secret']}}],['0_0/meta.json']));
+assert.throws(() => describeLevelAssets(example,2,[{means:{files:[null]}}],['0_0/meta.json']));

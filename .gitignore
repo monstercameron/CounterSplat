@@ -37,3 +37,7 @@ credentials.json
 credentials.*.json
 service-account*.json
 *[aA][pP][iI]*[kK][eE][yY]*
+
+# Python bytecode
+__pycache__/
+*.py[cod]

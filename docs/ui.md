@@ -129,7 +129,9 @@ schedules the Lua system. The native integration test in `apps/threaded-demo/tes
 against the real adapters and verifies
 component creation, validation, frame data, custom script formatting, and control events. The browser demo now hosts
 Lua 5.4 for its gameplay and menu worlds; its menu and player scripts use these same ECS events and component APIs.
-The gameplay player and UI layers share a world; the separate skybox world is not exposed through that script bridge.
+The gameplay scene, level, player and UI layers share a world and are exposed through that script bridge.
+The **Entity settings** panel can inspect those entities and edit physics or Lua-exported values; see
+[entity physics](entity-physics.md).
 
 ## Frame timing semantics
 

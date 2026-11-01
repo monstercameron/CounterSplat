@@ -16,6 +16,10 @@ $output = Join-Path $projectRoot 'preview/pkg'
 & $bindgen.Source --target web --out-dir $output --out-name countersplat_web $wasm
 if ($LASTEXITCODE -ne 0) { throw 'Browser binding generation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/skybox-worker.js') -Destination (Join-Path $output 'skybox-worker.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/voxel-worker.js') -Destination (Join-Path $output 'voxel-worker.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/voxel_runtime.js') -Destination (Join-Path $output 'voxel_runtime.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/mouse_capture.js') -Destination (Join-Path $output 'mouse_capture.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/player_rig.js') -Destination (Join-Path $output 'player_rig.js') -Force
 $luaOutput = Join-Path $output 'wasmoon'
 New-Item -ItemType Directory -Path $luaOutput -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot 'third_party/wasmoon/index.js') -Destination $luaOutput -Force

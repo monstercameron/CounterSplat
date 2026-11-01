@@ -43,3 +43,49 @@ export class LoadingProgress {
     this.report(phase, this.progress, completed, total);
   }
 }
+
+// Build a portable inventory from the actual level metadata and, when available, its download inventory.
+// These are references only; the ECS does not own file bytes or GPU resources.
+export function describeLevelAssets(level, lodCount, chunkMetadata, filenames, optional = {}, source = 'level') {
+  if (!Number.isInteger(lodCount) || lodCount < 1 || lodCount > 64 || !Array.isArray(chunkMetadata) ||
+      !Array.isArray(filenames) || filenames.length !== chunkMetadata.length) throw new Error('Invalid level asset metadata.');
+  const policies = levelPolicies(level.assets);
+  const files = new Map();
+  const safe = path => typeof path === 'string' && path.length > 0 && path.length <= 1024 &&
+    !path.startsWith('/') && !path.includes('\\') && !path.includes(':') &&
+    !/[\x00-\x1f\x7f]/.test(path) && path.split('/').every(part => part && part !== '.' && part !== '..');
+  const add = (path, kind, load) => {
+    if (!safe(path)) throw new Error('A level asset has an invalid path.');
+    if (!files.has(path)) files.set(path, {path, kind, load});
+  };
+  const single = level.format === 'single_sog';
+  if (!single && level.format !== 'streamed_sog') throw new Error('Unsupported level format.');
+  add(single ? 'meta.json' : 'lod-meta.json', 'manifest', policies.manifest);
+  if (optional.viewerSettings) add('viewer-settings.json', 'viewer_settings', policies.viewer_settings);
+  for (let index = 0; index < filenames.length; index++) {
+    const metadataPath = single ? 'meta.json' : filenames[index];
+    if (!single) add(metadataPath, 'chunk_metadata', policies.chunk_metadata);
+    const folder = single ? '' : metadataPath.split('/').slice(0, -1).join('/') + '/';
+    const meta = chunkMetadata[index];
+    if (!meta || typeof meta !== 'object') throw new Error('Invalid chunk metadata.');
+    for (const name of ['means', 'quats', 'scales', 'sh0', 'shN']) {
+      const references = meta[name]?.files ?? [];
+      if (!Array.isArray(references)) throw new Error('Invalid chunk asset list.');
+      for (const path of references) {
+        if (typeof path !== 'string') throw new Error('Invalid chunk asset path.');
+        add(folder + path, 'splat_data', policies.splat_chunks);
+      }
+    }
+  }
+  if (optional.inventory) {
+    if (optional.inventory.scene_id !== level.id || !Array.isArray(optional.inventory.files))
+      throw new Error('Level download inventory does not match the selected level.');
+    for (const item of optional.inventory.files) {
+      if (!item || typeof item.path !== 'string') throw new Error('Invalid level inventory entry.');
+      add(item.path, /(?:^|\/)scene\.voxel\./.test(item.path) ? 'collision' : 'other', 'streamable');
+    }
+    add('download-inventory.json', 'other', 'preload');
+  }
+  if (optional.source) add('source.json', 'other', 'preload');
+  return {source, level_id:level.id, name:level.name, format:level.format, lod_count:lodCount, files:[...files.values()]};
+}

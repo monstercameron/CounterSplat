@@ -110,3 +110,21 @@ compiler and platform toolchain are required. The browser host uses a separate
 Wasmoon Lua 5.4 backend with the same ECS operation and scene-request contract;
 it does not compile this native crate for WASM. Browser scene scope and current
 transition support are documented in `docs/scenes.md`.
+
+## Per-entity physics and exports
+
+`engine.physics.move(entity, delta)` sends an entity displacement through the host's collision owner when
+available; `engine.physics.step(dt)` integrates enabled bodies. Use `engine.export(entity, name, spec)` to
+make a numeric or boolean ECS component field or resource field editable in the entity inspector. Numeric
+exports specify `min` and `max`. The same API works with the native and browser Lua runtimes; the host must
+supply physics integration. See [entity physics and Lua tuning](../../docs/entity-physics.md) for examples,
+events and current browser collision limits.
+
+## Ground queries
+
+`engine.physics.probe_ground(entity, position, radius, max_drop, token)` queues a generic
+asynchronous floor query. The browser host dispatches `physics.ground_result` with the entity,
+token, and a numeric `height` or `ecs.null` if no floor was found. Scripts choose how to react.
+`engine.physics.motion_version(entity)` changes when `engine.physics.move` applies movement;
+capture it when submitting a query and compare it on receipt to reject stale results. A host
+must implement the corresponding query and event delivery for the result to arrive.

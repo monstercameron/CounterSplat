@@ -831,7 +831,7 @@ fn a_leaf_at_the_edge_of_the_budget_keeps_its_detail() {
 }
 
 #[test]
-fn new_ranges_fade_in_while_replaced_ones_fade_out() {
+fn new_and_old_ranges_crossfade_without_a_brightness_spike() {
     let mut s = stream(10_000);
     s.settings.fade_s = 0.4;
     s.select([0.0, 0.5, 0.5], [1.0, 0.0, 0.0], None, 1.0);
@@ -840,7 +840,7 @@ fn new_ranges_fade_in_while_replaced_ones_fade_out() {
         start: 100,
         count: 100,
         palette: None,
-        born: 0.9,
+        born: 0.8,
     });
     s.leaves[1].have = Some(Resident {
         lod: 0,
@@ -857,33 +857,38 @@ fn new_ranges_fade_in_while_replaced_ones_fade_out() {
             palette: None,
             born: 0.0,
         },
-        0.7,
+        0.8,
     ));
     let fades = s.fades();
-    assert_eq!(
-        fades.len(),
-        2,
-        "the settled leaf at slot 300 is not fading: {fades:?}"
-    );
-    assert_eq!((fades[0].0, fades[0].1), (0, 10), "sorted by start");
-    // A 0.4 s fade: the new range fades in over 0.2 s, then the old one out over the next 0.2 s.
-    assert!(
-        (fades[0].2 - 0.5).abs() < 1e-5,
-        "0.3 s after it was replaced, half the old range is left: {}",
-        fades[0].2
-    );
-    assert!(
-        (fades[1].2 - 0.5).abs() < 1e-5,
-        "0.1 s in, half the new range is drawn: {}",
-        fades[1].2
-    );
-    s.now = 0.8;
-    assert!(
-        (s.fades()[0].2 - 1.0).abs() < 1e-5,
-        "the old range stays whole while the new one fades in"
-    );
+    assert_eq!(fades.len(), 2, "the settled leaf is not fading");
+    assert_eq!((fades[0].0, fades[0].1), (0, 10));
+    assert!((fades[0].2 - 0.5).abs() < 1e-5);
+    assert!((fades[1].2 - 0.5).abs() < 1e-5);
+    assert!((fades[0].2 + fades[1].2 - 1.0).abs() < 1e-5);
     s.settings.fade_s = 0.0;
-    assert!(s.fades().is_empty(), "no fading when it is off");
+    assert!(s.fades().is_empty());
+}
+
+#[test]
+fn nearby_visible_regions_request_fine_detail_first_without_overriding_manual_lod() {
+    let mut s = stream(10_000);
+    s.settings.near_lod0_m = 25.0;
+    s.settings.lod_distance_m = 1.0;
+    s.select([0.0; 3], [1.0, 0.0, 0.0], None, 0.0);
+    assert_eq!(s.leaves[2].want, Some(0));
+    assert_eq!(s.leaves[4].want, Some(1));
+    let requests = s.requests();
+    assert_eq!(
+        requests[0].0, 0,
+        "nearby empty regions request their fine file first"
+    );
+    s.set_fixed_lod(Some(1)).unwrap();
+    s.select([0.0; 3], [1.0, 0.0, 0.0], None, 1.0);
+    assert_eq!(
+        s.leaves[0].want,
+        Some(1),
+        "manual coarse mode remains authoritative"
+    );
 }
 
 #[test]
@@ -1044,4 +1049,265 @@ fn the_allocator_reuses_and_merges_freed_ranges() {
         "an exact range comes out of the middle"
     );
     assert_eq!(s.allocate(250), Some(300));
+}
+
+#[test]
+fn manual_lod_changes_targets_and_auto_can_be_restored() {
+    let mut stream = stream(10_000);
+    let eye = [0.0, 0.0, 0.0];
+    let forward = [1.0, 0.0, 0.0];
+    assert!(stream.set_fixed_lod(Some(2)).is_err());
+    stream.set_fixed_lod(Some(1)).unwrap();
+    stream.select(eye, forward, None, 1.0);
+    assert!(stream.leaves.iter().all(|leaf| leaf.want == Some(1)));
+    assert!(stream.prefetch().is_empty());
+    stream.set_fixed_lod(Some(0)).unwrap();
+    stream.select(eye, forward, None, 2.0);
+    assert!(stream.leaves.iter().all(|leaf| leaf.want == Some(0)));
+    stream.set_fixed_lod(None).unwrap();
+    stream.select(eye, forward, None, 3.0);
+    assert_eq!(stream.leaves[0].want, Some(0));
+    assert_eq!(stream.leaves[5].want, Some(1));
+}
+
+#[test]
+fn manual_lod_respects_the_splat_pool_budget() {
+    let mut stream = stream(120);
+    stream.set_fixed_lod(Some(0)).unwrap();
+    stream.select([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], None, 1.0);
+    assert!(stream.leaves.iter().any(|leaf| leaf.want == Some(1)));
+    let selected: u32 = stream
+        .leaves
+        .iter()
+        .zip(&stream.meta.leaves)
+        .filter_map(|(state, leaf)| state.want.and_then(|lod| leaf.lods[lod]))
+        .map(|range| range.count)
+        .sum();
+    assert!(selected <= stream.settings.capacity * SELECT_SHARE as u32 / 100);
+}
+
+#[test]
+fn manual_lod_uses_a_level_that_exists_for_each_leaf() {
+    let mut meta = tree(6);
+    meta.leaves[0].lods[1] = None;
+    let mut stream = LevelStream::new(
+        meta,
+        &[Some(meta_json()), Some(meta_json())],
+        StreamSettings::default(),
+    )
+    .unwrap();
+    stream.set_fixed_lod(Some(1)).unwrap();
+    stream.select([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], None, 1.0);
+    assert_eq!(stream.leaves[0].want, Some(0));
+    assert_eq!(stream.leaves[1].want, Some(1));
+}
+
+#[test]
+fn forward_ellipse_covers_ahead_more_than_behind_and_turns_with_the_camera() {
+    let intersects = |point: [f32; 3], direction: [f32; 3], margin| {
+        forward_ellipse_intersects([0.0; 3], direction, point, point, 100.0, 0.3, 0.55, margin)
+    };
+    assert!(intersects([99.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1.0));
+    assert!(!intersects([101.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1.0));
+    assert!(intersects([-29.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1.0));
+    assert!(!intersects([-31.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1.0));
+    assert!(intersects([35.0, 0.0, 54.0], [1.0, 0.0, 0.0], 1.0));
+    assert!(!intersects([35.0, 0.0, 56.0], [1.0, 0.0, 0.0], 1.0));
+    assert!(intersects([0.0, 0.0, 99.0], [0.0, 0.0, 1.0], 1.0));
+    assert!(intersects([105.0, 0.0, 0.0], [1.0, 0.0, 0.0], 1.15));
+    // A box intersecting the edge is retained even when no corner lies in the oval.
+    assert!(forward_ellipse_intersects(
+        [0.0; 3],
+        [1.0, 0.0, 0.0],
+        [34.0, -1.0, -100.0],
+        [36.0, 1.0, 100.0],
+        100.0,
+        0.3,
+        0.55,
+        1.0
+    ));
+}
+
+#[test]
+fn forward_region_retains_resident_leaves_briefly_when_turning() {
+    let mut stream = stream(10_000);
+    stream.settings.max_distance_m = 25.0;
+    stream.settings.draw_region = DrawRegion::ForwardEllipse {
+        rear_fraction: 0.3,
+        side_fraction: 0.55,
+    };
+    stream.select([0.0; 3], [1.0, 0.0, 0.0], None, 0.0);
+    assert!(stream.leaves[2].want.is_some());
+    assert!(stream.leaves[3].want.is_none());
+    stream.leaves[2].have = Some(Resident {
+        lod: 1,
+        start: 0,
+        count: 10,
+        palette: None,
+        born: 0.0,
+    });
+    stream.select([0.0; 3], [-1.0, 0.0, 0.0], None, 0.1);
+    assert!(
+        stream.leaves[2].want.is_some(),
+        "an abrupt turn must not immediately remove resident detail"
+    );
+    stream.select([0.0; 3], [-1.0, 0.0, 0.0], None, 0.7);
+    assert!(stream.leaves[2].want.is_some());
+    stream.select([0.0; 3], [-1.0, 0.0, 0.0], None, 1.4);
+    assert!(
+        stream.leaves[2].want.is_none(),
+        "an out-of-region leaf can retire after the hold time"
+    );
+}
+
+#[test]
+fn octree_candidates_include_all_intersecting_and_previously_active_regions() {
+    use std::collections::BTreeSet;
+    let meta = tree(200);
+    let mut index = SpatialOctree::new(&meta.leaves);
+    assert!(
+        index.node_count() > 1,
+        "spatial index must actually subdivide"
+    );
+    index.set_active(vec![199]);
+    for direction in [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]] {
+        let eye = [250.0, 0.5, 0.5];
+        let candidates: BTreeSet<_> = index
+            .forward_candidates(eye, direction, 60.0, 0.3, 0.55)
+            .into_iter()
+            .collect();
+        assert!(
+            candidates.contains(&199),
+            "previously active regions must be revisited for retirement"
+        );
+        for (i, leaf) in meta.leaves.iter().enumerate() {
+            if forward_ellipse_intersects(eye, direction, leaf.min, leaf.max, 60.0, 0.3, 0.55, 1.2)
+            {
+                assert!(
+                    candidates.contains(&i),
+                    "octree omitted intersecting region {i}"
+                );
+            }
+        }
+        assert!(
+            candidates.len() < meta.leaves.len(),
+            "octree should prune distant regions"
+        );
+    }
+}
+
+#[test]
+fn far_offscreen_regions_yield_budget_after_a_retention_delay() {
+    let mut meta = tree(3);
+    meta.leaves[0].min[0] = -30.0;
+    meta.leaves[0].max[0] = -25.0;
+    let mut stream = LevelStream::new(
+        meta,
+        &[Some(meta_json()), Some(meta_json())],
+        StreamSettings {
+            capacity: 10_000,
+            offscreen_keep_m: 8.0,
+            any_view_m: 0.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    stream.select([0.0; 3], [1.0, 0.0, 0.0], None, 0.0);
+    assert!(
+        stream.leaves[0].want.is_none(),
+        "far regions behind the player should not consume the pool"
+    );
+    assert!(stream.leaves[1].want.is_some());
+    stream.leaves[1].have = Some(Resident {
+        lod: 1,
+        start: 0,
+        count: 10,
+        palette: None,
+        born: 0.0,
+    });
+    stream.select([0.0; 3], [-1.0, 0.0, 0.0], None, 0.1);
+    assert!(
+        stream.leaves[1].want.is_some(),
+        "a quick turn should retain previously visible detail"
+    );
+    stream.select([0.0; 3], [-1.0, 0.0, 0.0], None, 1.4);
+    assert!(
+        stream.leaves[1].want.is_none(),
+        "offscreen detail retires after the delay"
+    );
+}
+
+#[test]
+fn center_of_view_wins_lod_zero_under_a_tight_budget() {
+    let mut meta = tree(2);
+    meta.leaves[0].min = [-1.0, -1.0, -21.0];
+    meta.leaves[0].max = [1.0, 1.0, -19.0];
+    meta.leaves[1].min = [6.0, -1.0, -11.0];
+    meta.leaves[1].max = [8.0, 1.0, -9.0];
+    let settings = StreamSettings {
+        capacity: 150,
+        near_lod0_m: 50.0,
+        center_lod0_m: 100.0,
+        ..Default::default()
+    };
+    let mut stream =
+        LevelStream::new(meta, &[Some(meta_json()), Some(meta_json())], settings).unwrap();
+    let eye = [0.0; 3];
+    let forward = [0.0, 0.0, -1.0];
+    let projection = crate::camera::perspective(90.0f32.to_radians(), 1.0, 0.05, 200.0);
+    let view = crate::camera::look_at(eye, forward, [0.0, 1.0, 0.0]);
+    let clip = crate::camera::mul(&projection, &view);
+    stream.select(eye, forward, Some(&clip), 0.0);
+    assert!(stream.leaves[0].centered);
+    assert!(!stream.leaves[1].centered);
+    assert_eq!(
+        stream.leaves[0].want,
+        Some(0),
+        "center detail gets the first refinement"
+    );
+    assert_eq!(
+        stream.leaves[1].want,
+        Some(1),
+        "a closer peripheral region yields under pressure"
+    );
+    assert_eq!(
+        stream.requests()[0].0,
+        0,
+        "center LOD 0 is requested before peripheral coarse data"
+    );
+    stream.set_fixed_lod(Some(1)).unwrap();
+    stream.select(eye, forward, Some(&clip), 1.0);
+    assert_eq!(
+        stream.leaves[0].want,
+        Some(1),
+        "manual LOD remains authoritative"
+    );
+}
+
+#[test]
+fn compaction_selects_the_cheapest_holes_and_preserves_pool_coverage() {
+    let mut s = stream(340);
+    s.free = vec![(0, 50), (100, 80), (240, 100)];
+    let resident = |start, count| Resident {
+        lod: 0,
+        start,
+        count,
+        palette: None,
+        born: 0.0,
+    };
+    s.leaves[0].have = Some(resident(50, 50));
+    s.leaves[1].have = Some(resident(180, 60));
+    assert!(s.check_pool().is_ok());
+    let (leaf, hole, size) = s
+        .compaction_move(150)
+        .expect("fragmented space can be joined");
+    assert_eq!((leaf, hole, size), (1, 100, 80));
+    let mut moved = s.leaves[leaf].have.unwrap();
+    s.take_exact(hole, size);
+    s.release(hole + moved.count, size);
+    moved.start = hole;
+    s.leaves[leaf].have = Some(moved);
+    assert_eq!(s.free, vec![(0, 50), (160, 180)]);
+    assert!(s.check_pool().is_ok());
+    assert_eq!(s.allocate(150), Some(160));
 }

@@ -1,6 +1,18 @@
 //! Configuration and diagnostics exposed by the streaming API.
 use super::{LAYOUT_HASH_OFFSET, LAYOUT_HASH_PRIME};
 
+/// The horizontal footprint used for streaming and drawing level regions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DrawRegion {
+    /// A sphere centered on the camera, useful for general-purpose viewers.
+    Radial,
+    /// An oval shifted forward: rear and lateral reach are fractions of forward reach.
+    ForwardEllipse {
+        rear_fraction: f32,
+        side_fraction: f32,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StreamSettings {
     /// LOD 0 reaches this far from the camera, in level units (metres); each further LOD doubles it. Used only when
@@ -13,12 +25,25 @@ pub struct StreamSettings {
     /// Pool slots: the most splats resident at once. 0 sizes the pool to the level (`AUTO_POOL_SHARE` of its LOD 0
     /// splats, between `AUTO_POOL_MIN` and `AUTO_POOL_MAX`): a dense scan needs more room for the same picture.
     pub capacity: u32,
-    /// Leaves farther than this from the camera are not drawn at all (a draw distance), in level units.
+    /// Forward reach (or sphere radius for radial mode), in level units.
     pub max_distance_m: f32,
+    /// Spatial footprint for selecting level regions.
+    pub draw_region: DrawRegion,
     /// Extra LODs for leaves outside the view (behind the camera, or off to the side when the view is known).
     pub behind_bias: usize,
     /// Splats re-encoded and uploaded per frame, at most.
     pub uploads_per_frame: u32,
+    /// In automatic mode, visible regions this close request LOD 0 before farther regions.
+    /// Zero disables the near-detail preference.
+    pub near_lod0_m: f32,
+    /// In automatic mode, the central half of the camera view requests LOD 0 up to this distance.
+    /// Zero disables the center-of-view preference.
+    pub center_lod0_m: f32,
+    /// Keep all nearby regions, but omit far regions beyond the widened view frustum.
+    /// Infinity disables this optimization.
+    pub offscreen_keep_m: f32,
+    /// Permit cutting an in-progress fade when the pool has no free space.
+    pub allow_fade_cuts: bool,
     /// LODs finer than this keep their spherical harmonics.
     pub sh_lods: usize,
     /// Decoded chunk files kept in memory once nothing pending needs them.
@@ -40,9 +65,14 @@ impl Default for StreamSettings {
             lod_distance_m: 24.0,
             lod_error_px: 1.5,
             max_distance_m: 150.0,
+            draw_region: DrawRegion::Radial,
             capacity: 3_000_000,
             behind_bias: 1,
             uploads_per_frame: 250_000,
+            near_lod0_m: 0.0,
+            center_lod0_m: 0.0,
+            offscreen_keep_m: f32::INFINITY,
+            allow_fade_cuts: true,
             sh_lods: 1,
             cache_chunks: 8,
             max_in_flight: 3,
@@ -72,7 +102,12 @@ pub struct StreamStats {
     pub wanted_splats: u64,
     /// The highest used pool slot: what the sort covers.
     pub active_slots: u32,
+    /// Total free pool slots and the largest contiguous allocation available.
+    pub free_slots: u32,
+    pub largest_free_range: u32,
     pub leaves_per_lod: Vec<u32>,
+    /// Number of nodes in the streaming region's spatial index.
+    pub octree_nodes: usize,
     /// Leaves waiting for their first data.
     pub leaves_empty: u32,
     /// Leaves past the draw distance.
@@ -176,7 +211,10 @@ impl StreamStats {
             "resident_splats": self.resident_splats,
             "wanted_splats": self.wanted_splats,
             "active_slots": self.active_slots,
+            "free_slots": self.free_slots,
+            "largest_free_range": self.largest_free_range,
             "leaves_per_lod": self.leaves_per_lod,
+            "octree_nodes": self.octree_nodes,
             "leaves_empty": self.leaves_empty,
             "leaves_hidden": self.leaves_hidden,
             "leaves_pending": self.leaves_pending,

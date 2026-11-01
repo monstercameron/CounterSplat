@@ -1,7 +1,7 @@
 //! A streamed level's `lod-meta.json`, as splat-transform writes it: the chunk files of every level of detail.
 //!
-//! Chunk `L_c/` holds part of level of detail `L` (0 is the finest) as an unpacked SOG bundle. This engine draws one
-//! whole level of detail: the finest whose splat count fits the budget.
+//! Chunk `L_c/` holds part of level of detail `L` (0 is the finest) as an unpacked SOG bundle. The renderer
+//! selects and streams levels independently for each spatial leaf, subject to its pool budget.
 
 /// The parts of `lod-meta.json` used here.
 #[derive(Debug, Clone, PartialEq)]

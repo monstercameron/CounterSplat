@@ -16,6 +16,27 @@
     },
     "PlayerControls": {
       "storage": "native"
+    },
+    "LevelAssets": {
+      "storage": "native"
+    },
+    "LevelSettings": {
+      "storage": "native"
+    },
+    "VoxelCollider": {
+      "storage": "native"
+    },
+    "VoxelColliderState": {
+      "storage": "native"
+    },
+    "PhysicsBody": {
+      "storage": "native"
+    },
+    "Transform": {
+      "storage": "native"
+    },
+    "PlayerRig": {
+      "storage": "native"
     }
   },
   "resources": {
@@ -59,12 +80,36 @@
         "uri": "../scripts/player_controls.lua",
         "autoload": false,
         "load": "preload"
+      },
+      "level-settings": {
+        "language": "lua",
+        "uri": "../scripts/level_settings.lua",
+        "autoload": false,
+        "load": "preload"
+      },
+      "voxel-settings": {
+        "language": "lua",
+        "uri": "../scripts/voxel_settings.lua",
+        "autoload": false,
+        "load": "preload"
+      },
+      "physics-system": {
+        "language": "lua",
+        "uri": "../scripts/physics_system.lua",
+        "autoload": false,
+        "load": "preload"
+      },
+      "entity-inspector": {
+        "language": "lua",
+        "uri": "../scripts/entity_inspector.lua",
+        "autoload": false,
+        "load": "preload"
       }
     },
     "preview": {
       "level_asset": "level",
       "skybox_entity": "skybox",
-      "capacity": 300000,
+      "capacity": 3000000,
       "rotate_z_180": true,
       "ui": {
         "animate": "animate",
@@ -82,9 +127,14 @@
       },
       "browser_scripts": [
         "gameplay-navigation",
-        "player-controls"
+        "player-controls",
+        "level-settings",
+        "voxel-settings",
+        "physics-system",
+        "entity-inspector"
       ],
-      "player_spawn": "level"
+      "player_spawn": "level",
+      "level_entity": "active_level"
     }
   },
   "entities": [
@@ -98,6 +148,28 @@
           "priority": 0,
           "exposure": 1.0,
           "rotation_degrees": 0.0
+        }
+      }
+    },
+    {
+      "id": "active_level",
+      "layer": "level",
+      "components": {
+        "LevelAssets": {
+          "source": "level"
+        },
+        "LevelSettings": {
+          "lod": null,
+          "draw_distance": 150.0
+        },
+        "VoxelCollider": {
+          "enabled": true,
+          "visible": false,
+          "physics": true,
+          "player_radius": 0.2
+        },
+        "VoxelColliderState": {
+          "status": "loading"
         }
       }
     },
@@ -985,7 +1057,27 @@
       "layer": "player",
       "components": {
         "PlayerCamera": {},
-        "PlayerControls": {}
+        "PlayerControls": {
+          "jump_speed": 5.0,
+          "jump_gravity": 18.0,
+          "bindings": {
+            "jump": "Space"
+          }
+        },
+        "PhysicsBody": {
+          "enabled": true,
+          "collision_enabled": true,
+          "gravity_enabled": false,
+          "radius": 0.25,
+          "gravity": 18.0,
+          "collision_offset_y": -1.45
+        },
+        "PlayerRig": {
+          "eye_height_m": 1.7,
+          "radius_m": 0.25,
+          "units_per_meter": 1.0,
+          "auto_align_spawn": true
+        }
       }
     },
     {
@@ -997,7 +1089,7 @@
             "x": 20,
             "y": 20,
             "width": 360,
-            "height": 450
+            "height": 562
           },
           "z": 90,
           "widget": {
@@ -1041,7 +1133,7 @@
           "z": 91,
           "widget": {
             "type": "text",
-            "text": "Drag the scene to look • Esc opens menu",
+            "text": "Click scene to lock mouse · ~ unlocks · Esc menu",
             "align": "left"
           },
           "style": {
@@ -1181,13 +1273,59 @@
       "parent": "controls_panel"
     },
     {
-      "id": "controls_invert",
+      "id": "controls_jump_speed",
       "layer": "ui",
       "components": {
         "UiElement": {
           "rect": {
             "x": 12,
             "y": 161,
+            "width": 330,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "slider",
+            "label": "Jump speed",
+            "value": 5.0,
+            "min": 0.5,
+            "max": 15.0
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_jump_gravity",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 189,
+            "width": 330,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "slider",
+            "label": "Jump gravity",
+            "value": 18.0,
+            "min": 2.0,
+            "max": 60.0
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_invert",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 273,
             "width": 220,
             "height": 22
           },
@@ -1208,7 +1346,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 186,
+            "y": 298,
             "width": 335,
             "height": 18
           },
@@ -1250,7 +1388,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 209,
+            "y": 321,
             "width": 66,
             "height": 24
           },
@@ -1292,7 +1430,7 @@
         "UiElement": {
           "rect": {
             "x": 78,
-            "y": 209,
+            "y": 321,
             "width": 88,
             "height": 24
           },
@@ -1315,7 +1453,7 @@
         "UiElement": {
           "rect": {
             "x": 182,
-            "y": 209,
+            "y": 321,
             "width": 66,
             "height": 24
           },
@@ -1357,7 +1495,7 @@
         "UiElement": {
           "rect": {
             "x": 248,
-            "y": 209,
+            "y": 321,
             "width": 88,
             "height": 24
           },
@@ -1380,7 +1518,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 243,
+            "y": 355,
             "width": 66,
             "height": 24
           },
@@ -1422,7 +1560,7 @@
         "UiElement": {
           "rect": {
             "x": 78,
-            "y": 243,
+            "y": 355,
             "width": 88,
             "height": 24
           },
@@ -1445,7 +1583,7 @@
         "UiElement": {
           "rect": {
             "x": 182,
-            "y": 243,
+            "y": 355,
             "width": 66,
             "height": 24
           },
@@ -1487,7 +1625,7 @@
         "UiElement": {
           "rect": {
             "x": 248,
-            "y": 243,
+            "y": 355,
             "width": 88,
             "height": 24
           },
@@ -1510,7 +1648,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 277,
+            "y": 389,
             "width": 66,
             "height": 24
           },
@@ -1552,7 +1690,7 @@
         "UiElement": {
           "rect": {
             "x": 78,
-            "y": 277,
+            "y": 389,
             "width": 88,
             "height": 24
           },
@@ -1575,7 +1713,7 @@
         "UiElement": {
           "rect": {
             "x": 182,
-            "y": 277,
+            "y": 389,
             "width": 66,
             "height": 24
           },
@@ -1617,7 +1755,7 @@
         "UiElement": {
           "rect": {
             "x": 248,
-            "y": 277,
+            "y": 389,
             "width": 88,
             "height": 24
           },
@@ -1640,7 +1778,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 311,
+            "y": 423,
             "width": 66,
             "height": 24
           },
@@ -1682,7 +1820,7 @@
         "UiElement": {
           "rect": {
             "x": 78,
-            "y": 311,
+            "y": 423,
             "width": 88,
             "height": 24
           },
@@ -1699,13 +1837,78 @@
       "parent": "controls_panel"
     },
     {
+      "id": "label_key_jump",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 182,
+            "y": 423,
+            "width": 66,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Jump",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "key_jump",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 248,
+            "y": 423,
+            "width": 88,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "button",
+            "label": "Space"
+          },
+          "style": {
+            "font_size": 12
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
       "id": "controls_notice",
       "layer": "ui",
       "components": {
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 346,
+            "y": 458,
             "width": 335,
             "height": 17
           },
@@ -1747,7 +1950,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 368,
+            "y": 480,
             "width": 332,
             "height": 28
           },
@@ -1782,6 +1985,826 @@
             "value": 60.0,
             "min": 1.0,
             "max": 178.9
+          }
+        }
+      }
+    },
+    {
+      "id": "level_panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 20,
+            "y": 362,
+            "width": 274,
+            "height": 305
+          },
+          "z": 30,
+          "widget": {
+            "type": "panel"
+          },
+          "style": {
+            "fill": [
+              17,
+              37,
+              51,
+              235
+            ],
+            "border": [
+              116,
+              157,
+              161,
+              180
+            ],
+            "rounding": 7
+          },
+          "collapsible": {
+            "title": "Level assets",
+            "collapsed": false,
+            "header_height": 34
+          }
+        }
+      }
+    },
+    {
+      "id": "level_name",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 5,
+            "width": 246,
+            "height": 22
+          },
+          "z": 31,
+          "widget": {
+            "type": "text",
+            "text": "Loading level",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              228,
+              241,
+              237,
+              255
+            ],
+            "font_size": 14
+          }
+        }
+      }
+    },
+    {
+      "id": "level_summary",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 27,
+            "width": 246,
+            "height": 19
+          },
+          "z": 31,
+          "widget": {
+            "type": "text",
+            "text": "Level assets",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      }
+    },
+    {
+      "id": "level_auto",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 49,
+            "width": 246,
+            "height": 23
+          },
+          "z": 31,
+          "widget": {
+            "type": "checkbox",
+            "label": "Auto LOD",
+            "checked": true
+          }
+        }
+      }
+    },
+    {
+      "id": "level_lod",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 74,
+            "width": 246,
+            "height": 24
+          },
+          "z": 31,
+          "widget": {
+            "type": "slider",
+            "label": "LOD",
+            "min": 0.0,
+            "max": 1.0,
+            "value": 0.0
+          }
+        }
+      }
+    },
+    {
+      "id": "level_hint",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 99,
+            "width": 246,
+            "height": 20
+          },
+          "z": 31,
+          "widget": {
+            "type": "text",
+            "text": "0 = finest; higher = coarser",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      }
+    },
+    {
+      "id": "level_draw_distance",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 121,
+            "width": 246,
+            "height": 24
+          },
+          "z": 31,
+          "widget": {
+            "type": "slider",
+            "label": "Draw distance",
+            "min": 10.0,
+            "max": 1000.0,
+            "value": 150.0
+          }
+        }
+      }
+    },
+    {
+      "id": "voxel_enabled",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 149,
+            "width": 246,
+            "height": 22
+          },
+          "z": 31,
+          "widget": {
+            "type": "checkbox",
+            "label": "Enable voxels",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "voxel_visible",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 173,
+            "width": 246,
+            "height": 22
+          },
+          "z": 31,
+          "widget": {
+            "type": "checkbox",
+            "label": "Show voxels",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "voxel_physics",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 197,
+            "width": 246,
+            "height": 22
+          },
+          "z": 31,
+          "widget": {
+            "type": "checkbox",
+            "label": "Level collision",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "voxel_status",
+      "layer": "ui",
+      "parent": "level_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 221,
+            "width": 246,
+            "height": 24
+          },
+          "z": 31,
+          "widget": {
+            "type": "text",
+            "text": "Loading voxel collider...",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      }
+    },
+    {
+      "id": "entity_inspector",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 310,
+            "y": 20,
+            "width": 340,
+            "height": 442
+          },
+          "z": 110,
+          "widget": {
+            "type": "panel"
+          },
+          "style": {
+            "fill": [
+              13,
+              29,
+              37,
+              245
+            ],
+            "border": [
+              116,
+              157,
+              161,
+              210
+            ],
+            "rounding": 7
+          },
+          "collapsible": {
+            "title": "Entity settings",
+            "collapsed": true,
+            "header_height": 34
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_prev",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 8,
+            "width": 34,
+            "height": 24
+          },
+          "z": 111,
+          "widget": {
+            "type": "button",
+            "label": "<"
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_entity",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 52,
+            "y": 8,
+            "width": 224,
+            "height": 24
+          },
+          "z": 111,
+          "widget": {
+            "type": "text",
+            "text": "Player",
+            "align": "center"
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_next",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 286,
+            "y": 8,
+            "width": 34,
+            "height": 24
+          },
+          "z": 111,
+          "widget": {
+            "type": "button",
+            "label": ">"
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_attach",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 38,
+            "width": 308,
+            "height": 25
+          },
+          "z": 111,
+          "widget": {
+            "type": "button",
+            "label": "Attach physics"
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_enabled",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 68,
+            "width": 150,
+            "height": 22
+          },
+          "z": 111,
+          "widget": {
+            "type": "checkbox",
+            "label": "Physics enabled",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_collision",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 175,
+            "y": 68,
+            "width": 145,
+            "height": 22
+          },
+          "z": 111,
+          "widget": {
+            "type": "checkbox",
+            "label": "Collision",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_gravity",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 94,
+            "width": 150,
+            "height": 22
+          },
+          "z": 111,
+          "widget": {
+            "type": "checkbox",
+            "label": "Gravity",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_radius",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 122,
+            "width": 308,
+            "height": 23
+          },
+          "z": 111,
+          "widget": {
+            "type": "slider",
+            "label": "Collision radius",
+            "value": 0.2,
+            "min": 0.05,
+            "max": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_gravity_strength",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 150,
+            "width": 308,
+            "height": 23
+          },
+          "z": 111,
+          "widget": {
+            "type": "slider",
+            "label": "Gravity strength",
+            "value": 18.0,
+            "min": 0.0,
+            "max": 100.0
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_exports_title",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 210,
+            "width": 200,
+            "height": 20
+          },
+          "z": 111,
+          "widget": {
+            "type": "text",
+            "text": "Lua exports",
+            "align": "left"
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_export_1",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 232,
+            "width": 308,
+            "height": 23
+          },
+          "z": 111,
+          "widget": {
+            "type": "checkbox",
+            "label": "",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_export_2",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 259,
+            "width": 308,
+            "height": 23
+          },
+          "z": 111,
+          "widget": {
+            "type": "checkbox",
+            "label": "",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_export_3",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 286,
+            "width": 308,
+            "height": 23
+          },
+          "z": 111,
+          "widget": {
+            "type": "checkbox",
+            "label": "",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_export_4",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 313,
+            "width": 308,
+            "height": 23
+          },
+          "z": 111,
+          "widget": {
+            "type": "checkbox",
+            "label": "",
+            "checked": false
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_export_prev",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 344,
+            "width": 34,
+            "height": 24
+          },
+          "z": 111,
+          "widget": {
+            "type": "button",
+            "label": "<"
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_export_page",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 54,
+            "y": 344,
+            "width": 222,
+            "height": 24
+          },
+          "z": 111,
+          "widget": {
+            "type": "text",
+            "text": "No exports",
+            "align": "center"
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_export_next",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 286,
+            "y": 344,
+            "width": 34,
+            "height": 24
+          },
+          "z": 111,
+          "widget": {
+            "type": "button",
+            "label": ">"
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_state",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 376,
+            "width": 308,
+            "height": 22
+          },
+          "z": 111,
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      }
+    },
+    {
+      "id": "inspector_offset",
+      "layer": "ui",
+      "parent": "entity_inspector",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 178,
+            "width": 308,
+            "height": 23
+          },
+          "z": 111,
+          "widget": {
+            "type": "slider",
+            "label": "Collider offset Y",
+            "value": 0,
+            "min": -8.0,
+            "max": 8.0
+          }
+        }
+      }
+    },
+    {
+      "id": "controls_eye_height",
+      "layer": "ui",
+      "parent": "controls_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 217,
+            "width": 330,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "slider",
+            "label": "Eye height (m)",
+            "value": 1.7,
+            "min": 0.7,
+            "max": 2.5
+          }
+        }
+      }
+    },
+    {
+      "id": "controls_player_scale",
+      "layer": "ui",
+      "parent": "controls_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 245,
+            "width": 330,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "slider",
+            "label": "Scale vs level",
+            "value": 1.0,
+            "min": 0.5,
+            "max": 2.5
           }
         }
       }

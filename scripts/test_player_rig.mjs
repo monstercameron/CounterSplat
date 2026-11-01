@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {publishPlayerRigData, savePlayerRig} from '../preview/player_rig.js';
+const items=new Map();
+const storage={getItem:key=>items.get(key) ?? null, setItem:(key,value)=>items.set(key,value)};
+const resources={};
+const game={ecs_operation(_layer, encoded) { const op=JSON.parse(encoded); assert.equal(op.op,'set_resource'); resources[op.name]=op.value; return '{}'; }};
+const a={id:'aaaaaaaa',player_units_per_meter:1.5}, b={id:'bbbbbbbb'};
+const profile={eye_height_m:1.8,radius_m:0.25,units_per_meter:1.3,auto_align_spawn:true};
+savePlayerRig(a,profile,storage);
+publishPlayerRigData(game,a,storage);
+assert.equal(resources['player.level_units_per_meter'],1.5);
+assert.deepEqual(resources['player.saved_rig'],profile);
+delete resources['player.level_units_per_meter']; delete resources['player.saved_rig'];
+publishPlayerRigData(game,b,storage);
+assert.deepEqual(resources,{});
+console.log('Per-level player rig storage tests passed.');

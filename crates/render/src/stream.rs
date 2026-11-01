@@ -1,28 +1,14 @@
 //! Level-of-detail streaming for a level's splats: the finest detail near the camera, coarser further away, and only
 //! the chunk files that selection needs in memory.
 //!
-//! A streamed level (`lod-meta.json`) is a tree whose leaves are boxes of splats, each stored at every level of
-//! detail (LOD 0 finest). Each frame:
+//! A streamed level (`lod-meta.json`) describes spatial leaves with one or more detail levels (LOD 0 is finest).
+//! The browser indexes their bounds in an octree and queries a forward-biased oval; previously active regions remain
+//! tracked while they leave the volume. Each frame selection prioritizes centered, visible, and nearby regions within
+//! a fixed GPU budget. Manual LOD requests can override automatic screen-space selection.
 //!
-//! 1. **Select**: every leaf picks an LOD using screen-space error, or distance bands when that mode is disabled. Leaves outside the view (behind the camera or off to the side) go
-//!    `behind_bias` LODs coarser, except those near the camera, which keep their detail whichever way it looks. A leaf only switches once it is clearly past a boundary (hysteresis), and a leaf
-//!    that would go coarser keeps its detail for `keep_s` first, so glancing away or a brief squeeze on the budget
-//!    does not throw detail away that is about to be needed again. The pool is a budget: every leaf starts at its
-//!    coarsest LOD and leaves are refined, those in view first and then nearest first, while the extra splats fit,
-//!    so detail goes where it is seen, largest first. When the pool cannot hold every leaf's target, the LOD distance
-//!    shrinks a little each frame until it can (and grows back when there is room), so the targets fit the pool
-//!    and leaves at the edge of the budget stop trading detail.
-//! 2. **Request**: chunk files that hold a wanted leaf range and are not loaded are handed to the host to fetch and
-//!    decode (`requests`, then `insert`). Leaves with nothing on screen ask for their coarsest file first, so the whole
-//!    level appears quickly and refines from there.
-//! 3. **Apply**: leaves whose wanted range is loaded are re-encoded into a shared format and written into a fixed
-//!    GPU pool (`scene::pool`), in view and nearest first, up to `uploads_per_frame` splats per frame. A leaf's new
-//!    range dissolves in over the first half of `fade_s` on top of the range it replaces, which then dissolves out
-//!    over the second half, and only then is the old range released (`fades`: the depth-key pass drops a growing or shrinking share of each fading range's splats), so a
-//!    change of LOD is a short crossfade instead of a pop, and a leaf never disappears while it changes. One sort and
-//!    one draw still cover the whole pool, so the depth order is correct across leaves.
-//! 4. **Evict**: a chunk file is dropped from memory once no pending upload needs it, beyond a small cache. Files
-//!    for the next finer LOD of leaves the camera is approaching are fetched ahead of need and kept (`prefetch`).
+//! The host fetches and decodes the requested chunk files. Loaded ranges enter a shared GPU pool incrementally, and
+//! replacements crossfade. Retention and hysteresis limit churn; when free pool space is fragmented, resident ranges
+//! move incrementally to make room without discarding them. Unneeded decoded chunks are evicted from a bounded cache.
 //!
 //! The shared format: positions re-quantised to the union of every chunk's range (16 bits per axis in log space, as
 //! SOG stores them), codebooks merged over every chunk, and SH centroids in palette slots of the pool's centroid
@@ -35,17 +21,19 @@ use crate::sog::{self, Bundle, Meta};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod selection;
+mod spatial;
 mod types;
 mod upload;
 
 use selection::{
-    box_in_frustum, coarsest_available, effective_distance, frustum_planes, leaf_count,
-    level_at_values,
+    box_in_frustum, coarsest_available, effective_distance, forward_ellipse_intersects,
+    frustum_planes, leaf_count, level_at_values,
 };
+use spatial::SpatialOctree;
 use types::{hash_allocation_event, hash_resident_layout};
 pub use types::{
-    DebugLeaf, LayoutAllocationEvent, ResidentRangeLayout, StreamLayoutDiagnostics, StreamSettings,
-    StreamStats,
+    DebugLeaf, DrawRegion, LayoutAllocationEvent, ResidentRangeLayout, StreamLayoutDiagnostics,
+    StreamSettings, StreamStats,
 };
 #[cfg(test)]
 use upload::{decoded_shared_centre, direct_shared_centre, make_centre_lookup};
@@ -82,8 +70,14 @@ struct LeafState {
     distance: f32,
     /// In the view frustum (always true without one).
     visible: bool,
+    /// Intersects the center-of-view region and receives priority for fine detail.
+    centered: bool,
     /// Since when the selection has wanted this leaf coarser than it is.
     coarsen_since: Option<f32>,
+    /// First time a resident region left the larger retention footprint.
+    outside_since: Option<f32>,
+    /// First time a far resident region left the widened view.
+    offscreen_since: Option<f32>,
 }
 
 /// One in-range leaf competing for the pool. Keeping its priority here avoids recomputing it in every comparison.
@@ -93,6 +87,7 @@ struct SelectionCandidate {
     coarse: usize,
     priority: f32,
     visible: bool,
+    centered: bool,
 }
 
 struct Chunk {
@@ -110,7 +105,11 @@ struct Remap {
 
 pub struct LevelStream {
     pub settings: StreamSettings,
+    /// None follows screen-space selection; Some requests a level subject to pool capacity.
+    fixed_lod: Option<usize>,
     meta: LodMeta,
+    /// Spatial index of regions and their previously selected IDs.
+    spatial: SpatialOctree,
     shared: Meta,
     remaps: Vec<Option<Remap>>,
     /// Shared-quantized coordinate decoding, initialized on the first upload.
@@ -246,10 +245,14 @@ impl LevelStream {
                 have: None,
                 distance: f32::MAX,
                 visible: true,
+                centered: false,
                 coarsen_since: None,
+                outside_since: None,
+                offscreen_since: None,
             })
             .collect();
         let selection = Vec::with_capacity(meta.leaves.len());
+        let spatial = SpatialOctree::new(&meta.leaves);
         // Sized for the largest centroid texture; `init_pool` fits it to the pool's.
         let palettes = vec![None; ((POOL_CENTROID_ROWS - 1) / PALETTE_ROWS) as usize];
         let spacing = meta
@@ -269,6 +272,7 @@ impl LevelStream {
             free: vec![(0, settings.capacity)],
             settings,
             meta,
+            spatial,
             shared,
             remaps,
             centre_lookup: CentreLookup::Uninitialized,
@@ -290,6 +294,7 @@ impl LevelStream {
             squeezed: false,
             recent: Default::default(),
             detail_scale: 1.0,
+            fixed_lod: None,
             spacing,
             focal_px: 1000.0,
             sharp_m: f32::MAX,
@@ -408,12 +413,67 @@ impl LevelStream {
                 frustum_planes(c, LEAVE_MARGIN),
             )
         });
+        let center_planes = (self.settings.center_lod0_m > 0.0)
+            .then(|| clip.map(|matrix| frustum_planes(matrix, 0.5)))
+            .flatten();
         let mut budget = i64::from(self.settings.capacity) * SELECT_SHARE / 100;
         self.selection.clear();
-        for (i, (state, leaf)) in self.leaves.iter_mut().zip(&self.meta.leaves).enumerate() {
+        // The octree indexes the level regions; active IDs are also revisited so leaving regions can fade out.
+        let candidates: Vec<usize> = match self.settings.draw_region {
+            DrawRegion::ForwardEllipse {
+                rear_fraction,
+                side_fraction,
+            } => self.spatial.forward_candidates(
+                eye,
+                forward,
+                self.settings.max_distance_m,
+                rear_fraction,
+                side_fraction,
+            ),
+            DrawRegion::Radial => (0..self.leaves.len()).collect(),
+        };
+        for i in candidates {
+            let state = &mut self.leaves[i];
+            let leaf = &self.meta.leaves[i];
             let distance = effective_distance(eye, leaf.min, leaf.max);
             state.distance = distance;
-            if distance > self.settings.max_distance_m {
+            let in_region = match self.settings.draw_region {
+                DrawRegion::Radial => distance <= self.settings.max_distance_m,
+                DrawRegion::ForwardEllipse {
+                    rear_fraction,
+                    side_fraction,
+                } => {
+                    // A larger leave footprint keeps small movements and turns from churning the edge.
+                    let margin = if state.want.is_some() && self.started {
+                        1.20
+                    } else {
+                        1.0
+                    };
+                    forward_ellipse_intersects(
+                        eye,
+                        forward,
+                        leaf.min,
+                        leaf.max,
+                        self.settings.max_distance_m,
+                        rear_fraction,
+                        side_fraction,
+                        margin,
+                    )
+                }
+            };
+            if in_region {
+                state.outside_since = None;
+            } else if matches!(self.settings.draw_region, DrawRegion::ForwardEllipse { .. })
+                && state.have.is_some()
+            {
+                // Keep resident chunks briefly beyond the outer edge, then let their normal fade retire them.
+                let since = *state.outside_since.get_or_insert(now_s);
+                if now_s - since >= 1.25 {
+                    state.want = None;
+                    continue;
+                }
+            } else {
+                state.outside_since = None;
                 state.want = None;
                 continue;
             }
@@ -443,36 +503,71 @@ impl LevelStream {
                             >= -radius
                     }
                 };
-            // Apply the out-of-view bias before hysteresis, so both compare the same level.
-            let bias = if state.visible {
-                0.0
-            } else {
-                self.settings.behind_bias as f32
-            };
-            let x = level_at_values(
-                &self.spacing,
-                &self.settings,
-                self.detail_scale,
-                self.focal_px,
-                i,
-                distance,
-            ) + bias;
-            let mut lod = x.floor() as usize;
-            if let Some(have) = state.have {
-                if x > have.lod as f32 - 0.2 && x < have.lod as f32 + 1.2 {
-                    lod = have.lod;
+            state.centered = state.visible
+                && distance <= self.settings.center_lod0_m
+                && center_planes
+                    .as_ref()
+                    .is_some_and(|planes| box_in_frustum(planes, leaf.min, leaf.max));
+            if !state.visible && distance > self.settings.offscreen_keep_m {
+                if state.have.is_some() {
+                    let since = *state.offscreen_since.get_or_insert(now_s);
+                    if now_s - since >= 1.25 {
+                        state.want = None;
+                        continue;
+                    }
+                } else {
+                    state.offscreen_since = None;
+                    state.want = None;
+                    continue;
                 }
+            } else {
+                state.offscreen_since = None;
             }
-            match state.have {
-                Some(have) if lod > have.lod => {
-                    let since = *state.coarsen_since.get_or_insert(now_s);
-                    if now_s - since < self.settings.keep_s {
+            let target = if let Some(fixed) = self.fixed_lod {
+                // A manual request takes effect immediately; the allocator may still choose
+                // an available coarser LOD when this leaf or the GPU budget requires it.
+                state.coarsen_since = None;
+                fixed.min(coarse)
+            } else if state.centered
+                || (state.visible
+                    && self.settings.near_lod0_m > 0.0
+                    && distance <= self.settings.near_lod0_m)
+            {
+                // Nearby detail has priority even when the adaptive budget relaxes distant detail.
+                state.coarsen_since = None;
+                0
+            } else {
+                // Apply the out-of-view bias before hysteresis, so both compare the same level.
+                let bias = if state.visible {
+                    0.0
+                } else {
+                    self.settings.behind_bias as f32
+                };
+                let x = level_at_values(
+                    &self.spacing,
+                    &self.settings,
+                    self.detail_scale,
+                    self.focal_px,
+                    i,
+                    distance,
+                ) + bias;
+                let mut lod = x.floor() as usize;
+                if let Some(have) = state.have {
+                    if x > have.lod as f32 - 0.2 && x < have.lod as f32 + 1.2 {
                         lod = have.lod;
                     }
                 }
-                _ => state.coarsen_since = None,
-            }
-            let target = lod.min(coarse);
+                match state.have {
+                    Some(have) if lod > have.lod => {
+                        let since = *state.coarsen_since.get_or_insert(now_s);
+                        if now_s - since < self.settings.keep_s {
+                            lod = have.lod;
+                        }
+                    }
+                    _ => state.coarsen_since = None,
+                }
+                lod.min(coarse)
+            };
             let settled = state.have.is_some_and(|h| h.lod <= target);
             self.selection.push(SelectionCandidate {
                 leaf: i,
@@ -480,9 +575,16 @@ impl LevelStream {
                 coarse,
                 priority: distance * if settled { STICKY } else { 1.0 },
                 visible: state.visible,
+                centered: state.centered,
             });
             budget -= leaf_count(leaf, coarse);
         }
+        self.spatial.set_active(
+            self.selection
+                .iter()
+                .map(|candidate| candidate.leaf)
+                .collect(),
+        );
         budget
     }
 
@@ -491,8 +593,9 @@ impl LevelStream {
         // The original stable sort kept equal priorities in leaf order. Including the unique index yields the same
         // total order without allocating a temporary sort buffer.
         self.selection.sort_unstable_by(|a, b| {
-            b.visible
-                .cmp(&a.visible)
+            b.centered
+                .cmp(&a.centered)
+                .then(b.visible.cmp(&a.visible))
                 .then(a.priority.total_cmp(&b.priority))
                 .then(a.leaf.cmp(&b.leaf))
         });
@@ -511,8 +614,8 @@ impl LevelStream {
         (budget, refined)
     }
 
-    /// Chunk files to fetch now, as (file index, chunk folder), marked as in flight. Leaves with nothing resident ask
-    /// for their coarsest file first; the rest for their wanted file; leaves in view first, then nearest.
+    /// Chunk files to fetch now, as (file index, chunk folder), marked as in flight. Nearby visible leaves request
+    /// their target directly; other empty leaves ask for their coarsest file first. In-view, nearby work has priority.
     pub fn requests(&mut self) -> Vec<(usize, String)> {
         let room = self
             .settings
@@ -521,13 +624,17 @@ impl LevelStream {
         if room == 0 || !self.started {
             return Vec::new();
         }
-        let mut wanted: Vec<(bool, bool, f32, usize)> = Vec::new();
+        let mut wanted: Vec<(bool, bool, bool, f32, usize)> = Vec::new();
         for (state, leaf) in self.leaves.iter().zip(&self.meta.leaves) {
             let Some(want) = state.want else { continue };
             if state.have.is_some_and(|h| h.lod == want) {
                 continue;
             }
-            let lod = if state.have.is_none() {
+            let prioritize_near = state.centered
+                || (state.visible
+                    && self.settings.near_lod0_m > 0.0
+                    && state.distance <= self.settings.near_lod0_m);
+            let lod = if state.have.is_none() && !prioritize_near {
                 coarsest_available(&leaf.lods)
             } else {
                 Some(want)
@@ -542,20 +649,26 @@ impl LevelStream {
                 continue;
             }
             wanted.push((
+                !state.centered,
                 state.have.is_some(),
                 !state.visible,
                 state.distance,
                 range.file,
             ));
         }
-        wanted.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.total_cmp(&b.2)));
+        wanted.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.cmp(&b.2))
+                .then(a.3.total_cmp(&b.3))
+        });
         // Then prefetch: files the focus is about to need, so detail is ready when it arrives.
         let ahead = self
             .prefetch()
             .into_iter()
-            .map(|(distance, file)| (true, true, distance, file));
+            .map(|(distance, file)| (true, true, true, distance, file));
         let mut out = Vec::new();
-        for (_, _, _, file) in wanted.into_iter().chain(ahead) {
+        for (_, _, _, _, file) in wanted.into_iter().chain(ahead) {
             if out.len() >= room {
                 break;
             }
@@ -575,6 +688,9 @@ impl LevelStream {
     /// when nothing more urgent is, and kept in memory while they qualify, so a leaf refines as soon as the focus is
     /// near enough instead of waiting for its chunk to download and decode.
     fn prefetch(&self) -> Vec<(f32, usize)> {
+        if self.fixed_lod.is_some() {
+            return Vec::new();
+        }
         const PREFETCH_REACH: f32 = 2.5;
         let mut files: BTreeMap<usize, f32> = BTreeMap::new();
         for (i, (state, leaf)) in self.leaves.iter().zip(&self.meta.leaves).enumerate() {
@@ -668,9 +784,9 @@ impl LevelStream {
         // Empty leaves first, then those in view, then nearest.
         order.sort_by(|&a, &b| {
             let (sa, sb) = (&self.leaves[a], &self.leaves[b]);
-            sa.have
-                .is_some()
-                .cmp(&sb.have.is_some())
+            sb.centered
+                .cmp(&sa.centered)
+                .then(sa.have.is_some().cmp(&sb.have.is_some()))
                 .then(sb.visible.cmp(&sa.visible))
                 .then(sa.distance.total_cmp(&sb.distance))
         });
@@ -701,6 +817,11 @@ impl LevelStream {
             // at once would pop many leaves in one frame); then the leaf's old range is released first; if even that
             // does not make room, the leaf keeps its old LOD.
             let mut start = self.allocate(range.count);
+            // With smooth transitions enabled, wait for existing fades to finish rather than
+            // cutting hundreds of fading ranges short when the player moves or changes distance.
+            if start.is_none() && !self.settings.allow_fade_cuts && !self.fading_out.is_empty() {
+                continue;
+            }
             while start.is_none() && !self.fading_out.is_empty() {
                 let oldest = (0..self.fading_out.len())
                     .min_by(|&a, &b| self.fading_out[a].1.total_cmp(&self.fading_out[b].1))
@@ -711,6 +832,13 @@ impl LevelStream {
                 self.squeezed = true;
                 start = self.allocate(range.count);
             }
+            // When space is fragmented, move one resident range into a hole and retry on
+            // the next frame. This keeps existing chunks visible while creating a contiguous
+            // range for the higher-priority upload.
+            if start.is_none() && self.compact_one(pool, queue, range.count) {
+                break;
+            }
+            let mut hard_swap = false;
             let start = match start {
                 Some(start) => start,
                 None => {
@@ -721,6 +849,7 @@ impl LevelStream {
                     match self.allocate(range.count) {
                         Some(start) => {
                             self.hard_swaps += 1;
+                            hard_swap = true;
                             pool.release(queue, old.start, old.count);
                             if let Some(p) = old.palette {
                                 self.unuse_palette(p);
@@ -763,7 +892,8 @@ impl LevelStream {
                 start,
                 count: range.count,
                 palette,
-                born: now,
+                // A hard swap has no old range to fade over: draw the replacement immediately.
+                born: if hard_swap { now - fade_s } else { now },
             });
             self.record_layout_allocation(i, lod, range, start, palette);
             if let Some(chunk) = self.chunks.get_mut(&range.file) {
@@ -803,29 +933,25 @@ impl LevelStream {
         has_sh && room && self.chunks.contains_key(&range.file)
     }
 
-    /// The ranges crossfading now, by start: (first slot, one past the last, share of its splats drawn). A new range
-    /// grows from none to all over the first half of `fade_s` while the range it replaces stays whole; the old one
-    /// then shrinks to none over the second half. One of the two is always whole, so the leaf never thins out.
+    /// The ranges crossfading now, by start: (first slot, one past the last, opacity share).
+    /// Old and new ranges crossfade together to avoid the bright flash of drawing both at full opacity.
     pub fn fades(&self) -> Vec<(u32, u32, f32)> {
         let fade_s = self.settings.fade_s;
         if fade_s <= 0.0 {
             return Vec::new();
         }
-        let half = fade_s / 2.0;
-        let progress = |t: f32| (t / half).clamp(0.0, 1.0);
+        let progress = |t: f32| (t / fade_s).clamp(0.0, 1.0);
         let mut out: Vec<(u32, u32, f32)> = self
             .leaves
             .iter()
             .filter_map(|s| s.have)
-            .filter(|r| self.now - r.born < half)
+            .filter(|r| self.now - r.born < fade_s)
             .map(|r| (r.start, r.start + r.count, progress(self.now - r.born)))
-            .chain(self.fading_out.iter().map(|(r, t0)| {
-                (
-                    r.start,
-                    r.start + r.count,
-                    1.0 - progress(self.now - t0 - half),
-                )
-            }))
+            .chain(
+                self.fading_out
+                    .iter()
+                    .map(|(r, t0)| (r.start, r.start + r.count, 1.0 - progress(self.now - t0))),
+            )
             .collect();
         out.sort_by_key(|f| f.0);
         out
@@ -863,6 +989,17 @@ impl LevelStream {
     /// so the detail does not change with the window size; pass `projection[5] * 540`.
     pub fn set_focal_px(&mut self, focal_px: f32) {
         self.focal_px = focal_px.max(1.0);
+    }
+
+    /// Request one LOD for every leaf, or restore automatic selection with `None`.
+    /// Missing leaf LODs use the nearest available level at or above the request, or the
+    /// coarsest available level if none is coarser. Pool limits may also reduce detail.
+    pub fn set_fixed_lod(&mut self, lod: Option<usize>) -> Result<(), &'static str> {
+        if lod.is_some_and(|value| value >= self.meta.levels()) {
+            return Err("requested LOD is not available in this level");
+        }
+        self.fixed_lod = lod;
+        Ok(())
     }
 
     /// The continuous level a leaf wants at `distance`: by screen-space error, the LOD whose splats land
@@ -976,6 +1113,30 @@ impl LevelStream {
         format!("[{}]", rows.join(","))
     }
 
+    /// A small sample of unresolved uploads, for diagnosing stalled or missing detail.
+    pub fn pending_details(&self, limit: usize) -> Vec<serde_json::Value> {
+        self.leaves
+            .iter()
+            .zip(&self.meta.leaves)
+            .enumerate()
+            .filter_map(|(i, (state, leaf))| {
+                let want = state.want?;
+                if state.have.is_some_and(|have| have.lod == want) {
+                    return None;
+                }
+                let range = leaf.lods[want]?;
+                Some(serde_json::json!({
+                    "leaf": i, "distance": state.distance, "centered": state.centered,
+                    "wanted_lod": want, "resident_lod": state.have.map(|h| h.lod),
+                    "wanted_count": range.count, "resident_count": state.have.map(|h| h.count),
+                    "loaded": self.chunks.contains_key(&range.file),
+                    "in_flight": self.in_flight.contains(&range.file),
+                }))
+            })
+            .take(limit)
+            .collect()
+    }
+
     pub fn stats(&self) -> StreamStats {
         let mut per_lod = vec![0u32; self.meta.levels()];
         let mut empty = 0;
@@ -1010,7 +1171,10 @@ impl LevelStream {
             resident_splats: resident,
             wanted_splats: wanted,
             active_slots: self.high_water(),
+            free_slots: self.free.iter().map(|(_, len)| len).sum(),
+            largest_free_range: self.free.iter().map(|(_, len)| *len).max().unwrap_or(0),
             leaves_per_lod: per_lod,
+            octree_nodes: self.spatial.node_count(),
             leaves_empty: empty,
             leaves_hidden: hidden,
             leaves_pending: pending,
@@ -1215,6 +1379,63 @@ impl LevelStream {
         if let Some((_, users)) = self.palettes[slot].as_mut() {
             *users = users.saturating_sub(1);
         }
+    }
+
+    /// Find the least data to move between free ranges that together satisfy `required`.
+    /// The first hole moves right one adjacent resident at a time, merging holes as it goes.
+    fn compaction_move(&self, required: u32) -> Option<(usize, u32, u32)> {
+        if !self.fading_out.is_empty() {
+            return None;
+        }
+        let (mut end, mut sum) = (0usize, 0u64);
+        let mut best: Option<(u64, usize)> = None;
+        for first in 0..self.free.len() {
+            while end < self.free.len() && sum < u64::from(required) {
+                sum += u64::from(self.free[end].1);
+                end += 1;
+            }
+            if sum >= u64::from(required) && end > first {
+                let (last_start, last_len) = self.free[end - 1];
+                let span = u64::from(last_start + last_len - self.free[first].0);
+                let moved = span - sum;
+                if moved > 0 && best.is_none_or(|(cost, _)| moved < cost) {
+                    best = Some((moved, first));
+                }
+            }
+            sum = sum.saturating_sub(u64::from(self.free[first].1));
+        }
+        let (_, first) = best?;
+        let (hole_start, hole_len) = self.free[first];
+        let following = hole_start + hole_len;
+        let leaf = self
+            .leaves
+            .iter()
+            .position(|s| s.have.is_some_and(|h| h.start == following))?;
+        Some((leaf, hole_start, hole_len))
+    }
+
+    /// Move one range per frame, preserving its palette and fade age. The old tail is culled
+    /// only after the copy, including when source and destination overlap.
+    fn compact_one(&mut self, pool: &GsplatScene, queue: &wgpu::Queue, required: u32) -> bool {
+        let Some((leaf, hole_start, hole_len)) = self.compaction_move(required) else {
+            return false;
+        };
+        let Some(mut resident) = self.leaves[leaf].have else {
+            return false;
+        };
+        let old_start = resident.start;
+        pool.move_slots(queue, old_start, hole_start, resident.count);
+        let vacated_start = old_start.max(hole_start + resident.count);
+        let old_end = old_start + resident.count;
+        if vacated_start < old_end {
+            pool.release(queue, vacated_start, old_end - vacated_start);
+        }
+        pool.write_lod(queue, hole_start, resident.count, resident.lod, leaf);
+        self.take_exact(hole_start, hole_len);
+        self.release(hole_start + resident.count, hole_len);
+        resident.start = hole_start;
+        self.leaves[leaf].have = Some(resident);
+        true
     }
 
     /// First fit from the free list.

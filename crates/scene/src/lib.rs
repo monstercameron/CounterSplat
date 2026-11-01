@@ -2,17 +2,23 @@
 //!
 //! A host owns assets separately from scene state. Components reference opaque asset IDs rather
 //! than filesystem paths or GPU objects, so snapshots can cross subsystem and scripting boundaries.
+mod level;
 mod levels;
 mod loading;
 mod manifest;
+mod physics;
 mod player;
+mod voxel;
+pub use level::{LevelAssets, LevelFile, LevelFileKind, LevelSettings};
 pub use levels::{LevelAssetPolicies, LevelCatalog, LevelEntry, LevelFormat};
 pub use loading::{AssetLoader, AssetLoadingStatus};
 pub use manifest::{
     AssetDefinition, AssetLoadPolicy, ComponentDefinition, ComponentStorage, EntityDefinition,
     SceneManifest, SceneResources, ScriptDefinition,
 };
-pub use player::{PlayerBindings, PlayerCamera, PlayerControls};
+pub use physics::{PhysicsBody, Transform};
+pub use player::{PlayerBindings, PlayerCamera, PlayerControls, PlayerRig};
+pub use voxel::{VoxelCollider, VoxelColliderState, VoxelStatus};
 
 use serde::{Deserialize, Serialize};
 

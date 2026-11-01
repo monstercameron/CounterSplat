@@ -8,4 +8,5 @@ description = "Game-neutral physics and voxel collision helpers for CounterSplat
 
 [dependencies]
 countersplat-assets.workspace = true
+serde_json.workspace = true
 rapier3d.workspace = true

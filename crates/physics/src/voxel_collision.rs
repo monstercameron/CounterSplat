@@ -1,0 +1,304 @@
+//! Runtime collision against PlayCanvas/SplatTransform sparse voxel octrees.
+//!
+//! Sphere-vs-voxel penetration and iterative push-out follow the SuperSplat Viewer
+//! approach (PlayCanvas Ltd., MIT); see THIRD_PARTY.md. No dense grid is allocated.
+use countersplat_assets::svo::{grid_cells, uses_legacy_coordinates, Octree, LEAF_SIZE};
+use std::error::Error;
+
+const EPSILON: f32 = 1.0e-4;
+const MAX_ITERATIONS: usize = 4;
+const MAX_MOVE_STEPS: usize = 256;
+
+pub struct VoxelCollider {
+    tree: Octree,
+    // Version 1.0 stores X/Y in the old splat coordinate system. Version 1.1 is world space.
+    flip_xy: bool,
+}
+impl VoxelCollider {
+    pub fn from_json_and_bin(json: &[u8], bin: &[u8]) -> Result<Self, Box<dyn Error>> {
+        let value: serde_json::Value = serde_json::from_slice(json)?;
+        let flip_xy = uses_legacy_coordinates(&value)?;
+        Ok(Self {
+            tree: Octree::from_json_and_bin(json, bin)?,
+            flip_xy,
+        })
+    }
+    pub fn resolution(&self) -> f32 {
+        self.tree.meta.resolution
+    }
+    fn local(&self, point: [f32; 3]) -> [f32; 3] {
+        if self.flip_xy {
+            [-point[0], -point[1], point[2]]
+        } else {
+            point
+        }
+    }
+    fn world(&self, point: [f32; 3]) -> [f32; 3] {
+        self.local(point)
+    }
+
+    /// Move a spherical kinematic body with bounded substeps and slide along occupied voxels.
+    /// The caller supplies world-space coordinates and a positive radius in level units.
+    pub fn move_sphere(
+        &self,
+        start: [f32; 3],
+        delta: [f32; 3],
+        radius: f32,
+    ) -> Result<[f32; 3], &'static str> {
+        if !start
+            .iter()
+            .chain(delta.iter())
+            .all(|v| v.is_finite() && v.abs() <= 10_000_000.0)
+            || !radius.is_finite()
+            || !(0.05..=1.0).contains(&radius)
+        {
+            return Err("invalid voxel body position, movement, or radius");
+        }
+        let mut position = self.local(start);
+        let delta = self.local(delta);
+        let distance = delta.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if distance == 0.0 {
+            return Ok(start);
+        }
+        let step = (self.resolution() * 0.5).min(radius * 0.5).max(0.001);
+        let steps = (distance / step).ceil().max(1.0) as usize;
+        if steps > MAX_MOVE_STEPS {
+            return Err("voxel movement exceeds the safe step budget");
+        }
+        let increment = delta.map(|v| v / steps as f32);
+        for _ in 0..steps {
+            for axis in 0..3 {
+                position[axis] += increment[axis];
+            }
+            position = self.resolve_sphere(position, radius);
+        }
+        Ok(self.world(position))
+    }
+
+    /// Find the nearest supported surface below an eye position in world space.
+    /// A median of five nearby vertical rays avoids snapping to an isolated voxel.
+    /// Returns `None` if fewer than three rays find ground within `max_drop`.
+    pub fn ground_height(
+        &self,
+        eye: [f32; 3],
+        sample_radius: f32,
+        max_drop: f32,
+    ) -> Result<Option<f32>, &'static str> {
+        if !eye.iter().all(|v| v.is_finite() && v.abs() <= 10_000_000.0)
+            || !sample_radius.is_finite()
+            || !(0.0..=1.0).contains(&sample_radius)
+            || !max_drop.is_finite()
+            || !(0.05..=16.0).contains(&max_drop)
+        {
+            return Err("invalid ground probe");
+        }
+        let resolution = self.resolution();
+        let steps = (max_drop / resolution).ceil() as usize + 2;
+        if steps > 16_384 {
+            return Err("ground probe exceeds the step budget");
+        }
+        let mut hits = Vec::with_capacity(5);
+        for (dx, dz) in [
+            (0.0, 0.0),
+            (sample_radius, 0.0),
+            (-sample_radius, 0.0),
+            (0.0, sample_radius),
+            (0.0, -sample_radius),
+        ] {
+            let local = self.local([eye[0] + dx, eye[1], eye[2] + dz]);
+            let mut cell = [0, 1, 2]
+                .map(|i| ((local[i] - self.tree.meta.grid_min[i]) / resolution).floor() as i32);
+            // A camera starting inside occupied geometry is not a reliable ground probe.
+            if self.tree.is_solid(cell) {
+                continue;
+            }
+            let direction = if self.flip_xy { 1 } else { -1 };
+            for _ in 0..steps {
+                cell[1] += direction;
+                if !self.tree.is_solid(cell) {
+                    continue;
+                }
+                let local_surface = self.tree.meta.grid_min[1]
+                    + (cell[1] + if self.flip_xy { 0 } else { 1 }) as f32 * resolution;
+                let surface = if self.flip_xy {
+                    -local_surface
+                } else {
+                    local_surface
+                };
+                if surface <= eye[1] + 0.0001 && eye[1] - surface <= max_drop {
+                    hits.push(surface);
+                }
+                break;
+            }
+        }
+        if hits.len() < 3 {
+            return Ok(None);
+        }
+        hits.sort_by(f32::total_cmp);
+        Ok(Some(hits[hits.len() / 2]))
+    }
+
+    fn resolve_sphere(&self, mut center: [f32; 3], radius: f32) -> [f32; 3] {
+        let mut normals: Vec<[f32; 3]> = Vec::with_capacity(3);
+        for _ in 0..MAX_ITERATIONS {
+            let Some(push) = self.deepest_sphere_overlap(center, radius) else {
+                break;
+            };
+            let length = push.iter().map(|v| v * v).sum::<f32>().sqrt();
+            let mut constrained = push;
+            for normal in &normals {
+                let dot = (0..3).map(|i| constrained[i] * normal[i]).sum::<f32>();
+                if dot < 0.0 {
+                    for i in 0..3 {
+                        constrained[i] -= dot * normal[i];
+                    }
+                }
+            }
+            if length > EPSILON && normals.len() < 3 {
+                normals.push(push.map(|v| v / length));
+            }
+            for i in 0..3 {
+                center[i] += constrained[i];
+            }
+        }
+        center
+    }
+
+    fn deepest_sphere_overlap(&self, center: [f32; 3], radius: f32) -> Option<[f32; 3]> {
+        let m = &self.tree.meta;
+        let dims = grid_cells(m);
+        let lo = [0, 1, 2]
+            .map(|i| (((center[i] - radius - m.grid_min[i]) / m.resolution).floor() as i32).max(0));
+        let hi = [0, 1, 2].map(|i| {
+            (((center[i] + radius - m.grid_min[i]) / m.resolution).floor() as i32)
+                .min(dims[i] as i32 - 1)
+        });
+        if (0..3).any(|i| lo[i] > hi[i]) {
+            return None;
+        }
+        let mut best = EPSILON;
+        let mut output = None;
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    let cell = [x, y, z];
+                    if !self.tree.is_solid(cell) {
+                        continue;
+                    }
+                    let min = [0, 1, 2].map(|i| m.grid_min[i] + cell[i] as f32 * m.resolution);
+                    let max = min.map(|v| v + m.resolution);
+                    let near = [0, 1, 2].map(|i| center[i].clamp(min[i], max[i]));
+                    let offset = [0, 1, 2].map(|i| center[i] - near[i]);
+                    let distance_sq = offset.iter().map(|v| v * v).sum::<f32>();
+                    if distance_sq >= radius * radius {
+                        continue;
+                    }
+                    let (push, penetration) = if distance_sq > 1.0e-12 {
+                        let distance = distance_sq.sqrt();
+                        let penetration = radius - distance;
+                        (offset.map(|v| v * penetration / distance), penetration)
+                    } else {
+                        let escape = [0, 1, 2].map(|i| {
+                            let negative = center[i] - min[i];
+                            let positive = max[i] - center[i];
+                            if negative < positive {
+                                -(negative + radius)
+                            } else {
+                                positive + radius
+                            }
+                        });
+                        let axis = (0..3)
+                            .min_by(|&a, &b| escape[a].abs().total_cmp(&escape[b].abs()))
+                            .unwrap();
+                        let mut push = [0.0; 3];
+                        push[axis] = escape[axis];
+                        (push, escape[axis].abs())
+                    };
+                    if penetration > best {
+                        best = penetration;
+                        output = Some(push);
+                    }
+                }
+            }
+        }
+        output
+    }
+
+    /// Sample the closest occupied voxel centers around a world-space point for a bounded debug view.
+    pub fn nearby_centers(
+        &self,
+        center: [f32; 3],
+        radius: f32,
+        limit: usize,
+    ) -> Result<Vec<[f32; 3]>, &'static str> {
+        if !center.iter().all(|v| v.is_finite())
+            || !radius.is_finite()
+            || !(0.1..=8.0).contains(&radius)
+            || limit > 10_000
+        {
+            return Err("invalid voxel debug region");
+        }
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let center = self.local(center);
+        let m = &self.tree.meta;
+        let dims = grid_cells(m);
+        let block = LEAF_SIZE as f32 * m.resolution;
+        let block_dims = dims.map(|d| d.div_ceil(LEAF_SIZE));
+        let lo = [0, 1, 2]
+            .map(|i| (((center[i] - radius - m.grid_min[i]) / block).floor() as i32).max(0));
+        let hi = [0, 1, 2].map(|i| {
+            (((center[i] + radius - m.grid_min[i]) / block).floor() as i32)
+                .min(block_dims[i] as i32 - 1)
+        });
+        if (0..3).any(|i| lo[i] > hi[i]) {
+            return Ok(Vec::new());
+        }
+        let count = (0..3)
+            .try_fold(1usize, |n, i| n.checked_mul((hi[i] - lo[i] + 1) as usize))
+            .ok_or("voxel debug region too large")?;
+        if count > 300_000 {
+            return Err("voxel debug region exceeds its block budget");
+        }
+        let mut blocks = Vec::with_capacity(count);
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    let b = [x as u32, y as u32, z as u32];
+                    let d = (0..3)
+                        .map(|i| (m.grid_min[i] + (b[i] as f32 + 0.5) * block - center[i]).powi(2))
+                        .sum::<f32>();
+                    blocks.push((d, b));
+                }
+            }
+        }
+        blocks.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut out = Vec::with_capacity(limit.min(4096));
+        for (_, b) in blocks {
+            let origin = b.map(|v| v * LEAF_SIZE);
+            let mut mask = self.tree.block_mask(origin);
+            while mask != 0 {
+                let bit = mask.trailing_zeros();
+                mask &= mask - 1;
+                let cell = [
+                    origin[0] + (bit & 3),
+                    origin[1] + ((bit >> 2) & 3),
+                    origin[2] + ((bit >> 4) & 3),
+                ];
+                if (0..3).any(|i| cell[i] >= dims[i]) {
+                    continue;
+                }
+                let point =
+                    [0, 1, 2].map(|i| m.grid_min[i] + (cell[i] as f32 + 0.5) * m.resolution);
+                if (0..3).map(|i| (point[i] - center[i]).powi(2)).sum::<f32>() <= radius * radius {
+                    out.push(self.world(point));
+                    if out.len() == limit {
+                        return Ok(out);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+}

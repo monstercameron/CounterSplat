@@ -18,7 +18,9 @@
     .arrange:focus-visible { outline: 2px solid #e8bc77; outline-offset: 2px; }
     .status { color: #9ddfc6; font-size: .8rem; } .status::before { content: '●'; margin-right: .45rem; }
     main { display: grid; place-items: center; padding: 1rem; overflow: hidden; }
-    canvas { display: block; width: min(100%, 1280px); max-height: calc(100vh - 9rem); aspect-ratio: 16 / 9; object-fit: contain; border: 1px solid #27313d; background: #050608; touch-action: none; }
+    /* Limit the width by the available height too, so the canvas element and its
+       displayed 16:9 image share the same bounds for pointer input. */
+    canvas { display: block; width: min(100%, 1280px, max(1px, calc(177.77778vh - 16rem))); height: auto; aspect-ratio: 16 / 9; border: 1px solid #27313d; background: #050608; touch-action: none; }
     canvas:focus-visible { outline: 2px solid #e8bc77; outline-offset: 3px; }
     #message { color: #b8c6d5; text-align: center; max-width: 50rem; }
     .canvas { display: grid; place-items: center; width: 100%; height: 100%; }

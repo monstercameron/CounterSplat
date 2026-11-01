@@ -1,6 +1,6 @@
 //! Validated player components exposed through ordinary ECS adapters.
 use countersplat_ecs::{ComponentAdapter, Entity, Value, World};
-use countersplat_scene::{PlayerCamera, PlayerControls};
+use countersplat_scene::{PlayerCamera, PlayerControls, PlayerRig};
 
 macro_rules! adapter {
     ($name:ident, $component:ty) => {
@@ -32,7 +32,9 @@ macro_rules! adapter {
 }
 adapter!(CameraAdapter, PlayerCamera);
 adapter!(ControlsAdapter, PlayerControls);
+adapter!(RigAdapter, PlayerRig);
 pub fn register(world: &mut World) -> Result<(), String> {
     world.register_component_adapter("PlayerCamera", CameraAdapter)?;
-    world.register_component_adapter("PlayerControls", ControlsAdapter)
+    world.register_component_adapter("PlayerControls", ControlsAdapter)?;
+    world.register_component_adapter("PlayerRig", RigAdapter)
 }

@@ -63,12 +63,36 @@ impl Octree {
 
     /// Builds the octree from metadata and the raw little-endian `.bin` contents, checking the counts first.
     pub fn from_bytes(meta: Meta, bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let expected = meta.node_count + meta.leaf_data_count;
-        if bytes.len() != expected * 4 {
+        if !meta.resolution.is_finite()
+            || meta.resolution <= 0.0
+            || meta.tree_depth > 20
+            || meta.node_count == 0
+            || !meta.leaf_data_count.is_multiple_of(2)
+            || (0..3).any(|axis| {
+                !meta.grid_min[axis].is_finite()
+                    || !meta.grid_max[axis].is_finite()
+                    || meta.grid_min[axis] >= meta.grid_max[axis]
+            })
+        {
+            return Err("invalid voxel grid metadata".into());
+        }
+        let span = LEAF_SIZE << meta.tree_depth;
+        if (0..3).any(|axis| {
+            ((meta.grid_max[axis] - meta.grid_min[axis]) as f64 / meta.resolution as f64)
+                > span as f64 + 0.01
+        }) {
+            return Err("voxel bounds exceed the octree capacity".into());
+        }
+        let expected = meta
+            .node_count
+            .checked_add(meta.leaf_data_count)
+            .ok_or("voxel word count overflow")?;
+        let expected_bytes = expected.checked_mul(4).ok_or("voxel byte count overflow")?;
+        if bytes.len() != expected_bytes {
             return Err(format!(
-                "voxel binary is {} bytes; expected {} words",
+                "voxel binary is {} bytes; expected {}",
                 bytes.len(),
-                expected
+                expected_bytes
             )
             .into());
         }
@@ -76,7 +100,66 @@ impl Octree {
             .chunks_exact(4)
             .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect();
+        // Check every reachable child and mask before any query can index the data.
+        let mut visited = vec![0u8; meta.node_count];
+        let mut stack = vec![(0usize, 0u32)];
+        while let Some((node, depth)) = stack.pop() {
+            let marker = depth as u8 + 1;
+            if visited[node] != 0 {
+                if visited[node] != marker {
+                    return Err("voxel node is referenced at inconsistent depths".into());
+                }
+                continue;
+            }
+            visited[node] = marker;
+            let word = words[node];
+            if word == SOLID {
+                continue;
+            }
+            let mask = word >> 24;
+            if depth == meta.tree_depth || mask == 0 {
+                let leaf = (word & INDEX_MASK) as usize;
+                if leaf
+                    .checked_mul(2)
+                    .and_then(|n| n.checked_add(1))
+                    .is_none_or(|n| n >= meta.leaf_data_count)
+                {
+                    return Err("voxel leaf mask is outside the binary".into());
+                }
+            } else {
+                let first = (word & INDEX_MASK) as usize;
+                let end = first
+                    .checked_add(mask.count_ones() as usize)
+                    .ok_or("voxel child index overflow")?;
+                if end > meta.node_count {
+                    return Err("voxel child range is invalid".into());
+                }
+                for child in first..end {
+                    stack.push((child, depth + 1));
+                }
+            }
+        }
         Ok(Self { meta, words })
+    }
+
+    /// Test one integer grid cell. Coordinates outside the grid are empty.
+    pub fn is_solid(&self, cell: [i32; 3]) -> bool {
+        let dims = grid_cells(&self.meta);
+        if (0..3).any(|axis| cell[axis] < 0 || cell[axis] as u32 >= dims[axis]) {
+            return false;
+        }
+        let cell = cell.map(|v| v as u32);
+        let bit = (cell[0] & 3) + 4 * (cell[1] & 3) + 16 * (cell[2] & 3);
+        self.leaf_mask(cell) & (1u64 << bit) != 0
+    }
+
+    /// Read the occupied 4×4×4 block containing `cell`, in x + 4y + 16z bit order.
+    pub fn block_mask(&self, cell: [u32; 3]) -> u64 {
+        let dims = grid_cells(&self.meta);
+        if (0..3).any(|axis| cell[axis] >= dims[axis]) {
+            return 0;
+        }
+        self.leaf_mask(cell)
     }
 
     /// Calls `visit` with the index of every occupied cell, relative to `grid_min`, in x-y-z cell units.
@@ -98,17 +181,26 @@ impl Octree {
                 }
                 continue;
             }
-            if depth >= self.meta.tree_depth {
+            if depth >= self.meta.tree_depth || word >> 24 == 0 {
                 let base = self.meta.node_count + (word & INDEX_MASK) as usize * 2;
-                for bit in 0..64u32 {
-                    if self.words[base + (bit / 32) as usize] & (1 << (bit % 32)) != 0 {
-                        let cell = [
-                            origin[0] + (bit & 3),
-                            origin[1] + ((bit >> 2) & 3),
-                            origin[2] + ((bit >> 4) & 3),
-                        ];
-                        if cell[0] < dims[0] && cell[1] < dims[1] && cell[2] < dims[2] {
-                            visit(cell);
+                // An early mixed leaf repeats its 4×4×4 mask across the node's span,
+                // matching PlayCanvas's per-cell lookup at any tree depth.
+                for z in (origin[2]..(origin[2] + span).min(dims[2])).step_by(LEAF_SIZE as usize) {
+                    for y in
+                        (origin[1]..(origin[1] + span).min(dims[1])).step_by(LEAF_SIZE as usize)
+                    {
+                        for x in
+                            (origin[0]..(origin[0] + span).min(dims[0])).step_by(LEAF_SIZE as usize)
+                        {
+                            for bit in 0..64u32 {
+                                if self.words[base + (bit / 32) as usize] & (1 << (bit % 32)) != 0 {
+                                    let cell =
+                                        [x + (bit & 3), y + ((bit >> 2) & 3), z + ((bit >> 4) & 3)];
+                                    if (0..3).all(|i| cell[i] < dims[i]) {
+                                        visit(cell);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -146,7 +238,7 @@ impl Octree {
                 continue;
             }
             let word = self.words[node];
-            if word == SOLID || depth >= self.meta.tree_depth {
+            if word == SOLID || depth >= self.meta.tree_depth || word >> 24 == 0 {
                 let value = if word == SOLID {
                     1
                 } else {
@@ -200,6 +292,10 @@ impl Octree {
                 return u64::MAX;
             }
             let mask = word >> 24;
+            if mask == 0 {
+                let base = self.meta.node_count + (word & INDEX_MASK) as usize * 2;
+                return self.words[base] as u64 | ((self.words[base + 1] as u64) << 32);
+            }
             let shift = self.meta.tree_depth - depth - 1 + 2;
             let octant = ((cell[0] >> shift) & 1)
                 | (((cell[1] >> shift) & 1) << 1)
@@ -467,20 +563,36 @@ impl Octree {
     }
 }
 
-fn parse_meta(json: &serde_json::Value) -> Result<Meta, Box<dyn std::error::Error>> {
-    let version = json["version"]
-        .as_str()
-        .map(str::to_string)
-        .unwrap_or_else(|| json["version"].to_string());
-    if !(version == "1" || version.starts_with("1.")) {
+/// Whether a PlayCanvas voxel metadata document uses the legacy X/Y coordinate convention.
+/// Missing versions are treated as 1.0, as in SuperSplat Viewer. Both string and numeric
+/// versions are accepted; unsupported or malformed versions are rejected.
+pub fn uses_legacy_coordinates(
+    json: &serde_json::Value,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let version = match json.get("version") {
+        None | Some(serde_json::Value::Null) => 1.0,
+        Some(serde_json::Value::String(value)) => value.parse::<f64>()?,
+        Some(serde_json::Value::Number(value)) => value.as_f64().ok_or("invalid voxel version")?,
+        _ => return Err("invalid voxel version".into()),
+    };
+    if !version.is_finite() || !(1.0..2.0).contains(&version) {
         return Err(format!("unsupported voxel version {version}; expected 1.x").into());
     }
+    Ok(version < 1.1)
+}
+
+fn parse_meta(json: &serde_json::Value) -> Result<Meta, Box<dyn std::error::Error>> {
+    uses_legacy_coordinates(json)?;
     let vec3 = |v: &serde_json::Value| -> Result<[f32; 3], Box<dyn std::error::Error>> {
         let a = v
             .as_array()
             .filter(|a| a.len() == 3)
             .ok_or("expected a 3-element array")?;
-        Ok([0, 1, 2].map(|i| a[i].as_f64().unwrap_or(0.0) as f32))
+        let mut result = [0.0; 3];
+        for i in 0..3 {
+            result[i] = a[i].as_f64().ok_or("voxel bounds must be numeric")? as f32;
+        }
+        Ok(result)
     };
     let bounds = &json["gridBounds"];
     let grid_min = vec3(&bounds["min"])?;
@@ -491,11 +603,13 @@ fn parse_meta(json: &serde_json::Value) -> Result<Meta, Box<dyn std::error::Erro
     if json["leafSize"].as_u64() != Some(LEAF_SIZE as u64) {
         return Err("unsupported leaf size; expected 4".into());
     }
-    let tree_depth = json["treeDepth"].as_u64().ok_or("treeDepth missing")? as u32;
-    let node_count = json["nodeCount"].as_u64().ok_or("nodeCount missing")? as usize;
-    let leaf_data_count = json["leafDataCount"]
-        .as_u64()
-        .ok_or("leafDataCount missing")? as usize;
+    let tree_depth = u32::try_from(json["treeDepth"].as_u64().ok_or("treeDepth missing")?)?;
+    let node_count = usize::try_from(json["nodeCount"].as_u64().ok_or("nodeCount missing")?)?;
+    let leaf_data_count = usize::try_from(
+        json["leafDataCount"]
+            .as_u64()
+            .ok_or("leafDataCount missing")?,
+    )?;
     if !leaf_data_count.is_multiple_of(2) {
         return Err("leafDataCount must be even (two words per mixed leaf)".into());
     }
@@ -512,6 +626,16 @@ fn parse_meta(json: &serde_json::Value) -> Result<Meta, Box<dyn std::error::Erro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voxel_versions_match_playcanvas_coordinate_conventions() {
+        use serde_json::json;
+        assert!(uses_legacy_coordinates(&json!({})).unwrap());
+        assert!(uses_legacy_coordinates(&json!({"version": "1.00"})).unwrap());
+        assert!(!uses_legacy_coordinates(&json!({"version": 1.1})).unwrap());
+        assert!(uses_legacy_coordinates(&json!({"version": "2.0"})).is_err());
+        assert!(uses_legacy_coordinates(&json!({"version": "1.bad"})).is_err());
+    }
 
     /// A depth-1 tree of side 8 cells. Node 0 is interior with only octant 0; node 1 is that leaf, pointing at
     /// mixed leaf 0. The leaf's 64-bit mask has one occupied cell at (1, 2, 3).
@@ -614,6 +738,56 @@ mod tests {
     }
 
     #[test]
+    fn early_mixed_leaf_matches_per_cell_and_block_queries() {
+        let meta = Meta {
+            grid_min: [0.0; 3],
+            grid_max: [8.0; 3],
+            resolution: 1.0,
+            tree_depth: 1,
+            node_count: 1,
+            leaf_data_count: 2,
+        };
+        let bytes: Vec<u8> = [0u32, 1, 0]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        let tree = Octree::from_bytes(meta, &bytes).unwrap();
+        let mut cells = Vec::new();
+        tree.for_each_occupied(|cell| cells.push(cell));
+        assert_eq!(cells.len(), 8);
+        assert!(cells
+            .iter()
+            .all(|cell| tree.is_solid(cell.map(|x| x as i32))));
+        assert!(tree.is_solid([4, 4, 4]));
+        assert!(!tree.is_solid([5, 4, 4]));
+        assert_eq!(tree.block_states().0, vec![2; 8]);
+    }
+
+    #[test]
+    fn valid_children_can_precede_their_parent_in_storage() {
+        let meta = Meta {
+            grid_min: [0.0; 3],
+            grid_max: [16.0; 3],
+            resolution: 1.0,
+            tree_depth: 2,
+            node_count: 3,
+            leaf_data_count: 2,
+        };
+        let bytes: Vec<u8> = [(1u32 << 24) | 2, 0, (1u32 << 24) | 1, 1, 0]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        assert!(Octree::from_bytes(meta.clone(), &bytes)
+            .unwrap()
+            .is_solid([0, 0, 0]));
+        let cycle: Vec<u8> = [(1u32 << 24), 0, 0, 1, 0]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        assert!(Octree::from_bytes(meta, &cycle).is_err());
+    }
+
+    #[test]
     fn solid_nodes_cover_their_whole_span() {
         let meta = Meta {
             grid_min: [0.0; 3],
@@ -655,6 +829,25 @@ mod tests {
         let tree = tiny_octree();
         assert_eq!(tree.floor_cells(2), vec![[1, 2, 3]]);
         assert!(tree.floor_cells(2).len() == 1);
+    }
+
+    #[test]
+    fn rejects_invalid_child_and_leaf_indices_and_checks_cells() {
+        let tree = tiny_octree();
+        assert!(tree.is_solid([1, 2, 3]));
+        assert!(!tree.is_solid([0, 2, 3]));
+        assert!(!tree.is_solid([-1, 0, 0]));
+        let bytes = |words: &[u32]| {
+            words
+                .iter()
+                .flat_map(|w| w.to_le_bytes())
+                .collect::<Vec<_>>()
+        };
+        let mut meta = tree.meta.clone();
+        assert!(Octree::from_bytes(meta.clone(), &bytes(&[(1 << 24) | 9, 0, 0, 0])).is_err());
+        assert!(Octree::from_bytes(meta.clone(), &bytes(&[(1 << 24) | 1, 99, 0, 0])).is_err());
+        meta.resolution = 0.0;
+        assert!(Octree::from_bytes(meta, &bytes(&tree.words)).is_err());
     }
 
     #[test]

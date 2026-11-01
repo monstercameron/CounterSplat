@@ -10,6 +10,7 @@ pub mod presentation;
 pub mod scene;
 pub mod sort;
 pub mod stream;
+pub mod voxel_debug;
 pub mod worker_decode;
 
 // Re-export asset modules for downstream code that already works with render scenes.
