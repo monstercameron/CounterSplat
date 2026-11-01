@@ -78,31 +78,48 @@ local function invoke(op, args)
     local result = call(encode(args, {}, 0, {n = 0}))
     if result.found then return decode(result.value) end
 end
+-- Requests built here from strings have no nested tables to validate or mark.
+-- Keep the general encoder for arbitrary Lua values and invalid argument types.
+local function invoke_flat(op, args)
+    args.op = op
+    local result = call(args)
+    if result.found then return decode(result.value) end
+end
+local function invoke_one_string(op, key, value)
+    local args = {[key] = value}
+    if type(value) == "string" then return invoke_flat(op, args) end
+    return invoke(op, args)
+end
+local function invoke_two_strings(op, key1, value1, key2, value2)
+    local args = {[key1] = value1, [key2] = value2}
+    if type(value1) == "string" and type(value2) == "string" then return invoke_flat(op, args) end
+    return invoke(op, args)
+end
 ecs = { null = null }
 function ecs.array() local result = {}; arrays[result] = true; return result end
-function ecs.spawn() return invoke("spawn") end
+function ecs.spawn() return invoke_flat("spawn", {}) end
 function ecs.despawn(id, recursive) return invoke("despawn", { id = id, recursive = recursive or false }) end
-function ecs.is_alive(id) return invoke("is_alive", { id = id }) end
-function ecs.entities() return invoke("entities") end
-function ecs.hierarchy() return invoke("hierarchy") end
-function ecs.structure_revision() return invoke("structure_revision") end
-function ecs.components(id) return invoke("components", { id = id }) end
+function ecs.is_alive(id) return invoke_one_string("is_alive", "id", id) end
+function ecs.entities() return invoke_flat("entities", {}) end
+function ecs.hierarchy() return invoke_flat("hierarchy", {}) end
+function ecs.structure_revision() return invoke_flat("structure_revision", {}) end
+function ecs.components(id) return invoke_one_string("components", "id", id) end
 function ecs.query(components) return invoke("query", { components = components }) end
-function ecs.get(id, name) return invoke("get", { id = id, name = name }) end
+function ecs.get(id, name) return invoke_two_strings("get", "id", id, "name", name) end
 function ecs.get_many(id, names) return invoke("get_many", { id = id, names = names }) end
-function ecs.has(id, name) return invoke("has", { id = id, name = name }) end
+function ecs.has(id, name) return invoke_two_strings("has", "id", id, "name", name) end
 function ecs.set(id, name, value) invoke("set", { id = id, name = name, value = value }) end
-function ecs.remove(id, name) return invoke("remove", { id = id, name = name }) end
-function ecs.get_resource(name) return invoke("get_resource", { name = name }) end
-function ecs.get_resource_field(name, field) return invoke("get_resource_field", { name = name, field = field }) end
+function ecs.remove(id, name) return invoke_two_strings("remove", "id", id, "name", name) end
+function ecs.get_resource(name) return invoke_one_string("get_resource", "name", name) end
+function ecs.get_resource_field(name, field) return invoke_two_strings("get_resource_field", "name", name, "field", field) end
 function ecs.set_resource(name, value) invoke("set_resource", { name = name, value = value }) end
-function ecs.remove_resource(name) return invoke("remove_resource", { name = name }) end
+function ecs.remove_resource(name) return invoke_one_string("remove_resource", "name", name) end
 function ecs.set_parent(child, parent) invoke("set_parent", { child = child, parent = parent }) end
-function ecs.parent(id) return invoke("parent", { id = id }) end
-function ecs.children(id) return invoke("children", { id = id }) end
+function ecs.parent(id) return invoke_one_string("parent", "id", id) end
+function ecs.children(id) return invoke_one_string("children", "id", id) end
 function ecs.emit(name, value) invoke("emit", { name = name, value = value }) end
-function ecs.drain(name) return invoke("drain", { name = name }) end
-function ecs.snapshot() return invoke("snapshot") end
+function ecs.drain(name) return invoke_one_string("drain", "name", name) end
+function ecs.snapshot() return invoke_flat("snapshot", {}) end
 local systems, order, handlers = {}, {}, {}
 function ecs.system(name, callback)
     assert(type(name) == "string" and #name > 0 and type(callback) == "function", "invalid system")

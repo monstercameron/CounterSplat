@@ -23,6 +23,14 @@ class WorldFixture {
     switch (op.op) {
       case 'hierarchy': value = [{id:'root', parent:null}, {id:'child', parent:'root'}]; break;
       case 'structure_revision': value = '0'; break;
+      case 'get': {
+        const components = this.components.get(op.id) || new Map();
+        found = components.has(op.name);
+        value = components.get(op.name);
+        break;
+      }
+      case 'has': value = (this.components.get(op.id) || new Map()).has(op.name); break;
+      case 'is_alive': value = this.components.has(op.id); break;
       case 'get_many': {
         value = Object.create(null);
         const components = this.components.get(op.id) || new Map();
@@ -78,6 +86,15 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
+  assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
+  assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
+  assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
+  assert(ecs.get('entity', '__proto__') == 'safe' and not ecs.has('entity', 'Missing'))
+  -- Non-string arguments still use the validating general encoder.
+  local cycle = {}; cycle.self = cycle
+  assert(not pcall(function() ecs.get(cycle, 'Health') end))
+  assert(not pcall(function() ecs.get_resource_field('scene.entities', cycle) end))
+  assert(not pcall(function() ecs.get_resource(0/0) end))
   local batch = ecs.get_many('entity', {'Health', 'Nullable', 'Missing', '__proto__'})
   assert(batch.Health == 50 and batch.Nullable == ecs.null and batch.Missing == nil)
   assert(batch.__proto__ == 'safe' and next(ecs.get_many('entity', {})) == nil)
@@ -102,6 +119,45 @@ game.vm.doStringSync(`
 `);
 assert.deepEqual(world.resources.get('again'), {items:[], marker:null, nested:[1, 2]});
 game.close();
+
+// Exercise every scalar-only wrapper and compare the requests received by the host.
+const calls = [];
+const responses = {
+  spawn: 'new-entity', is_alive: true, entities: ['entity'],
+  hierarchy: [{id:'entity', parent:null}], structure_revision: '7',
+  components: ['Name'], get: {value:'ok'}, has: true, remove: 'removed',
+  get_resource: {value:'resource'}, get_resource_field: 'field-value',
+  remove_resource: 'removed-resource', parent: 'parent', children: ['child'],
+  drain: [{value:1}], snapshot: {entities:[]},
+};
+const scalarWorld = {ecs_operation(_layer, encoded) {
+  const op = JSON.parse(encoded);
+  calls.push(op);
+  return JSON.stringify({found:true, value:responses[op.op]});
+}};
+const scalar = await LuaScene.create(factory, scalarWorld, 'gameplay', engineApi, []);
+scalar.vm.doStringSync(`
+  assert(ecs.spawn() == 'new-entity' and ecs.is_alive('entity'))
+  assert(ecs.entities()[1] == 'entity' and ecs.hierarchy()[1].parent == ecs.null)
+  assert(ecs.structure_revision() == '7' and ecs.components('entity')[1] == 'Name')
+  assert(ecs.get('entity', 'Name').value == 'ok' and ecs.has('entity', 'Name'))
+  assert(ecs.remove('entity', 'Name') == 'removed')
+  assert(ecs.get_resource('settings').value == 'resource')
+  assert(ecs.get_resource_field('settings', 'field') == 'field-value')
+  assert(ecs.remove_resource('settings') == 'removed-resource')
+  assert(ecs.parent('entity') == 'parent' and ecs.children('entity')[1] == 'child')
+  assert(ecs.drain('event')[1].value == 1 and #ecs.snapshot().entities == 0)
+`);
+assert.deepEqual(calls, [
+  {op:'spawn'}, {op:'is_alive', id:'entity'}, {op:'entities'}, {op:'hierarchy'},
+  {op:'structure_revision'}, {op:'components', id:'entity'},
+  {op:'get', id:'entity', name:'Name'}, {op:'has', id:'entity', name:'Name'},
+  {op:'remove', id:'entity', name:'Name'}, {op:'get_resource', name:'settings'},
+  {op:'get_resource_field', name:'settings', field:'field'},
+  {op:'remove_resource', name:'settings'}, {op:'parent', id:'entity'},
+  {op:'children', id:'entity'}, {op:'drain', name:'event'}, {op:'snapshot'},
+]);
+scalar.close();
 
 // Dispatching a channel may enqueue events for earlier, current, or later
 // channels. Only later channels are delivered during this pass.

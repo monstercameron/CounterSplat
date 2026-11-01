@@ -51,10 +51,11 @@ duration, and let loading and shader compilation settle before comparing.
 ## Browser Lua bridge benchmark
 
 Run `node scripts/benchmark_lua_bridge.mjs` to compare changes to the
-browser Lua value bridge. It warms up Wasmoon and reports nine sorted timings
-for 3,000 reads of a nested component. The fixture includes Lua, JavaScript,
-and JSON conversion, but substitutes a JavaScript ECS response for Rust: use
-the in-browser profiler as well when measuring end-to-end behavior.
+browser Lua value bridge. It warms up Wasmoon and reports the median of nine
+samples for 3,000 nested component reads and 3,000 pairs of scalar reads. The
+fixture includes Lua, JavaScript, and JSON conversion, but substitutes a
+JavaScript ECS response for Rust: use the in-browser profiler as well when
+measuring end-to-end behavior.
 
 ## ECS query benchmark
 
