@@ -12,13 +12,25 @@ import { preloadChunks } from '/pkg/chunk_preload.js';
 import { loadMetadataInWorker } from '/pkg/metadata_client.js';
 import { LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl } from '/asset_loader.js';
 import { FrameProfiler } from '/pkg/frame_profile.js';
+import { FrameStackCapture } from '/pkg/frame_stack_profile.js';
 
 const canvas = document.getElementById('canvas');
 const status = document.getElementById('status');
 const message = document.getElementById('message');
 const metrics = document.getElementById('metrics');
 // Profiling is opt-in and publishes read-only diagnostics on the existing metrics node.
-const frameProfiler = new URLSearchParams(location.search).has('profile') ? new FrameProfiler() : null;
+const profileOptions = new URLSearchParams(location.search);
+const stackRequested = profileOptions.get('stack_profile') === '1';
+const frameProfiler = profileOptions.has('profile') || stackRequested ? new FrameProfiler() : null;
+const stackCapture = stackRequested ? new FrameStackCapture((summary, raw) => {
+  metrics.dataset.stackProfile = JSON.stringify(summary);
+  if (raw) {
+    metrics.dataset.stackTrace = JSON.stringify(raw);
+    const download = document.getElementById('download-stack-trace');
+    download.href = URL.createObjectURL(new Blob([JSON.stringify({summary, ...raw})], {type:'application/json'}));
+    download.hidden = false;
+  }
+}) : null;
 let profileState = null, lastProfileReport = 0;
 const arrangeButton = document.getElementById('arrange');
 const resetLayoutButton = document.getElementById('reset-layout');
@@ -811,6 +823,7 @@ function attachInput() {
 }
 function tick(timestamp) {
   if (stopped) return;
+  const stackFrame = stackCapture?.beginFrame(mode === 'gameplay' && !!active, gameplayLua);
   const profileStart = frameProfiler ? performance.now() : 0;
   let renderMs = 0, scriptsMs = 0, submitted = false;
   const stages = frameProfiler ? {} : null;
@@ -833,9 +846,12 @@ function tick(timestamp) {
           aspectOwner = active; publishedAspect = aspect;
         }
       }
+      const timedRenderer = stackFrame?.before ? active : null;
+      timedRenderer?.arm_frame_timing();
       const renderStart = frameProfiler ? performance.now() : 0;
       submitted = active.frame(timestamp);
       if (frameProfiler) renderMs = performance.now() - renderStart;
+      const rustTiming = timedRenderer ? JSON.parse(timedRenderer.take_frame_timing()) : null;
       if (active.ui_take_layout_changed()) saveLayout(active, layoutScene());
       if (mode === 'loading' && active.take_cancel_loading()) {
         cancelLoading();
@@ -932,7 +948,9 @@ function tick(timestamp) {
         lastStatus = timestamp;
       }
       if (frameProfiler && mode === 'gameplay') {
-        frameProfiler.record(timestamp, submitted, renderMs, scriptsMs, performance.now() - profileStart, stages);
+        const callbackMs = performance.now() - profileStart;
+        stackCapture?.endFrame(stackFrame, submitted, renderMs, scriptsMs, stages, gameplayLua, rustTiming);
+        frameProfiler.record(timestamp, submitted, renderMs, scriptsMs, callbackMs, stages);
         if (timestamp - lastProfileReport >= 500) {
           metrics.dataset.profile = JSON.stringify(frameProfiler.snapshot(profileState, gameplayLua?.profileReport()));
           lastProfileReport = timestamp;

@@ -48,6 +48,26 @@ Compare the same level, view, resolution, viewport, settings and measurement
 duration, and let loading and shader compilation settle before comparing.
 `?profile` is optional; normal play does not collect these detailed samples.
 
+## Frame-aligned CPU stack capture
+
+Restart `scripts/preview.py`, open the preview with `?stack_profile=1`, and
+launch a level. After 120 warm-up callbacks it samples 180 gameplay callbacks
+and publishes `JSON.parse(document.querySelector('#metrics').dataset.stackProfile)`.
+The result includes a representative submitted frame's CPU stages, Rust render
+and UI phases, Lua-system/bridge deltas, and sampled call stacks. The raw
+frame-aligned samples are available in `data-stack-trace` on the same element,
+or through the **Download CPU trace** link after capture.
+
+This is an opt-in local diagnostic: it does not send a trace anywhere. It measures
+main-thread CPU work, not asynchronous GPU work or other threads. Timings are
+nested: Lua systems include their ECS bridge calls, and the Rust phases are
+inside render CPU time. Browser timer precision can round small spans to zero.
+The browser may use a longer sampling interval than requested; check
+`actual_interval_ms`. A short frame may have zero or one stack samples, so use
+the wider capture for clues and do not treat sample counts as exact durations.
+An interval close to the display cadence can also repeatedly sample the same
+part of a frame, so use the timed stages and corroborating measurements.
+
 ## Browser Lua bridge benchmark
 
 Run `node scripts/benchmark_lua_bridge.mjs` to compare changes to the

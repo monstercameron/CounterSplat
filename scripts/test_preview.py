@@ -12,6 +12,42 @@ from download_previews import preview_url
 
 
 class PreviewPaths(unittest.TestCase):
+    def test_stack_profiling_policy_is_opt_in_for_html(self):
+        import socket
+        import subprocess
+        import time
+        from urllib.error import URLError
+        from urllib.request import urlopen
+
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        server = subprocess.Popen(
+            [sys.executable, "-B", str(Path(__file__).with_name("preview.py")), "--port", str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        base = f"http://127.0.0.1:{port}"
+        try:
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    with urlopen(base + "/", timeout=1) as response:
+                        self.assertIsNone(response.headers.get("Document-Policy"))
+                    break
+                except URLError:
+                    if time.monotonic() >= deadline or server.poll() is not None:
+                        raise
+                    time.sleep(.05)
+            with urlopen(base + "/?stack_profile=1", timeout=2) as response:
+                self.assertEqual(response.headers.get("Document-Policy"), "js-profiling")
+            with urlopen(base + "/?stack_profile=0", timeout=2) as response:
+                self.assertIsNone(response.headers.get("Document-Policy"))
+            with urlopen(base + "/main.js?stack_profile=1", timeout=2) as response:
+                self.assertIsNone(response.headers.get("Document-Policy"))
+        finally:
+            server.terminate()
+            server.wait(timeout=5)
+
     def test_only_files_under_the_selected_root_are_served(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary).resolve()

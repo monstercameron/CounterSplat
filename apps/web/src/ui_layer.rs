@@ -604,7 +604,11 @@ impl SceneUi {
             }
         }
     }
-    pub fn draw(&mut self, target: UiTarget<'_>) -> Result<Vec<wgpu::CommandBuffer>, String> {
+    pub fn draw(
+        &mut self,
+        target: UiTarget<'_>,
+        mut profile: Option<&mut super::FrameCpuProfile>,
+    ) -> Result<Vec<wgpu::CommandBuffer>, String> {
         let viewport = Rect::new(
             0.0,
             0.0,
@@ -613,8 +617,17 @@ impl SceneUi {
         );
         self.viewport = viewport;
         let frame = extract(&self.world, viewport).map_err(str::to_owned)?;
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("ui_extract");
+        }
         let output = self.renderer.draw(target, &frame).map_err(str::to_owned)?;
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("ui_render");
+        }
         self.handle_actions(output.events);
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("ui_actions");
+        }
         Ok(output.command_buffers)
     }
     pub fn after_submit(&mut self) {

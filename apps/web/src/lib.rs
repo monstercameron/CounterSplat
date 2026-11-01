@@ -60,6 +60,32 @@ struct PreviousCamera {
     direction: [f32; 3],
 }
 
+// A one-shot CPU breakdown for the opt-in browser profiler. It measures
+// command preparation and submission, not asynchronous GPU execution.
+struct FrameCpuProfile {
+    clock: web_sys::Performance,
+    previous_ms: f64,
+    spans: Vec<(&'static str, f64)>,
+}
+
+impl FrameCpuProfile {
+    fn new() -> Option<Self> {
+        let clock = web_sys::window()?.performance()?;
+        let previous_ms = clock.now();
+        Some(Self {
+            clock,
+            previous_ms,
+            spans: Vec::with_capacity(12),
+        })
+    }
+
+    fn mark(&mut self, name: &'static str) {
+        let now = self.clock.now();
+        self.spans.push((name, (now - self.previous_ms).max(0.0)));
+        self.previous_ms = now;
+    }
+}
+
 /// A live WebGPU renderer attached to the supplied HTML canvas.
 #[wasm_bindgen]
 pub struct Viewer {
@@ -99,6 +125,8 @@ pub struct Viewer {
     menu_visible: bool,
     sky_assets: BTreeMap<String, env::Sky>,
     ui_css_width: f32,
+    capture_frame_timing: bool,
+    last_frame_timing: Option<FrameCpuProfile>,
 }
 
 impl Viewer {
@@ -336,6 +364,8 @@ impl Viewer {
             menu_visible: false,
             sky_assets: BTreeMap::new(),
             ui_css_width: width as f32,
+            capture_frame_timing: false,
+            last_frame_timing: None,
         })
     }
 
@@ -627,8 +657,27 @@ impl Viewer {
         }
     }
 
+    /// Arm a one-frame CPU breakdown for local diagnostics.
+    pub fn arm_frame_timing(&mut self) {
+        self.capture_frame_timing = true;
+        self.last_frame_timing = None;
+    }
+
+    /// Return and clear the most recent breakdown, or JSON null if no frame submitted.
+    pub fn take_frame_timing(&mut self) -> String {
+        self.last_frame_timing
+            .take()
+            .and_then(|profile| serde_json::to_string(&profile.spans).ok())
+            .unwrap_or_else(|| "null".to_owned())
+    }
+
     /// Advance fixed ticks and, when due, present one frame directly to the canvas.
     pub fn frame(&mut self, now_ms: f64) -> Result<bool, JsValue> {
+        let mut profile = if std::mem::take(&mut self.capture_frame_timing) {
+            FrameCpuProfile::new()
+        } else {
+            None
+        };
         let now = Duration::try_from_secs_f64(now_ms / 1000.0).map_err(js_error)?;
         let pending_frames = self.gpu_frames.count();
         let resizing = self.pending_resize.is_some() || self.pending_render_size.is_some();
@@ -727,6 +776,9 @@ impl Viewer {
         let local_target = camera::transform_point(&inverse, base_target);
         let local_direction = [0, 1, 2].map(|axis| local_target[axis] - local_eye[axis]);
         let clip = camera::mul(&view.projection, &camera::mul(&view.view, &view.model));
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("scheduler_camera");
+        }
         let level_lod = self.ui.level_lod().map_err(js_error)?;
         self.stream.settings.max_distance_m = self.ui.level_draw_distance().map_err(js_error)?;
         self.stream
@@ -736,6 +788,9 @@ impl Viewer {
             .set_focal_px(view.projection[5] * self.render_size.1 as f32);
         self.stream
             .select(local_eye, local_direction, Some(&clip), seconds as f32);
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("lod_selection");
+        }
         // Keep menu input responsive even when gameplay has a very low frame cap.
         if !self.menu_visible && self.frame_limit.is_some() && !plan.frame.due {
             return Ok(false);
@@ -763,10 +818,16 @@ impl Viewer {
                 return Err(js_error("WebGPU canvas validation failed"))
             }
         };
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("surface_acquire");
+        }
         // Upload and retire ranges only when this frame can actually be submitted.
         // Advancing fades while the GPU is still busy can skip visible transition
         // steps and pile streaming work onto an already overloaded frame.
         self.stream.apply(&self.pool, &self.queue);
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("stream_upload");
+        }
         let color = frame.texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(self.surface_view_format),
             ..Default::default()
@@ -813,6 +874,9 @@ impl Viewer {
         );
         self.pool
             .prepare(&self.queue, &mut encoder, &view, &view.model);
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("splat_prepare");
+        }
         {
             let mut pass = scene::color_pass(
                 &mut encoder,
@@ -882,6 +946,9 @@ impl Viewer {
             (self.config.width, self.config.height),
             self.viewport_scale,
         );
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("scene_post_encode");
+        }
         let pixels_per_point = (self.config.width as f32 / self.ui_css_width).clamp(0.25, 8.0);
         let ui_target = countersplat_ui_wgpu::UiTarget {
             device: &self.device,
@@ -893,9 +960,13 @@ impl Viewer {
             time_seconds: now.as_secs_f64(),
         };
         let ui_buffers = if self.menu_visible {
-            self.menu.draw(ui_target)
+            let result = self.menu.draw(ui_target);
+            if let Some(profile) = profile.as_mut() {
+                profile.mark("ui_menu");
+            }
+            result
         } else {
-            self.ui.draw(ui_target)
+            self.ui.draw(ui_target, profile.as_mut())
         }
         .map_err(js_error)?;
         let permit = self
@@ -925,8 +996,15 @@ impl Viewer {
             position: eye,
             direction: camera_direction,
         });
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("submit_present");
+        }
         self.ui.observe_frame(ui_submitted_at).map_err(js_error)?;
+        if let Some(profile) = profile.as_mut() {
+            profile.mark("frame_history");
+        }
         self.submitted_frames = self.submitted_frames.saturating_add(1);
+        self.last_frame_timing = profile;
         Ok(true)
     }
 

@@ -12,7 +12,7 @@ import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEW = (ROOT / "preview").resolve()
@@ -201,6 +201,10 @@ def main():
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(content)))
             self.send_header("Cache-Control", "no-store")
+            # Sampling is opt-in for local profiling pages only.
+            if (path.suffix.lower() == ".html"
+                    and parse_qs(urlsplit(self.path).query).get("stack_profile") == ["1"]):
+                self.send_header("Document-Policy", "js-profiling")
             self.end_headers()
             self.wfile.write(content)
 
