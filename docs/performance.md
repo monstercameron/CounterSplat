@@ -56,11 +56,22 @@ and publishes `JSON.parse(document.querySelector('#metrics').dataset.stackProfil
 The result includes a representative submitted frame's CPU stages, Rust render
 and UI phases, Lua-system/bridge deltas, and sampled call stacks. The raw
 frame-aligned samples are available in `data-stack-trace` on the same element,
-or through the **Download CPU trace** link after capture.
+or through the **Download frame trace** link after capture.
 
-This is an opt-in local diagnostic: it does not send a trace anywhere. It measures
-main-thread CPU work, not asynchronous GPU work or other threads. Timings are
-nested: Lua systems include their ECS bridge calls, and the Rust phases are
+This is an opt-in local diagnostic: it does not send a trace anywhere. When
+the adapter supports timestamp queries, the report also contains up to six GPU
+measurements, with the median completed sample aligned to the selected CPU
+frame. Named GPU spans cover splat preparation/sorting, the scene draw,
+first-person/post-processing, and UI draw in the main command buffer. They
+exclude earlier queue writes, separate UI command buffers, and presentation;
+this is not total display latency. CPU and GPU work may overlap, so their times
+cannot be added to calculate frame latency. The additional timestamp passes add
+some measurement overhead, and timestamp precision can round short spans to
+zero. Pending or failed captures are reported alongside completed samples.
+Unsupported adapters continue normally and report that status.
+
+CPU timings are main-thread wall times; they do not measure other threads. They
+are nested: Lua systems include their ECS bridge calls, and the Rust phases are
 inside render CPU time. Browser timer precision can round small spans to zero.
 The browser may use a longer sampling interval than requested; check
 `actual_interval_ms`. A short frame may have zero or one stack samples, so use

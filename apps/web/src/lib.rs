@@ -14,7 +14,9 @@ pub use selector::Selector;
 use countersplat_assets::{environment, lod::LodMeta, sog, viewer::CameraHint};
 use countersplat_core::{inflight::InFlight, rate::Rate, scheduler::Scheduler, time::FixedClock};
 use countersplat_render::{
-    camera, env, first_person, postprocess,
+    camera, env, first_person,
+    gpu_timing::{GpuFrameTimer, GpuTiming},
+    postprocess,
     scene::{self, GsplatScene, Pipelines, View},
     stream::{DrawRegion, LevelStream, StreamSettings},
     tracer::TracerRenderer,
@@ -127,6 +129,8 @@ pub struct Viewer {
     ui_css_width: f32,
     capture_frame_timing: bool,
     last_frame_timing: Option<FrameCpuProfile>,
+    gpu_timing_requested: bool,
+    gpu_timers: Vec<GpuFrameTimer>,
 }
 
 impl Viewer {
@@ -153,6 +157,7 @@ impl Viewer {
         rotate_z_180: bool,
         retain_preloaded_chunks: bool,
         level_assets_json: String,
+        gpu_timing_requested: bool,
     ) -> Result<Viewer, JsValue> {
         if capacity == 0 {
             return Err(js_error("streaming capacity must be positive"));
@@ -243,13 +248,38 @@ impl Viewer {
             max_buffer_size: limits.max_buffer_size.clamp(256 << 20, 1 << 30),
             ..wgpu::Limits::default()
         };
-        let (device, queue) = adapter
+        let timing_feature = if gpu_timing_requested
+            && adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY)
+        {
+            wgpu::Features::TIMESTAMP_QUERY
+        } else {
+            wgpu::Features::empty()
+        };
+        let requested = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_limits,
+                required_limits: required_limits.clone(),
+                required_features: timing_feature,
                 ..Default::default()
             })
-            .await
-            .map_err(js_error)?;
+            .await;
+        // Profiling is optional: retry without timestamp queries if the
+        // advertised feature cannot be enabled on this device.
+        let (device, queue) = match requested {
+            Ok(device) => device,
+            Err(_) if !timing_feature.is_empty() => adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    required_limits,
+                    ..Default::default()
+                })
+                .await
+                .map_err(js_error)?,
+            Err(error) => return Err(js_error(error)),
+        };
+        let gpu_timers = if gpu_timing_requested {
+            (0..6).filter_map(|_| GpuFrameTimer::new(&device)).collect()
+        } else {
+            Vec::new()
+        };
         let capabilities = surface.get_capabilities(&adapter);
         let base = capabilities
             .formats
@@ -366,6 +396,8 @@ impl Viewer {
             ui_css_width: width as f32,
             capture_frame_timing: false,
             last_frame_timing: None,
+            gpu_timing_requested,
+            gpu_timers,
         })
     }
 
@@ -671,6 +703,46 @@ impl Viewer {
             .unwrap_or_else(|| "null".to_owned())
     }
 
+    /// Return nonblocking GPU samples with the animation timestamp of each frame.
+    pub fn gpu_frame_timing(&self) -> String {
+        if !self.gpu_timing_requested {
+            return serde_json::json!({"status":"disabled"}).to_string();
+        }
+        if self.gpu_timers.is_empty() {
+            return serde_json::json!({"status":"unsupported"}).to_string();
+        }
+        let mut samples = Vec::new();
+        let mut pending = 0;
+        let mut unused = 0;
+        let mut errors = Vec::new();
+        for timer in &self.gpu_timers {
+            match timer.timing() {
+                GpuTiming::Ready => unused += 1,
+                GpuTiming::Pending { .. } => pending += 1,
+                GpuTiming::Complete {
+                    token,
+                    milliseconds,
+                    spans,
+                } => samples.push(serde_json::json!({
+                    "frame_timestamp_ms":f64::from_bits(token),"gpu_ms":milliseconds,"stages":spans
+                })),
+                GpuTiming::Failed { token, reason } => errors.push(serde_json::json!({
+                    "frame_timestamp_ms":f64::from_bits(token),"reason":reason
+                })),
+            }
+        }
+        let status = if !samples.is_empty() {
+            "complete"
+        } else if pending > 0 {
+            "pending"
+        } else if !errors.is_empty() {
+            "failed"
+        } else {
+            "ready"
+        };
+        serde_json::json!({"status":status,"samples":samples,"pending":pending,"unused":unused,"errors":errors}).to_string()
+    }
+
     /// Advance fixed ticks and, when due, present one frame directly to the canvas.
     pub fn frame(&mut self, now_ms: f64) -> Result<bool, JsValue> {
         let mut profile = if std::mem::take(&mut self.capture_frame_timing) {
@@ -833,6 +905,16 @@ impl Viewer {
             ..Default::default()
         });
         let mut encoder = self.device.create_command_encoder(&Default::default());
+        // Each one-shot timer surrounds the main encoded scene work only
+        // when the local profiler arms a detailed frame.
+        let capture_gpu = profile
+            .as_ref()
+            .and_then(|_| {
+                self.gpu_timers
+                    .iter()
+                    .position(|timer| matches!(timer.timing(), GpuTiming::Ready))
+            })
+            .filter(|&index| self.gpu_timers[index].begin(&mut encoder, now_ms.to_bits()));
         let units_per_meter = self.ui.player_rig().map_or(1.0, |rig| rig.units_per_meter);
         let camera_direction = [0, 1, 2].map(|axis| target[axis] - eye[axis]);
         let shutter_fraction = self
@@ -874,6 +956,9 @@ impl Viewer {
         );
         self.pool
             .prepare(&self.queue, &mut encoder, &view, &view.model);
+        if let Some(index) = capture_gpu {
+            self.gpu_timers[index].mark(&mut encoder, "splat_prepare");
+        }
         if let Some(profile) = profile.as_mut() {
             profile.mark("splat_prepare");
         }
@@ -909,6 +994,9 @@ impl Viewer {
                 self.voxel_debug
                     .draw(&self.queue, &mut pass, &view.view, &view.projection);
             }
+        }
+        if let Some(index) = capture_gpu {
+            self.gpu_timers[index].mark(&mut encoder, "scene_draw");
         }
         self.first_person.encode(
             &self.queue,
@@ -946,6 +1034,9 @@ impl Viewer {
             (self.config.width, self.config.height),
             self.viewport_scale,
         );
+        if let Some(index) = capture_gpu {
+            self.gpu_timers[index].mark(&mut encoder, "first_person_post");
+        }
         if let Some(profile) = profile.as_mut() {
             profile.mark("scene_post_encode");
         }
@@ -969,6 +1060,9 @@ impl Viewer {
             self.ui.draw(ui_target, profile.as_mut())
         }
         .map_err(js_error)?;
+        if let Some(index) = capture_gpu {
+            self.gpu_timers[index].end(&mut encoder, "ui");
+        }
         let permit = self
             .gpu_frames
             .try_acquire()
@@ -978,6 +1072,9 @@ impl Viewer {
                 .into_iter()
                 .chain(std::iter::once(encoder.finish())),
         );
+        if let Some(index) = capture_gpu {
+            self.gpu_timers[index].submitted(&self.queue);
+        }
         // Sample the actual CPU submission time rather than the earlier animation callback time.
         let ui_submitted_at = web_sys::window()
             .and_then(|window| window.performance())

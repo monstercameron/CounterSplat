@@ -12,7 +12,7 @@ import { preloadChunks } from '/pkg/chunk_preload.js';
 import { loadMetadataInWorker } from '/pkg/metadata_client.js';
 import { LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl } from '/asset_loader.js';
 import { FrameProfiler } from '/pkg/frame_profile.js';
-import { FrameStackCapture } from '/pkg/frame_stack_profile.js';
+import { FrameStackCapture, summarizeFrameStacks, medianGpuSample } from '/pkg/frame_stack_profile.js';
 
 const canvas = document.getElementById('canvas');
 const status = document.getElementById('status');
@@ -23,6 +23,11 @@ const profileOptions = new URLSearchParams(location.search);
 const stackRequested = profileOptions.get('stack_profile') === '1';
 const frameProfiler = profileOptions.has('profile') || stackRequested ? new FrameProfiler() : null;
 const stackCapture = stackRequested ? new FrameStackCapture((summary, raw) => {
+  const gpu = active && mode === 'gameplay' ? JSON.parse(active.gpu_frame_timing()) : null;
+  const selected = medianGpuSample(gpu?.samples);
+  if (raw && selected)
+    summary = summarizeFrameStacks(raw.trace, raw.frames, 1, summary.actual_interval_ms, selected.frame_timestamp_ms);
+  summary.gpu = gpu ? {...gpu, selected} : null;
   metrics.dataset.stackProfile = JSON.stringify(summary);
   if (raw) {
     metrics.dataset.stackTrace = JSON.stringify(raw);
@@ -563,7 +568,7 @@ async function launchLevel(id, sceneId = '') {
     mode = 'starting';
     active = null;
     selector.free();
-    pendingGame = await Viewer.create(canvas, lodBytes, metas, settings, [chosenBytes, chosenMenuBytes], capacity, selected.rotate_z_180 !== false, policies.splat_chunks === 'preload', JSON.stringify(levelAssets));
+    pendingGame = await Viewer.create(canvas, lodBytes, metas, settings, [chosenBytes, chosenMenuBytes], capacity, selected.rotate_z_180 !== false, policies.splat_chunks === 'preload', JSON.stringify(levelAssets), stackRequested);
     if (generation !== token) { pendingGame.free(); pendingGame = null; return; }
     for (const sky of skies) pendingGame.install_skybox(sky.id, sky.size, sky.pixels);
     for (const chunk of chunks) pendingGame.insert_decoded_chunk(chunk.index, chunk.metadata, chunk.dimensions, chunk.pixels);
@@ -949,7 +954,7 @@ function tick(timestamp) {
       }
       if (frameProfiler && mode === 'gameplay') {
         const callbackMs = performance.now() - profileStart;
-        stackCapture?.endFrame(stackFrame, submitted, renderMs, scriptsMs, stages, gameplayLua, rustTiming);
+        stackCapture?.endFrame(stackFrame, submitted, renderMs, scriptsMs, stages, gameplayLua, rustTiming, timestamp);
         frameProfiler.record(timestamp, submitted, renderMs, scriptsMs, callbackMs, stages);
         if (timestamp - lastProfileReport >= 500) {
           metrics.dataset.profile = JSON.stringify(frameProfiler.snapshot(profileState, gameplayLua?.profileReport()));

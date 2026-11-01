@@ -49,9 +49,17 @@ function topStacks(trace, samples) {
   return [...counts.values()].sort((a,b) => b.count-a.count).slice(0, 20);
 }
 
+// Choose a stable GPU sample without changing the captured order.
+export function medianGpuSample(samples) {
+  if (!Array.isArray(samples)) return null;
+  const valid = samples.filter(sample => Number.isFinite(sample?.gpu_ms) && sample.gpu_ms >= 0 &&
+    Number.isFinite(sample?.frame_timestamp_ms)).slice().sort((a,b) => a.gpu_ms-b.gpu_ms);
+  return valid.length ? valid[Math.floor(valid.length/2)] : null;
+}
+
 // The selected frame is a submitted, representative CPU frame with sampled
 // stacks when available. Sample counts are not exact per-function durations.
-export function summarizeFrameStacks(trace, frames, requestedIntervalMs, actualIntervalMs = null) {
+export function summarizeFrameStacks(trace, frames, requestedIntervalMs, actualIntervalMs = null, preferredTimestamp = null) {
   const samplesByFrame = frames.map(frame =>
     trace.samples.filter(sample => sample.timestamp >= frame.start && sample.timestamp < frame.end));
   const submitted = frames.filter(frame => frame.submitted);
@@ -64,7 +72,11 @@ export function summarizeFrameStacks(trace, frames, requestedIntervalMs, actualI
   if (!candidates.length) candidates = frames.map((frame,index) => ({frame,index,samples:samplesByFrame[index]}))
     .filter(item => item.frame.details);
   candidates.sort((a,b) => Math.abs((a.frame.end-a.frame.start)-median)-Math.abs((b.frame.end-b.frame.start)-median));
-  const selected = candidates[0];
+  const matching = preferredTimestamp === null ? -1 : frames.findIndex(frame =>
+    frame.animation_timestamp_ms === preferredTimestamp && frame.details && frame.submitted);
+  const selected = matching >= 0
+    ? {frame:frames[matching], index:matching, samples:samplesByFrame[matching]}
+    : candidates[0];
   const frameSamples = samplesByFrame.flat();
   return {
     requested_interval_ms:requestedIntervalMs, actual_interval_ms:actualIntervalMs,
@@ -108,14 +120,14 @@ export class FrameStackCapture {
     return {start:this.now(), before};
   }
 
-  endFrame(frame, submitted, renderMs, scriptsMs, stages, lua, rustTiming = null) {
+  endFrame(frame, submitted, renderMs, scriptsMs, stages, lua, rustTiming = null, animationTimestamp = null) {
     if (!frame || !this.profiler || this.done) return;
     const end = this.now();
     const details = frame.before ? {
       render_cpu_ms:renderMs, scripts_cpu_ms:scriptsMs, stages:{...stages}, rust:rustTiming,
       lua:luaDelta(frame.before, snapshotLua(lua.profileReport()))
     } : null;
-    this.frames.push({start:frame.start, end, submitted, details});
+    this.frames.push({start:frame.start, end, submitted, details, animation_timestamp_ms:animationTimestamp});
     if (this.frames.length < this.captureFrames) return;
     const profiler = this.profiler, frames = this.frames;
     this.profiler = null; this.done = true;

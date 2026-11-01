@@ -6,6 +6,7 @@
 pub mod camera;
 pub mod env;
 pub mod first_person;
+pub mod gpu_timing;
 pub mod metrics;
 pub mod postprocess;
 pub mod presentation;
