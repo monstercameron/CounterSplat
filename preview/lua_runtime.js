@@ -85,6 +85,7 @@ function ecs.despawn(id, recursive) return invoke("despawn", { id = id, recursiv
 function ecs.is_alive(id) return invoke("is_alive", { id = id }) end
 function ecs.entities() return invoke("entities") end
 function ecs.hierarchy() return invoke("hierarchy") end
+function ecs.structure_revision() return invoke("structure_revision") end
 function ecs.components(id) return invoke("components", { id = id }) end
 function ecs.query(components) return invoke("query", { components = components }) end
 function ecs.get(id, name) return invoke("get", { id = id, name = name }) end

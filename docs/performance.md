@@ -12,7 +12,11 @@ and `ecs.get_resource_field(name, field)` reads individual resource fields
 without copying whole maps while still observing runtime changes. The level and
 voxel panels fetch their controls only when their source settings
 change, and settled camera/posture systems avoid writing unchanged components.
-The ECS browser updates only rows that actually change.
+The ECS browser updates only rows that actually change. It caches its tree
+using `ecs.structure_revision()`, which changes on entity, parent,
+component-membership, and adapter changes. Component value edits do not
+invalidate it; adapters whose membership depends on values need their own
+invalidation strategy.
 
 ## Profiling
 

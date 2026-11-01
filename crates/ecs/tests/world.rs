@@ -39,6 +39,71 @@ fn entity_handles_are_world_scoped_and_do_not_revive() {
 }
 
 #[test]
+fn structure_revision_tracks_membership_and_parent_changes_only() {
+    let mut world = World::new();
+    let initial = world.structure_revision();
+    let first = world.spawn();
+    assert_ne!(world.structure_revision(), initial);
+    let second = world.spawn();
+    let mut revision = world.structure_revision();
+
+    world.insert(first, 1_u32).unwrap();
+    assert_ne!(world.structure_revision(), revision);
+    revision = world.structure_revision();
+    world.insert(first, 2_u32).unwrap();
+    *world.get_mut::<u32>(first).unwrap() = 3;
+    world.set_dynamic_resource("settings", json!(1));
+    world.emit_event("event", Value::Null);
+    assert_eq!(world.structure_revision(), revision);
+
+    world.set_dynamic(first, "Tag", Value::Null).unwrap();
+    assert_ne!(world.structure_revision(), revision);
+    revision = world.structure_revision();
+    world.set_dynamic(first, "Tag", json!(3)).unwrap();
+    assert_eq!(world.structure_revision(), revision);
+    assert!(world.remove_dynamic(first, "Missing").is_none());
+    assert_eq!(world.structure_revision(), revision);
+    world.remove_dynamic(first, "Tag");
+    assert_ne!(world.structure_revision(), revision);
+    revision = world.structure_revision();
+
+    world.set_parent(second, Some(first)).unwrap();
+    assert_ne!(world.structure_revision(), revision);
+    revision = world.structure_revision();
+    world.set_parent(second, Some(first)).unwrap();
+    assert!(world.set_parent(first, Some(second)).is_err());
+    assert_eq!(world.structure_revision(), revision);
+    world.register_serde_component::<u32>("Number").unwrap();
+    assert_ne!(world.structure_revision(), revision);
+    revision = world.structure_revision();
+    assert!(world.register_serde_component::<u32>("Number").is_err());
+    assert_eq!(world.structure_revision(), revision);
+
+    let expected = revision.to_string();
+    assert_eq!(
+        world
+            .apply_operation(WorldOperation::StructureRevision)
+            .unwrap(),
+        WorldOutcome::Value(Some(json!(expected)))
+    );
+    let result: Value = serde_json::from_str(
+        &world
+            .apply_script_json(r#"{"op":"structure_revision"}"#)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(result, json!({"found":true,"value":expected}));
+    assert!(world.remove::<u32>(first).is_some());
+    assert_ne!(world.structure_revision(), revision);
+    revision = world.structure_revision();
+    assert!(world.despawn(second));
+    assert_ne!(world.structure_revision(), revision);
+    revision = world.structure_revision();
+    assert!(!world.despawn(second));
+    assert_eq!(world.structure_revision(), revision);
+}
+
+#[test]
 fn streamed_script_hierarchy_matches_owned_world_operation() {
     let mut world = World::new();
     let root = world.spawn();

@@ -14,6 +14,7 @@ local list_rows = {ids.ecs_row_1, ids.ecs_row_2, ids.ecs_row_3, ids.ecs_row_4, i
     ids.ecs_row_11, ids.ecs_row_12}
 local toggles, row_index, toggle_index, displayed = {}, {}, {}, {}
 local internal, expanded = {}, {}
+local cached_tree, cached_total, cached_revision, tree_serial = nil, nil, nil, 0
 -- Scenes may choose which authored branches start open; runtime expansion is local UI state.
 local preview = ecs.get_resource("preview") or {}
 if type(preview.entity_browser_expanded) == "table" then
@@ -86,6 +87,8 @@ end
 -- A compact ECS hierarchy snapshot keeps this live without copying component
 -- payloads or making one host round-trip per entity.
 local function entity_tree()
+    local revision = ecs.structure_revision()
+    if cached_tree and cached_revision == revision then return cached_tree, cached_total end
     local hierarchy, ui, by_id, children, roots = ecs.hierarchy(), {}, {}, {}, {}
     for _, id in ipairs(ecs.query({"UiElement"})) do ui[id] = true end
     for _, item in ipairs(hierarchy) do
@@ -125,6 +128,8 @@ local function entity_tree()
             end
         end
     end
+    cached_tree, cached_total, cached_revision = visible, total, revision
+    tree_serial = tree_serial + 1
     return visible, total
 end
 local function sorted_entities()
@@ -182,12 +187,8 @@ local function refresh_list(force)
         viewport.widget.content_height, viewport.widget.offset = content_height, offset
         ecs.set(ids.ecs_list, "UiElement", viewport)
     end
-    local keys = {}
-    for _, entry in ipairs(entries) do
-        keys[#keys + 1] = entry.id .. ":" .. entry.depth .. ":" .. tostring(entry.has_children) .. ":" .. tostring(expanded[entry.id])
-    end
     local first = math.floor(offset / row_height)
-    local stamp = table.concat(keys, "|") .. ":" .. total .. ":" .. offset .. ":" .. viewport.rect.width .. ":" ..
+    local stamp = tree_serial .. ":" .. total .. ":" .. offset .. ":" .. viewport.rect.width .. ":" ..
         tostring(selected) .. ":" .. tostring(parenting) .. ":" .. tostring(notice)
     if not force and stamp == list_stamp then return end
     list_stamp = stamp
@@ -368,7 +369,10 @@ ecs.on("ui.action", function(action)
     local id, kind = action.id, action.kind
     if toggle_index[id] and kind.type == "clicked" then
         local entry = displayed[toggle_index[id]]
-        if entry and entry.has_children then expanded[entry.id] = not expanded[entry.id] end
+        if entry and entry.has_children then
+            expanded[entry.id] = not expanded[entry.id]
+            cached_revision = nil
+        end
     elseif id == ids.ecs_parent and kind.type == "clicked" then
         if parenting then parenting, notice = nil, nil
         elseif selected and not protected(selected) then parenting, notice = selected, nil end
@@ -393,6 +397,7 @@ ecs.on("ui.action", function(action)
                 local ok = pcall(function() ecs.set_parent(child, target) end)
                 if ok then
                     expanded[target] = true
+                    cached_revision = nil
                     local ancestor = ecs.parent(target)
                     while ancestor do expanded[ancestor] = true; ancestor = ecs.parent(ancestor) end
                     parenting, notice, reveal = nil, "Parent set: " .. display_name(child), child

@@ -87,3 +87,82 @@ fn idle_level_and_voxel_controls_only_read_ui_when_data_changes() {
         Widget::Text { text, .. } if text == "Voxel size: 0.050")
     );
 }
+
+struct HierarchyCountingBridge {
+    world: Rc<RefCell<World>>,
+    reads: Rc<Cell<usize>>,
+}
+impl WorldBridge for HierarchyCountingBridge {
+    fn request(&mut self, op: WorldOperation) -> Result<WorldOutcome, String> {
+        if matches!(&op, WorldOperation::Hierarchy) {
+            self.reads.set(self.reads.get() + 1);
+        }
+        self.world.borrow_mut().apply_operation(op)
+    }
+}
+
+#[test]
+fn inspector_reuses_tree_until_structure_or_component_membership_changes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scene =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &scene,
+        &["ui", "player", "level", "scene"],
+    )
+    .unwrap();
+    let reads = Rc::new(Cell::new(0));
+    let lua = LuaRuntime::new(
+        HierarchyCountingBridge {
+            world: world.clone(),
+            reads: reads.clone(),
+        },
+        ScriptOptions::default(),
+    )
+    .unwrap();
+    for script in ["inspector_tuning.lua", "entity_inspector.lua"] {
+        lua.execute(&std::fs::read_to_string(root.join("assets/scripts").join(script)).unwrap())
+            .unwrap();
+    }
+    reads.set(0);
+    for _ in 0..120 {
+        lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert_eq!(reads.get(), 0, "unchanged trees should not be copied");
+
+    let entity = world.borrow_mut().spawn();
+    for _ in 0..20 {
+        lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert_eq!(reads.get(), 1, "spawning must refresh the tree");
+    world
+        .borrow_mut()
+        .insert(entity, UiElement::default())
+        .unwrap();
+    for _ in 0..20 {
+        lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert_eq!(
+        reads.get(),
+        2,
+        "component membership must refresh tree classification"
+    );
+    world
+        .borrow_mut()
+        .set_parent(entity, Some(ids["player"]))
+        .unwrap();
+    for _ in 0..20 {
+        lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert_eq!(reads.get(), 3, "reparenting must refresh the tree");
+    world.borrow_mut().despawn(entity);
+    for _ in 0..20 {
+        lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert_eq!(reads.get(), 4, "despawning must refresh the tree");
+}

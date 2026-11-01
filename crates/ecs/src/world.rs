@@ -150,6 +150,7 @@ pub struct World {
     alive: Vec<bool>,
     free: Vec<u32>,
     live_count: usize,
+    structure_revision: u64,
     stores: HashMap<TypeId, Box<dyn AnyStore>>,
     resources: HashMap<TypeId, Box<dyn Any + Send>>,
     dynamic_components: BTreeMap<String, BTreeMap<Entity, Value>>,
@@ -178,6 +179,7 @@ impl World {
             alive: Vec::new(),
             free: Vec::new(),
             live_count: 0,
+            structure_revision: 0,
             stores: HashMap::new(),
             resources: HashMap::new(),
             dynamic_components: BTreeMap::new(),
@@ -203,6 +205,17 @@ impl World {
         self.live_count == 0
     }
 
+    /// Revision of entity, parent, component-membership, and adapter changes.
+    /// Component value edits do not change it. Custom adapters whose presence
+    /// depends on values must provide their own invalidation for such changes.
+    pub fn structure_revision(&self) -> u64 {
+        self.structure_revision
+    }
+
+    fn structure_changed(&mut self) {
+        self.structure_revision = self.structure_revision.wrapping_add(1);
+    }
+
     /// Spawns an entity. A reused slot receives its next generation.
     pub fn spawn(&mut self) -> Entity {
         let index = if let Some(index) = self.free.pop() {
@@ -220,6 +233,7 @@ impl World {
             index,
             generation: self.generations[index as usize],
         };
+        self.structure_changed();
         self.record_lifecycle(LifecycleEvent::Spawned(entity));
         entity
     }
@@ -264,6 +278,7 @@ impl World {
             self.generations[slot] = next;
             self.free.push(entity.index);
         }
+        self.structure_changed();
         self.record_lifecycle(LifecycleEvent::Despawned(entity));
         true
     }
@@ -325,12 +340,16 @@ impl World {
                 values: BTreeMap::new(),
             })
         });
-        store
+        let inserted = store
             .as_any_mut()
             .downcast_mut::<Store<T>>()
             .expect("component store type mismatch")
             .values
-            .insert(entity, component);
+            .insert(entity, component)
+            .is_none();
+        if inserted {
+            self.structure_changed();
+        }
         Ok(())
     }
     /// Borrows a typed component, or returns None if absent or stale.
@@ -348,7 +367,11 @@ impl World {
     }
     /// Removes and returns a typed component if present.
     pub fn remove<T: Send + 'static>(&mut self, entity: Entity) -> Option<T> {
-        self.typed_mut::<T>()?.values.remove(&entity)
+        let value = self.typed_mut::<T>()?.values.remove(&entity);
+        if value.is_some() {
+            self.structure_changed();
+        }
+        value
     }
     /// Borrows the component index for repeated lookups and ordered iteration.
     pub fn component_view<T: Send + 'static>(&self) -> Option<ComponentView<'_, T>> {
@@ -444,6 +467,7 @@ impl World {
             return Err(format!("component name `{name}` is already in use"));
         }
         self.adapters.insert(name.to_owned(), Arc::new(adapter));
+        self.structure_changed();
         Ok(())
     }
     /// Registers JSON serialization/deserialization for a Rust component type under a script-visible name.
@@ -465,10 +489,15 @@ impl World {
         if self.adapters.contains_key(name) {
             return Err(format!("component `{name}` is registered; use its adapter"));
         }
-        self.dynamic_components
+        let inserted = self
+            .dynamic_components
             .entry(name.to_owned())
             .or_default()
-            .insert(entity, value);
+            .insert(entity, value)
+            .is_none();
+        if inserted {
+            self.structure_changed();
+        }
         Ok(())
     }
     /// Borrows a dynamic value; registered native components use their adapter.
@@ -487,6 +516,9 @@ impl World {
         let value = store.remove(&entity);
         if store.is_empty() {
             self.dynamic_components.remove(name);
+        }
+        if value.is_some() {
+            self.structure_changed();
         }
         value
     }
@@ -823,6 +855,7 @@ impl World {
             self.parents.insert(child, parent);
             self.children.entry(parent).or_default().insert(child);
         }
+        self.structure_changed();
         self.record_lifecycle(LifecycleEvent::ParentChanged { child, parent });
         Ok(())
     }

@@ -103,6 +103,7 @@ enum ScriptOperation<'a> {
     },
     Entities,
     Hierarchy,
+    StructureRevision,
     Components {
         id: String,
     },
@@ -195,6 +196,9 @@ impl World {
             },
             S::Entities => return script_result(Some(ScriptEntities(self))),
             S::Hierarchy => return script_result(Some(ScriptHierarchy(self))),
+            S::StructureRevision => {
+                return script_result(Some(self.structure_revision().to_string()))
+            }
             S::Components { id } => O::Components {
                 entity: Entity::from_str(&id)?,
             },

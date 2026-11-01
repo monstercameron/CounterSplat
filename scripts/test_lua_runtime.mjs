@@ -22,6 +22,7 @@ class WorldFixture {
     let value, found = true;
     switch (op.op) {
       case 'hierarchy': value = [{id:'root', parent:null}, {id:'child', parent:'root'}]; break;
+      case 'structure_revision': value = '0'; break;
       case 'get_resource': found = this.resources.has(op.name); value = this.resources.get(op.name); break;
       case 'get_resource_field': {
         const resource = this.resources.get(op.name);
@@ -78,6 +79,7 @@ game.vm.doStringSync(`
 game.vm.doStringSync(`
   ecs.set_resource('roundtrip', {items = ecs.array(), marker = ecs.null, nested = {1, 2}})
   local tree = ecs.hierarchy()
+  assert(ecs.structure_revision() == '0')
   assert(#tree == 2 and tree[1].parent == ecs.null and tree[2].parent == 'root')
   local value = ecs.get_resource('roundtrip')
   assert(#value.items == 0 and value.marker == ecs.null and value.nested[2] == 2)

@@ -87,6 +87,8 @@ pub enum WorldOperation {
     },
     /// Return only live entity IDs and parents, without copying component or resource data.
     Hierarchy,
+    /// String revision for caching entity structure and component membership.
+    StructureRevision,
     ReadResource {
         name: String,
     },
@@ -235,6 +237,9 @@ impl World {
                     })
                     .collect(),
             )))),
+            Op::StructureRevision => Ok(Out::Value(Some(serde_json::json!(self
+                .structure_revision()
+                .to_string())))),
             Op::ReadResource { name } => Ok(Out::Value(self.get_dynamic_resource(&name).cloned())),
             Op::ReadResourceField { name, field } => Ok(Out::Value(
                 self.get_dynamic_resource(&name)

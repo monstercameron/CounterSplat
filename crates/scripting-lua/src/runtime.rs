@@ -353,6 +353,16 @@ fn install_ecs_api(
         lua,
         &api,
         bridge,
+        "structure_revision",
+        |_, bridge, ()| match request(bridge, WorldOperation::StructureRevision)? {
+            WorldOutcome::Value(Some(JsonValue::String(revision))) => Ok(revision),
+            _ => Err(unexpected()),
+        },
+    )?;
+    bind(
+        lua,
+        &api,
+        bridge,
         "snapshot",
         |lua, bridge, ()| match request(bridge, WorldOperation::Snapshot)? {
             WorldOutcome::Snapshot(snapshot) => {
