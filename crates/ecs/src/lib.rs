@@ -39,4 +39,4 @@ pub use bridge::{
 pub use entity::Entity;
 pub use schedule::{Schedule, System, SystemError};
 pub use serde_json::Value;
-pub use world::{ComponentAdapter, EntityIndex, LifecycleEvent, World};
+pub use world::{ComponentAdapter, ComponentView, EntityIndex, LifecycleEvent, World};

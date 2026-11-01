@@ -67,3 +67,9 @@ Run `node scripts/benchmark_event_dispatch.mjs` to compare repeated empty
 channel checks with ordered batched checks. The fixture measures host-side JSON
 transport only; use the browser profiler to measure the actual Rust/WASM path
 and event handlers.
+
+## UI layout benchmark
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-ui-ecs --example layout_bench` to compare CPU layout extraction
+for dense and sparse entity slots. The benchmark excludes GPU rendering and Lua.

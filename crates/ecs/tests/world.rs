@@ -39,6 +39,32 @@ fn entity_handles_are_world_scoped_and_do_not_revive() {
 }
 
 #[test]
+fn component_view_borrows_ordered_live_storage() {
+    let mut world = World::new();
+    assert!(world.component_view::<u32>().is_none());
+    let first = world.spawn();
+    let second = world.spawn();
+    world.insert(second, 2_u32).unwrap();
+    world.insert(first, 1_u32).unwrap();
+    let view = world.component_view::<u32>().unwrap();
+    assert_eq!(view.len(), 2);
+    assert!(!view.is_empty());
+    assert_eq!(view.entities().collect::<Vec<_>>(), vec![first, second]);
+    assert_eq!(
+        view.iter()
+            .map(|(entity, value)| (entity, *value))
+            .collect::<Vec<_>>(),
+        vec![(first, 1), (second, 2)]
+    );
+    assert_eq!(view.get(first), Some(&1));
+    assert!(view.contains(second));
+    assert!(world.despawn(first));
+    let view = world.component_view::<u32>().unwrap();
+    assert!(!view.contains(first));
+    assert_eq!(view.entities().collect::<Vec<_>>(), vec![second]);
+}
+
+#[test]
 fn typed_components_and_dynamic_values_share_an_explicit_script_view() {
     let mut world = World::new();
     world

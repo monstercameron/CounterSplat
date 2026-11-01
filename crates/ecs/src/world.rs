@@ -28,6 +28,38 @@ pub enum LifecycleEvent {
     },
 }
 
+/// Read-only access to a typed component store in deterministic entity order.
+pub struct ComponentView<'a, T> {
+    values: &'a BTreeMap<Entity, T>,
+}
+
+impl<T> ComponentView<'_, T> {
+    /// Number of components in this view.
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+    /// Whether the component store is empty.
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+    /// Borrows the component belonging to a live entity, if present.
+    pub fn get(&self, entity: Entity) -> Option<&T> {
+        self.values.get(&entity)
+    }
+    /// Checks whether the entity has this component.
+    pub fn contains(&self, entity: Entity) -> bool {
+        self.values.contains_key(&entity)
+    }
+    /// Visits entity IDs in deterministic order.
+    pub fn entities(&self) -> impl DoubleEndedIterator<Item = Entity> + ExactSizeIterator + '_ {
+        self.values.keys().copied()
+    }
+    /// Visits entity IDs and borrowed components in deterministic order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (Entity, &T)> + '_ {
+        self.values.iter().map(|(entity, value)| (*entity, value))
+    }
+}
+
 /// An ordered, exact-size view of the entities in a component index.
 pub type EntityIndex<'a> = Box<dyn ExactSizeIterator<Item = Entity> + 'a>;
 
@@ -314,6 +346,13 @@ impl World {
     pub fn remove<T: Send + 'static>(&mut self, entity: Entity) -> Option<T> {
         self.typed_mut::<T>()?.values.remove(&entity)
     }
+    /// Borrows the component index for repeated lookups and ordered iteration.
+    pub fn component_view<T: Send + 'static>(&self) -> Option<ComponentView<'_, T>> {
+        self.typed::<T>().map(|store| ComponentView {
+            values: &store.values,
+        })
+    }
+
     /// Borrows all components of this type in deterministic entity order.
     pub fn query<T: Send + 'static>(&self) -> Vec<(Entity, &T)> {
         self.typed::<T>().map_or_else(Vec::new, |store| {

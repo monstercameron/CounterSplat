@@ -157,6 +157,40 @@ struct Layout {
     scroll_parent: Option<Entity>,
 }
 
+// Dense entity slots make direct lookup cheaper than rebuilding a tree for
+// every frame. Sparse or very large slot ranges use a bounded-memory fallback.
+enum LayoutCache {
+    Dense(Vec<Option<Layout>>),
+    Sparse(BTreeMap<Entity, Layout>),
+}
+
+impl LayoutCache {
+    fn new(max_slot: usize, count: usize) -> Self {
+        let dense_limit = count.saturating_mul(4).saturating_add(128).min(65_536);
+        if max_slot < dense_limit {
+            Self::Dense(vec![None; max_slot + 1])
+        } else {
+            Self::Sparse(BTreeMap::new())
+        }
+    }
+
+    fn get(&self, entity: Entity) -> Option<Layout> {
+        match self {
+            Self::Dense(slots) => slots.get(entity.index() as usize).copied().flatten(),
+            Self::Sparse(entries) => entries.get(&entity).copied(),
+        }
+    }
+
+    fn insert(&mut self, entity: Entity, layout: Layout) {
+        match self {
+            Self::Dense(slots) => slots[entity.index() as usize] = Some(layout),
+            Self::Sparse(entries) => {
+                entries.insert(entity, layout);
+            }
+        }
+    }
+}
+
 /// Extract visible, clipped, z-ordered nodes from the ECS into an owned render snapshot.
 ///
 /// An immediate parent carrying `UiElement` establishes local coordinates, inherited visibility,
@@ -169,34 +203,42 @@ pub fn extract(world: &World, viewport: Rect) -> Result<UiFrame, &'static str> {
     if !viewport.valid() {
         return Err("UI viewport must be finite and nonempty");
     }
-    let nodes: BTreeMap<Entity, &UiElement> = world.query::<UiElement>().into_iter().collect();
+    let Some(nodes) = world.component_view::<UiElement>() else {
+        return Ok(UiFrame::default());
+    };
     // A scroll panel must keep its full viewport reachable when it fits in its
     // parent; moving only its header on screen can strand the last list rows.
     let scroll_hosts: std::collections::BTreeSet<Entity> = nodes
         .iter()
         .filter(|(_, item)| matches!(item.widget, Widget::ScrollArea { .. }))
-        .filter_map(|(entity, _)| world.parent(*entity))
+        .filter_map(|(entity, _)| world.parent(entity))
         .collect();
-    let mut layouts: BTreeMap<Entity, Layout> = BTreeMap::new();
+    let max_slot = nodes
+        .entities()
+        .next_back()
+        .map_or(0, |entity| entity.index() as usize);
+    let mut layouts = LayoutCache::new(max_slot, nodes.len());
     let mut frame = UiFrame::default();
-    for &entity in nodes.keys() {
-        if layouts.contains_key(&entity) {
+    let mut path = Vec::new();
+    for entity in nodes.entities() {
+        if layouts.get(entity).is_some() {
             continue;
         }
-        let mut path = Vec::new();
         let mut cursor = Some(entity);
         while let Some(current) = cursor {
-            if layouts.contains_key(&current) {
+            if layouts.get(current).is_some() {
                 break;
             }
             path.push(current);
             cursor = world
                 .parent(current)
-                .filter(|parent| nodes.contains_key(parent));
+                .filter(|parent| nodes.contains(*parent));
         }
-        for current in path.into_iter().rev() {
-            let element = nodes[&current];
-            let parent = world.parent(current).and_then(|p| layouts.get(&p).copied());
+        for current in path.drain(..).rev() {
+            let element = nodes
+                .get(current)
+                .expect("layout path contains UI entities");
+            let parent = world.parent(current).and_then(|p| layouts.get(p));
             let parent_rect = parent.map_or(viewport, |p| p.child_rect);
             let inherited_clip = parent.map_or(Some(viewport), |p| p.child_clip);
             let collapsed = element
@@ -501,6 +543,63 @@ mod tests {
     use super::*;
     use countersplat_ui::{Anchor, UiElement};
     use serde_json::json;
+
+    #[test]
+    fn dense_and_sparse_entity_slots_resolve_the_same_ui() {
+        fn scene(padding: usize) -> UiFrame {
+            let mut world = World::new();
+            for _ in 0..padding {
+                world.spawn();
+            }
+            let root = spawn(
+                &mut world,
+                None,
+                UiElement {
+                    rect: Rect::new(10.0, 20.0, 300.0, 200.0),
+                    z: 1,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let scroll = spawn(
+                &mut world,
+                Some(root),
+                UiElement {
+                    rect: Rect::new(5.0, 8.0, 150.0, 100.0),
+                    z: 2,
+                    widget: Widget::ScrollArea {
+                        offset: 20.0,
+                        content_height: 250.0,
+                    },
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            spawn(
+                &mut world,
+                Some(scroll),
+                UiElement {
+                    rect: Rect::new(4.0, 30.0, 60.0, 20.0),
+                    z: 3,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let mut frame = extract(&world, Rect::new(0.0, 0.0, 500.0, 400.0)).unwrap();
+            for node in &mut frame.nodes {
+                node.id.clear();
+                if let Some(parent) = &mut node.scroll_parent {
+                    parent.clear();
+                }
+            }
+            frame
+        }
+        assert_eq!(scene(0), scene(1_000));
+        assert!(extract(&World::new(), Rect::new(0.0, 0.0, 10.0, 10.0))
+            .unwrap()
+            .nodes
+            .is_empty());
+    }
 
     #[test]
     fn hierarchy_resolves_anchors_clipping_visibility_and_order() {
