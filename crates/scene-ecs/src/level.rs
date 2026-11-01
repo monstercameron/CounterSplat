@@ -30,6 +30,11 @@ impl ComponentAdapter for AssetsAdapter {
 }
 struct SettingsAdapter;
 impl ComponentAdapter for SettingsAdapter {
+    // Settings are plain values; World invalidates this revision on insertion,
+    // mutable access, removal, and entity lifecycle changes.
+    fn content_revision(&self, world: &World) -> Option<u64> {
+        world.component_revision::<LevelSettings>()
+    }
     fn read(&self, world: &World, entity: Entity) -> Result<Option<Value>, String> {
         world
             .get::<LevelSettings>(entity)
@@ -55,6 +60,7 @@ impl ComponentAdapter for SettingsAdapter {
     }
 }
 pub fn register(world: &mut World) -> Result<(), String> {
+    world.track_component_changes::<LevelSettings>();
     world.register_component_adapter("LevelAssets", AssetsAdapter)?;
     world.register_component_adapter("LevelSettings", SettingsAdapter)
 }

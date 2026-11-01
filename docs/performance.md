@@ -11,7 +11,8 @@ Lua still owns gameplay decisions. The physics step reuses data it already read,
 and `ecs.get_resource_field(name, field)` reads individual resource fields
 without copying whole maps while still observing runtime changes. The level and
 voxel panels fetch their controls only when their source settings
-change, the player controls panel skips unchanged widget writes while still
+change; the level panel also reuses revision-tracked settings between changes.
+The player controls panel skips unchanged widget writes while still
 correcting external widget edits, and settled camera/posture systems avoid
 writing unchanged components.
 Lua can use `ecs.get_many(entity, {"A", "B"})` to read several

@@ -2,6 +2,7 @@
 -- The renderer consumes LevelSettings; this script only binds the canvas controls.
 local ids = assert(ecs.get_resource("scene.entities"), "gameplay entities are missing")
 local level = assert(ids.active_level, "active level entity is missing")
+local read_settings = engine.component_reader(level, "LevelSettings")
 local assets = assert(ecs.get(level, "LevelAssets"), "level assets are missing")
 local lod_count = assets.lod_count
 local last_manual = 0
@@ -17,7 +18,7 @@ set_text(ids.level_hint, lod_count == 1 and "This scan has one LOD" or "0 = fine
 
 local previous_lod, previous_distance, previous_manual, synced = nil, nil, nil, false
 local function sync_settings(force)
-    local settings = assert(ecs.get(level, "LevelSettings"), "level settings are missing")
+    local settings = assert(read_settings(), "level settings are missing")
     local automatic = settings.lod == ecs.null
     if not automatic then last_manual = settings.lod end
     -- Fetch UI components only when their source data changes, or after an action.
@@ -46,6 +47,9 @@ end
 sync_settings(true)
 
 ecs.on("ui.action", function(action)
+    -- Most UI actions belong to other panels; do not copy settings for them.
+    if action.id ~= ids.level_lod and action.id ~= ids.level_auto and
+        action.id ~= ids.level_draw_distance then return end
     local settings = assert(ecs.get(level, "LevelSettings"))
     if action.id == ids.level_lod and action.kind.type == "number_changed" and lod_count > 1 then
         last_manual = math.max(0, math.min(lod_count - 1, math.floor(action.kind.value + 0.5)))

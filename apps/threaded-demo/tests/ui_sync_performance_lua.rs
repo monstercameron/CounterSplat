@@ -12,13 +12,21 @@ use std::{
 struct CountingBridge {
     world: Rc<RefCell<World>>,
     ui_reads: Rc<Cell<usize>>,
+    level_snapshots: Rc<Cell<usize>>,
 }
 impl WorldBridge for CountingBridge {
     fn request(&mut self, op: WorldOperation) -> Result<WorldOutcome, String> {
         if matches!(&op, WorldOperation::ReadComponent { name, .. } if name == "UiElement") {
             self.ui_reads.set(self.ui_reads.get() + 1);
         }
-        self.world.borrow_mut().apply_operation(op)
+        let level_read = matches!(&op,
+            WorldOperation::ReadComponent { name, .. } |
+            WorldOperation::ReadComponentIfChanged { name, .. } if name == "LevelSettings");
+        let result = self.world.borrow_mut().apply_operation(op);
+        if level_read && matches!(&result, Ok(WorldOutcome::Value(Some(_)))) {
+            self.level_snapshots.set(self.level_snapshots.get() + 1);
+        }
+        result
     }
 }
 
@@ -38,10 +46,12 @@ fn idle_level_and_voxel_controls_only_read_ui_when_data_changes() {
     )
     .unwrap();
     let ui_reads = Rc::new(Cell::new(0));
+    let level_snapshots = Rc::new(Cell::new(0));
     let lua = LuaRuntime::new(
         CountingBridge {
             world: world.clone(),
             ui_reads: ui_reads.clone(),
+            level_snapshots: level_snapshots.clone(),
         },
         ScriptOptions::default(),
     )
@@ -52,6 +62,7 @@ fn idle_level_and_voxel_controls_only_read_ui_when_data_changes() {
     }
 
     ui_reads.set(0);
+    level_snapshots.set(0);
     for _ in 0..120 {
         lua.run_systems(1.0 / 60.0).unwrap();
     }
@@ -59,6 +70,24 @@ fn idle_level_and_voxel_controls_only_read_ui_when_data_changes() {
         ui_reads.get(),
         0,
         "idle control synchronization should not copy UI components"
+    );
+    assert_eq!(
+        level_snapshots.get(),
+        0,
+        "unchanged settings should not be copied"
+    );
+    lua.dispatch(
+        "ui.action",
+        &serde_json::json!({
+            "id": ids["controls_speed"].to_string(),
+            "kind": {"type": "number_changed", "value": 5.0}
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        level_snapshots.get(),
+        0,
+        "other panels must not read level settings"
     );
 
     {
@@ -76,6 +105,11 @@ fn idle_level_and_voxel_controls_only_read_ui_when_data_changes() {
     assert!(
         ui_reads.get() > 0,
         "external changes must refresh controls promptly"
+    );
+    assert_eq!(
+        level_snapshots.get(),
+        1,
+        "one changed settings snapshot should be read"
     );
     let w = world.borrow();
     assert!(
