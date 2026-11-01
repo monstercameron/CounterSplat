@@ -36,6 +36,7 @@ fn main() {
         ("small sphere", [0.01, -0.005, 0.0], 0.0, 0.05, 0.0),
         ("crouched", [0.04, -0.005, 0.02], 0.0, 0.25, 0.35),
         ("wide body", [0.04, -0.005, 0.02], 0.0, 0.5, 0.9),
+        ("long empty sweep", [6.0, 0.0, 0.0], 100.0, 0.25, 0.675),
     ];
     const COUNT: usize = 400;
     for (name, delta, up, radius, half_height) in cases {

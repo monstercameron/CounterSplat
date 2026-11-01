@@ -165,6 +165,29 @@ fn upright_capsule_stands_on_the_floor_and_stops_at_the_ceiling() {
 }
 
 #[test]
+fn capsule_stays_outside_a_floor_and_two_wall_corner() {
+    let mut mask = 0u64;
+    for z in 0..4 {
+        for y in 0..4 {
+            for x in 0..4 {
+                if y == 0 || x == 2 || z == 2 {
+                    mask |= 1 << (x + y * 4 + z * 16);
+                }
+            }
+        }
+    }
+    let world = capsule_world(mask, "1.1");
+    let hit = world
+        .move_capsule([1.0, 2.2, 1.0], [1.0, -0.4, 1.0], 0.2, 0.6)
+        .unwrap();
+    assert!(
+        hit[0] <= 1.801 && hit[2] <= 1.801,
+        "both walls block the body: {hit:?}"
+    );
+    assert!(hit[1] >= 1.799, "floor supports the body: {hit:?}");
+}
+
+#[test]
 fn upright_capsule_respects_legacy_coordinate_rotation() {
     let mut mask = 0u64;
     for z in 0..4 {

@@ -438,14 +438,15 @@ impl VoxelCollider {
     }
 
     fn resolve_capsule(&self, mut center: [f32; 3], radius: f32, half_height: f32) -> [f32; 3] {
-        let mut normals: Vec<[f32; 3]> = Vec::with_capacity(3);
+        let mut normals = [[0.0_f32; 3]; 3];
+        let mut normal_count = 0;
         for _ in 0..MAX_ITERATIONS {
             let Some(push) = self.deepest_capsule_overlap(center, radius, half_height) else {
                 break;
             };
             let length = push.iter().map(|v| v * v).sum::<f32>().sqrt();
             let mut constrained = push;
-            for normal in &normals {
+            for normal in &normals[..normal_count] {
                 let dot = (0..3).map(|i| constrained[i] * normal[i]).sum::<f32>();
                 if dot < 0.0 {
                     for i in 0..3 {
@@ -453,8 +454,9 @@ impl VoxelCollider {
                     }
                 }
             }
-            if length > EPSILON && normals.len() < 3 {
-                normals.push(push.map(|v| v / length));
+            if length > EPSILON && normal_count < normals.len() {
+                normals[normal_count] = push.map(|v| v / length);
+                normal_count += 1;
             }
             for i in 0..3 {
                 center[i] += constrained[i];
