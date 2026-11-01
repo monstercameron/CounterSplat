@@ -41,6 +41,9 @@ pub const INSTANCE_SIZE: u32 = 128;
 const RELEASE_SCRATCH_SPLATS: usize = 262_144;
 // The debug LOD label uses four bytes per slot. Large writes remain temporary.
 const LOD_LABEL_SCRATCH_SPLATS: usize = 262_144;
+// Compaction can reuse up to 3 MiB of GPU scratch per scene. Very large
+// relocations remain temporary so they do not permanently grow the cache.
+const COMPACTION_SCRATCH_BYTES: u64 = 3 * 1024 * 1024;
 
 /// The engine's 32×32 RGBA8 blue-noise texture (`core/math/blue-noise.js`), row-major.
 const BLUE_NOISE_32: &[u8] = include_bytes!("../assets/blue_noise_32_rgba8.bin");
@@ -122,6 +125,7 @@ pub struct GsplatScene {
     centers: wgpu::Buffer,
     release_scratch: std::cell::RefCell<Vec<[f32; 3]>>,
     lod_label_scratch: std::cell::RefCell<Vec<u32>>,
+    compaction_scratch: std::cell::RefCell<Option<wgpu::Buffer>>,
     splat_width: u32,
     uniform_cache: std::cell::RefCell<BTreeMap<String, Vec<u8>>>,
     io_metrics: std::cell::RefCell<crate::metrics::Metrics>,
@@ -488,6 +492,7 @@ fn assemble(
         centers,
         release_scratch: Default::default(),
         lod_label_scratch: Default::default(),
+        compaction_scratch: Default::default(),
         splat_width,
         uniform_cache: Default::default(),
         io_metrics: Default::default(),
@@ -525,6 +530,30 @@ impl GsplatScene {
         self.sorter.invalidate();
     }
 
+    // Queue submissions execute in order, so consecutive compactions can
+    // safely share this buffer even while earlier commands are still in flight.
+    fn compaction_buffer(&self, count: u32) -> wgpu::Buffer {
+        let bytes = u64::from(count) * 12;
+        debug_assert!(bytes > 0);
+        let create = |size| {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("stream compaction scratch"),
+                size,
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        if bytes > COMPACTION_SCRATCH_BYTES {
+            return create(bytes);
+        }
+        let mut cached = self.compaction_scratch.borrow_mut();
+        if cached.as_ref().is_none_or(|buffer| buffer.size() < bytes) {
+            let capacity = bytes.next_power_of_two().min(COMPACTION_SCRATCH_BYTES);
+            *cached = Some(create(capacity));
+        }
+        cached.as_ref().unwrap().clone()
+    }
+
     /// Relocates a pool range through GPU scratch space, including overlapping ranges.
     /// The caller releases the vacated tail and updates its allocation bookkeeping.
     pub(crate) fn move_slots(&self, queue: &wgpu::Queue, from: u32, to: u32, count: u32) {
@@ -532,12 +561,7 @@ impl GsplatScene {
             return;
         }
         debug_assert!(from + count <= self.count && to + count <= self.count);
-        let scratch = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("stream compaction scratch"),
-            size: u64::from(count) * 12,
-            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let scratch = self.compaction_buffer(count);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1028,7 +1052,8 @@ mod tests {
             pool_with_centroid_rows(&device, &queue, &pipelines, &meta, 4096, 0.5, 1).unwrap();
         let count = 300u32;
         let from = 1900u32;
-        let to = 1770u32;
+        let first_to = 1770u32;
+        let to = 2300u32;
         let centres: Vec<[f32; 3]> = (0..count).map(|i| [i as f32, -(i as f32), 1.0]).collect();
         let streams: Vec<Vec<u8>> = (0..4u32)
             .map(|stream| {
@@ -1044,7 +1069,22 @@ mod tests {
             .map(|(&name, data)| (name, data.as_slice()))
             .collect();
         pool.write_splats(&queue, from, &inputs, &centres);
-        pool.move_slots(&queue, from, to, count);
+        // Queue several overlapping relocations without waiting. The cached
+        // buffer cannot be overwritten before the preceding copy has read it.
+        pool.move_slots(&queue, from, first_to, count);
+        let first_buffer = pool.compaction_buffer(count);
+        pool.move_slots(&queue, first_to, 2500, count);
+        pool.move_slots(&queue, 2500, to, count);
+        assert_eq!(first_buffer, pool.compaction_buffer(count / 2));
+        let grown = pool.compaction_buffer(count * 3);
+        assert_ne!(first_buffer, grown);
+        let retained = grown.size();
+        let temporary = pool.compaction_buffer((COMPACTION_SCRATCH_BYTES / 12 + 1) as u32);
+        assert!(temporary.size() > COMPACTION_SCRATCH_BYTES);
+        assert_eq!(
+            pool.compaction_scratch.borrow().as_ref().unwrap().size(),
+            retained
+        );
 
         let row_bytes = u64::from(POOL_WIDTH) * 4;
         let texture_bytes = row_bytes * 2;
@@ -1107,6 +1147,53 @@ mod tests {
                 names[i]
             );
         }
+    }
+
+    #[test]
+    #[ignore = "manual GPU resource-allocation benchmark"]
+    fn benchmark_compaction_buffer_reuse() {
+        use std::{hint::black_box, time::Instant};
+        let Some((device, queue)) = crate::try_device() else {
+            return;
+        };
+        let pipelines = Pipelines::new(&device, crate::COLOR_FORMAT).unwrap();
+        let meta = sog::Meta {
+            count: 0,
+            means_mins: [-1.0; 3],
+            means_maxs: [1.0; 3],
+            scales_codebook: vec![0.0; 256],
+            sh0_codebook: vec![0.0; 256],
+            sh_n_codebook: vec![0.0; 256],
+            sh_n_count: 0,
+        };
+        let pool =
+            pool_with_centroid_rows(&device, &queue, &pipelines, &meta, 4096, 0.5, 1).unwrap();
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..9 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let start = Instant::now();
+                for i in 0..400 {
+                    let count = if i % 2 == 0 { 8192 } else { 16384 };
+                    if mode == 0 {
+                        black_box(device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("fresh compaction scratch"),
+                            size: u64::from(count) * 12,
+                            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        }));
+                    } else {
+                        black_box(pool.compaction_buffer(count));
+                    }
+                }
+                samples[mode].push(start.elapsed().as_nanos() as f64 / 400.0);
+            }
+        }
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        println!(
+            "compaction buffer: fresh {:.0} ns, reused {:.0} ns",
+            samples[0][4], samples[1][4]
+        );
     }
 
     #[test]
