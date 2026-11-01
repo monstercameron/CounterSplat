@@ -630,6 +630,8 @@ fn sparse_queries_match_live_entities_across_components_and_reused_slots() {
     let queries: &[&[&str]] = &[
         &[],
         &["Position"],
+        &["Marker"],
+        &["ReadOnlyHealth"],
         &["Rare"],
         &["Missing"],
         &["Rare", "Rare"],

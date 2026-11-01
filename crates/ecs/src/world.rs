@@ -706,6 +706,23 @@ impl World {
         if names.is_empty() {
             return Ok(self.entities());
         }
+        // The physics loop and many scripts query one component per tick.
+        // Avoid allocating the join's temporary store and adapter lists.
+        if let [name] = names {
+            if let Some(adapter) = self.adapters.get(*name) {
+                return Ok(match adapter.indexed_entities(self) {
+                    Some(entities) => entities.collect(),
+                    None => self
+                        .iter_entities()
+                        .filter(|entity| adapter.contains(self, *entity))
+                        .collect(),
+                });
+            }
+            return Ok(self
+                .dynamic_components
+                .get(*name)
+                .map_or_else(Vec::new, |store| store.keys().copied().collect()));
+        }
 
         // Resolve each name once, rather than looking up its adapter or store
         // for every entity. Registered adapters remain the source of truth for

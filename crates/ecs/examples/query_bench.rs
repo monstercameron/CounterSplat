@@ -1,5 +1,5 @@
 //! Run with cargo run --release -p countersplat-ecs --example query_bench.
-use countersplat_ecs::World;
+use countersplat_ecs::{ComponentAdapter, Entity, Value, World};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{hint::black_box, time::Instant};
@@ -11,6 +11,23 @@ struct Position {
 
 #[derive(Serialize, Deserialize)]
 struct SparseMarker;
+
+// An adapter without an index exercises the documented contains-based fallback.
+struct FallbackMarker;
+impl ComponentAdapter for FallbackMarker {
+    fn read(&self, _: &World, _: Entity) -> Result<Option<Value>, String> {
+        Ok(None)
+    }
+    fn write(&self, _: &mut World, _: Entity, _: Value) -> Result<(), String> {
+        Err("read only".into())
+    }
+    fn remove(&self, _: &mut World, _: Entity) -> Result<Option<Value>, String> {
+        Err("read only".into())
+    }
+    fn contains(&self, world: &World, entity: Entity) -> bool {
+        world.has::<SparseMarker>(entity)
+    }
+}
 
 fn measure(world: &World, names: &[&str], iterations: usize) -> f64 {
     for _ in 0..20 {
@@ -53,6 +70,9 @@ fn main() {
         world
             .register_serde_component::<SparseMarker>("SparseMarker")
             .unwrap();
+        world
+            .register_component_adapter("FallbackMarker", FallbackMarker)
+            .unwrap();
         for index in 0..size {
             let entity = world.spawn();
             world.insert(entity, Position { x: index as f32 }).unwrap();
@@ -73,6 +93,7 @@ fn main() {
             &["Position", "Rare"][..],
             &["Position"][..],
             &["SparseMarker"][..],
+            &["FallbackMarker"][..],
             &["Position", "SparseMarker"][..],
             &["Dense", "SparseMarker"][..],
         ] {
