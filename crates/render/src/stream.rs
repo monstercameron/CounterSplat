@@ -36,8 +36,14 @@ pub use types::{
     StreamSettings, StreamStats,
 };
 #[cfg(test)]
+use upload::encode_upload;
+#[cfg(test)]
 use upload::{decoded_shared_centre, direct_shared_centre, make_centre_lookup};
-use upload::{encode_upload, CentreLookup};
+use upload::{encode_upload_into, CentreLookup, EncodedUpload};
+
+// Retain at most roughly 6 MiB of staging data for ordinary leaf uploads.
+// Unusually large leaves use temporary buffers instead.
+const UPLOAD_SCRATCH_SPLATS: usize = 262_144;
 
 /// SH centroids per palette (one chunk's palette), and rows of the centroid texture per palette.
 const PALETTE_CENTROIDS: u32 = 65536;
@@ -164,6 +170,8 @@ pub struct LevelStream {
     remaps: Vec<Option<Remap>>,
     /// Shared-quantized coordinate decoding, initialized on the first upload.
     centre_lookup: CentreLookup,
+    /// Reused CPU staging storage for typical leaf uploads.
+    upload_scratch: EncodedUpload,
     /// Codebook index of 0 in the shared SH codebook: the reserved centroid's texels.
     sh_zero: u8,
     chunks: BTreeMap<usize, Chunk>,
@@ -333,6 +341,7 @@ impl LevelStream {
             shared,
             remaps,
             centre_lookup: CentreLookup::Uninitialized,
+            upload_scratch: EncodedUpload::default(),
             sh_zero: zero as u8,
             chunks: BTreeMap::new(),
             in_flight: BTreeSet::new(),
@@ -1408,7 +1417,21 @@ impl LevelStream {
             return;
         };
         let lookup = self.centre_lookup.for_upload(&self.shared);
-        let encoded = encode_upload(&chunk.bundle, remap, &self.shared, range, palette, lookup);
+        let mut temporary = EncodedUpload::default();
+        let encoded = if range.count as usize <= UPLOAD_SCRATCH_SPLATS {
+            &mut self.upload_scratch
+        } else {
+            &mut temporary
+        };
+        encode_upload_into(
+            encoded,
+            &chunk.bundle,
+            remap,
+            &self.shared,
+            range,
+            palette,
+            lookup,
+        );
         let first = range.offset as usize * 4;
         let last = (range.offset as usize + range.count as usize) * 4;
         let quats = &chunk.bundle.textures["quats"].rgba

@@ -61,6 +61,7 @@ pub(super) fn decoded_shared_centre(
     }
 }
 
+#[derive(Default)]
 pub(super) struct EncodedUpload {
     pub(super) centres: Vec<[f32; 3]>,
     pub(super) scales: Vec<u8>,
@@ -69,14 +70,15 @@ pub(super) struct EncodedUpload {
 }
 
 /// CPU preparation for a pool upload, separated from the GPU write so it can be checked and profiled independently.
-pub(super) fn encode_upload(
+pub(super) fn encode_upload_into(
+    encoded: &mut EncodedUpload,
     b: &Bundle,
     remap: &Remap,
     shared: &Meta,
     range: Range,
     palette: Option<usize>,
     lookup: Option<&[Vec<f32>; 3]>,
-) -> EncodedUpload {
+) {
     let n = range.count as usize;
     let (first, last) = (range.offset as usize * 4, (range.offset as usize + n) * 4);
     let src = |name: &str| &b.textures[name].rgba[first..last.min(b.textures[name].rgba.len())];
@@ -95,14 +97,21 @@ pub(super) fn encode_upload(
             (remap.meta.means_mins[c] - shared.means_mins[c]) / span * 65535.0,
         )
     });
-    let mut encoded = EncodedUpload {
-        scales: vec![0u8; n * 4],
-        sh0: vec![0u8; n * 4],
-        labels: vec![0u8; n * 4],
-        centres: vec![[0.0f32; 3]; n],
-    };
+    // Reserve exactly before resizing so repeated modest uploads can reuse storage
+    // without geometric growth retaining far more memory than the upload needs.
+    fn resize<T: Clone>(vec: &mut Vec<T>, len: usize, value: T) {
+        if vec.capacity() < len {
+            vec.reserve_exact(len - vec.len());
+        }
+        vec.resize(len, value);
+    }
+    resize(&mut encoded.scales, n * 4, 0);
+    resize(&mut encoded.sh0, n * 4, 0);
+    resize(&mut encoded.labels, n * 4, 0);
+    resize(&mut encoded.centres, n, [0.0; 3]);
     let label_base = palette.map(|p| 64 + p as u32 * PALETTE_CENTROIDS);
-    for i in 0..n.min(src_l.len() / 4) {
+    let available = n.min(src_l.len() / 4);
+    for i in 0..available {
         let s = i * 4;
         for c in 0..3 {
             let q = f32::from(src_l[s + c]) + 256.0 * f32::from(src_u[s + c]);
@@ -131,5 +140,25 @@ pub(super) fn encode_upload(
             255,
         ]);
     }
+    // A short means stream leaves zeroed slots, including after a larger
+    // previous upload reused these buffers.
+    encoded.centres[available..].fill([0.0; 3]);
+    encoded.scales[available * 4..].fill(0);
+    encoded.sh0[available * 4..].fill(0);
+    encoded.labels[available * 4..].fill(0);
+}
+
+/// Fresh allocation is useful as an independent call for tests and probes.
+#[cfg(test)]
+pub(super) fn encode_upload(
+    b: &Bundle,
+    remap: &Remap,
+    shared: &Meta,
+    range: Range,
+    palette: Option<usize>,
+    lookup: Option<&[Vec<f32>; 3]>,
+) -> EncodedUpload {
+    let mut encoded = EncodedUpload::default();
+    encode_upload_into(&mut encoded, b, remap, shared, range, palette, lookup);
     encoded
 }

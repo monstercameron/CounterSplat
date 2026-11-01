@@ -190,3 +190,11 @@ and rendering time are excluded.
 Run `node scripts/benchmark_lua_physics_skip.mjs` to compare the player
 body's duplicate read with the per-body skip predicate. This fixture measures
 Lua/JavaScript transport and excludes Rust physics and rendering.
+
+Run `$env:LOD_UPLOAD_LEVEL = (Resolve-Path 'assets/levels/<level-id>').Path`
+and `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render --lib benchmark_reused_upload_buffers -- --ignored
+--nocapture --test-threads=1` to compare fresh and reused CPU staging buffers
+on a local, separately acquired LOD level. The benchmark compares output bytes
+and excludes decoding, GPU uploads, and rendering. Reuse is limited to typical
+leaf sizes; unusually large uploads use temporary buffers.

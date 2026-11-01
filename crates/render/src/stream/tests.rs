@@ -1771,3 +1771,251 @@ fn benchmark_fade_preparation() {
         old_samples[4], new_samples[4]
     );
 }
+
+// Allocation-heavy reference retained for byte-for-byte streaming comparisons.
+fn encode_upload_reference(
+    b: &Bundle,
+    remap: &Remap,
+    shared: &Meta,
+    range: Range,
+    palette: Option<usize>,
+    lookup: Option<&[Vec<f32>; 3]>,
+) -> EncodedUpload {
+    let n = range.count as usize;
+    let (first, last) = (range.offset as usize * 4, (range.offset as usize + n) * 4);
+    let src = |name: &str| &b.textures[name].rgba[first..last.min(b.textures[name].rgba.len())];
+    let (src_l, src_u, src_s, src_c, src_n) = (
+        src("means_l"),
+        src("means_u"),
+        src("scales"),
+        src("sh0"),
+        src("sh_labels"),
+    );
+    // Per axis: chunk value v = lo + span·q/65535 (log space), re-quantised against the shared range.
+    let factor = [0, 1, 2].map(|c| {
+        let span = (shared.means_maxs[c] - shared.means_mins[c]).max(f32::MIN_POSITIVE);
+        (
+            (remap.meta.means_maxs[c] - remap.meta.means_mins[c]) / span,
+            (remap.meta.means_mins[c] - shared.means_mins[c]) / span * 65535.0,
+        )
+    });
+    let mut encoded = EncodedUpload {
+        scales: vec![0u8; n * 4],
+        sh0: vec![0u8; n * 4],
+        labels: vec![0u8; n * 4],
+        centres: vec![[0.0f32; 3]; n],
+    };
+    let label_base = palette.map(|p| 64 + p as u32 * PALETTE_CENTROIDS);
+    for i in 0..n.min(src_l.len() / 4) {
+        let s = i * 4;
+        for c in 0..3 {
+            let q = f32::from(src_l[s + c]) + 256.0 * f32::from(src_u[s + c]);
+            let v = (q * factor[c].0 + factor[c].1).round().clamp(0.0, 65535.0);
+            encoded.centres[i][c] = decoded_shared_centre(shared, c, v, lookup);
+        }
+        encoded.scales[s..s + 4].copy_from_slice(&[
+            remap.scales[src_s[s] as usize],
+            remap.scales[src_s[s + 1] as usize],
+            remap.scales[src_s[s + 2] as usize],
+            src_s[s + 3],
+        ]);
+        encoded.sh0[s..s + 4].copy_from_slice(&[
+            remap.sh0[src_c[s] as usize],
+            remap.sh0[src_c[s + 1] as usize],
+            remap.sh0[src_c[s + 2] as usize],
+            src_c[s + 3],
+        ]);
+        let label = label_base.map_or(0, |base| {
+            base + u32::from(src_n[s]) + 256 * u32::from(src_n[s + 1])
+        });
+        encoded.labels[s..s + 4].copy_from_slice(&[
+            (label & 255) as u8,
+            ((label >> 8) & 255) as u8,
+            (label >> 16) as u8,
+            255,
+        ]);
+    }
+    encoded
+}
+
+#[test]
+fn reused_upload_buffers_match_fresh_allocations_and_clear_short_tails() {
+    let mut stream = stream(10_000);
+    // Exercise floating-point edge cases in the same path as real quantization.
+    stream.remaps[0].as_mut().unwrap().meta.means_mins[0] = f32::NAN;
+    stream.remaps[0].as_mut().unwrap().meta.means_mins[1] = -0.0;
+    let remap = stream.remaps[0].as_ref().unwrap();
+    let count = 4096usize;
+    let textures: BTreeMap<_, _> = ["means_l", "means_u", "scales", "sh0", "sh_labels"]
+        .into_iter()
+        .enumerate()
+        .map(|(stream, name)| {
+            let mut state = stream as u32 + 1;
+            let rgba = (0..count * 4)
+                .map(|_| {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    (state >> 24) as u8
+                })
+                .collect();
+            (
+                name,
+                sog::Texture {
+                    width: count as u32,
+                    height: 1,
+                    rgba,
+                },
+            )
+        })
+        .collect();
+    let bundle = Bundle {
+        meta: remap.meta.clone(),
+        textures,
+    };
+    let mut encoded = EncodedUpload::default();
+    for (offset, count, palette) in [
+        (0, 4096, Some(1)),
+        (3, 31, None),
+        (4, 4096, Some(7)),  // source is shorter than the requested range
+        (4096, 12, Some(0)), // empty source after previously populated buffers
+        (0, 1024, None),
+        (1, 4095, Some(2)),
+        (0, 0, None),
+    ] {
+        let range = Range {
+            file: 0,
+            offset,
+            count,
+        };
+        let expected =
+            encode_upload_reference(&bundle, remap, &stream.shared, range, palette, None);
+        encode_upload_into(
+            &mut encoded,
+            &bundle,
+            remap,
+            &stream.shared,
+            range,
+            palette,
+            None,
+        );
+        assert_eq!(encoded.scales, expected.scales);
+        assert_eq!(encoded.sh0, expected.sh0);
+        assert_eq!(encoded.labels, expected.labels);
+        assert_eq!(
+            encoded
+                .centres
+                .iter()
+                .map(|c| c.map(f32::to_bits))
+                .collect::<Vec<_>>(),
+            expected
+                .centres
+                .iter()
+                .map(|c| c.map(f32::to_bits))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+#[ignore = "manual real-asset CPU microbenchmark"]
+fn benchmark_reused_upload_buffers() {
+    use std::{hint::black_box, path::PathBuf, time::Instant};
+
+    let dir = std::env::var_os("LOD_UPLOAD_LEVEL")
+        .map(PathBuf::from)
+        .expect("set LOD_UPLOAD_LEVEL to a level directory");
+    let meta = LodMeta::parse(&std::fs::read(dir.join("lod-meta.json")).unwrap()).unwrap();
+    let metas: Vec<Option<Vec<u8>>> = meta
+        .filenames
+        .iter()
+        .map(|file| std::fs::read(dir.join(file)).ok())
+        .collect();
+    let file = meta
+        .filenames
+        .iter()
+        .position(|f| f == "0_0/meta.json")
+        .unwrap();
+    let mut ranges: Vec<_> = meta
+        .leaves
+        .iter()
+        .filter_map(|leaf| leaf.lods.first().copied().flatten())
+        .filter(|range| range.file == file && range.count > 0)
+        .collect();
+    ranges.sort_by_key(|range| range.offset);
+    let stream = LevelStream::new(meta, &metas, StreamSettings::default()).unwrap();
+    let bundle = sog::load_dir(&dir.join(stream.meta.dir_of(file).unwrap())).unwrap();
+    let remap = stream.remaps[file].as_ref().unwrap();
+    let lookup = make_centre_lookup(&stream.shared).unwrap();
+    let mut scratch = EncodedUpload::default();
+    let mut total = 0u64;
+    let batch: Vec<_> = ranges
+        .into_iter()
+        .take_while(|range| {
+            let include = total < 200_000;
+            total += u64::from(range.count);
+            include
+        })
+        .collect();
+    assert!(total >= 200_000);
+    for &range in &batch {
+        let expected = encode_upload_reference(
+            &bundle,
+            remap,
+            &stream.shared,
+            range,
+            Some(1),
+            Some(&lookup),
+        );
+        encode_upload_into(
+            &mut scratch,
+            &bundle,
+            remap,
+            &stream.shared,
+            range,
+            Some(1),
+            Some(&lookup),
+        );
+        assert_eq!(scratch.scales, expected.scales);
+        assert_eq!(scratch.sh0, expected.sh0);
+        assert_eq!(scratch.labels, expected.labels);
+        assert_eq!(scratch.centres, expected.centres);
+    }
+    for round in 0..7 {
+        let mut times = [0u128; 2];
+        for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+            let start = Instant::now();
+            for _ in 0..8 {
+                for &range in &batch {
+                    if mode == 0 {
+                        black_box(encode_upload_reference(
+                            black_box(&bundle),
+                            black_box(remap),
+                            black_box(&stream.shared),
+                            range,
+                            Some(1),
+                            Some(black_box(&lookup)),
+                        ));
+                    } else {
+                        encode_upload_into(
+                            black_box(&mut scratch),
+                            black_box(&bundle),
+                            black_box(remap),
+                            black_box(&stream.shared),
+                            range,
+                            Some(1),
+                            Some(black_box(&lookup)),
+                        );
+                        black_box(&scratch);
+                    }
+                }
+            }
+            times[mode] = start.elapsed().as_nanos() / 8;
+        }
+        println!(
+            "round={round} ranges={} splats={} fresh_ns={} reused_ns={}",
+            batch.len(),
+            batch.iter().map(|r| u64::from(r.count)).sum::<u64>(),
+            times[0],
+            times[1]
+        );
+    }
+}
