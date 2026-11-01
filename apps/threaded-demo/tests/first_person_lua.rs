@@ -558,3 +558,44 @@ fn stow_freezes_the_current_sprint_frame_instead_of_snapping_to_idle() {
     f.tick(30);
     assert_eq!(f.state()["state"], "noGun");
 }
+
+#[test]
+fn cached_weapon_settings_follow_live_ecs_edits() {
+    let f = Fixture::new();
+    f.tick(2); // Populate the readers with the authored settings.
+    f.world.borrow_mut().drain_events("first_person.frame");
+    {
+        let mut world = f.world.borrow_mut();
+        world
+            .write_component_field(f.entity, "FirstPersonView", "opacity", json!(0.35))
+            .unwrap();
+        world
+            .write_component_field(f.entity, "WeaponAnimation", "idle_enabled", json!(false))
+            .unwrap();
+        world
+            .write_component_field(f.entity, "WeaponConfig", "hip_raise_seconds", json!(0.8))
+            .unwrap();
+    }
+    f.tick(1);
+    let frame = f
+        .world
+        .borrow_mut()
+        .drain_events("first_person.frame")
+        .pop()
+        .unwrap();
+    assert_eq!(frame["opacity"], json!(0.35));
+    assert_eq!(
+        frame["loop"], false,
+        "idle footage should stop when disabled"
+    );
+    f.mouse("left", true);
+    f.mouse("left", false);
+    f.tick(20);
+    assert_eq!(
+        f.state()["state"],
+        "hipRaise",
+        "new raise timing must take effect"
+    );
+    f.tick(40);
+    assert_eq!(f.state()["shots"], 1);
+}

@@ -59,9 +59,10 @@ script handles them.
   component is unchanged. Otherwise it returns {revision, present, value}.
   Cache the returned string revision and pass it back on the next read. A
   revision of ecs.null means the adapter cannot track changes, so every read
-  returns a fresh snapshot. The present flag distinguishes a missing component
-  from a component whose value is ecs.null. Tokens are scoped to the world,
-  entity, and component name.
+  returns a fresh snapshot. Dynamic component stores are tracked automatically.
+  The present flag distinguishes a missing component from a component whose
+  value is ecs.null. Tokens are scoped to the world, entity, component name,
+  and storage kind.
 - engine.component_reader(id, name) returns a function that caches a
   change-aware snapshot. Its returned tables (including nested tables) are
   read-only by contract and may be shared between calls. To edit a component,

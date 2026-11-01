@@ -9,6 +9,7 @@ use std::{
     borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     marker::PhantomData,
+    ops::Deref,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -64,7 +65,13 @@ impl<T> ComponentView<'_, T> {
 pub type EntityIndex<'a> = Box<dyn ExactSizeIterator<Item = Entity> + 'a>;
 
 // Compare the scoped token without allocating a new String on an unchanged read.
-fn component_token_matches(entity: Entity, name: &str, revision: u64, known: &str) -> bool {
+fn component_token_matches(
+    entity: Entity,
+    name: &str,
+    kind: char,
+    revision: u64,
+    known: &str,
+) -> bool {
     use std::fmt::{self, Write};
     struct Matcher<'a> {
         remaining: &'a str,
@@ -76,7 +83,12 @@ fn component_token_matches(entity: Entity, name: &str, revision: u64, known: &st
         }
     }
     let mut matcher = Matcher { remaining: known };
-    write!(&mut matcher, "{entity}|{}:{name}|{revision}", name.len()).is_ok()
+    write!(
+        &mut matcher,
+        "{entity}|{}:{name}|{kind}{revision}",
+        name.len()
+    )
+    .is_ok()
         && matcher.remaining.is_empty()
 }
 
@@ -239,6 +251,26 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> ComponentAdapter for Serd
     }
 }
 
+// Every dynamic store gets a fresh world-wide sequence number on mutation.
+// Removing the last value may discard the store: a later store gets a newer
+// sequence number, so old tokens cannot become valid again.
+struct DynamicStore {
+    values: BTreeMap<Entity, Value>,
+    revision: u64,
+}
+impl Deref for DynamicStore {
+    type Target = BTreeMap<Entity, Value>;
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
+fn next_dynamic_revision(sequence: &mut u64) -> u64 {
+    if *sequence != 0 {
+        *sequence = sequence.checked_add(1).unwrap_or(0);
+    }
+    *sequence
+}
+
 /// An ECS world owned by a single simulation worker. It is `Send` so ownership may move to that worker.
 pub struct World {
     id: u64,
@@ -249,7 +281,9 @@ pub struct World {
     structure_revision: u64,
     stores: HashMap<TypeId, Box<dyn AnyStore>>,
     resources: HashMap<TypeId, Box<dyn Any + Send>>,
-    dynamic_components: BTreeMap<String, BTreeMap<Entity, Value>>,
+    dynamic_components: BTreeMap<String, DynamicStore>,
+    // Zero permanently disables dynamic cache tokens after overflow.
+    dynamic_revision: u64,
     dynamic_resources: BTreeMap<String, Value>,
     adapters: BTreeMap<String, Arc<dyn ComponentAdapter>>,
     events: BTreeMap<String, VecDeque<Value>>,
@@ -279,6 +313,7 @@ impl World {
             stores: HashMap::new(),
             resources: HashMap::new(),
             dynamic_components: BTreeMap::new(),
+            dynamic_revision: 1,
             dynamic_resources: BTreeMap::new(),
             adapters: BTreeMap::new(),
             events: BTreeMap::new(),
@@ -343,7 +378,9 @@ impl World {
             store.remove(entity);
         }
         for store in self.dynamic_components.values_mut() {
-            store.remove(&entity);
+            if store.values.remove(&entity).is_some() {
+                store.revision = next_dynamic_revision(&mut self.dynamic_revision);
+            }
         }
         self.dynamic_components.retain(|_, store| !store.is_empty());
         if let Some(parent) = self.parents.remove(&entity) {
@@ -622,12 +659,16 @@ impl World {
         if self.adapters.contains_key(name) {
             return Err(format!("component `{name}` is registered; use its adapter"));
         }
+        let revision = next_dynamic_revision(&mut self.dynamic_revision);
         let inserted = if let Some(store) = self.dynamic_components.get_mut(name) {
-            store.insert(entity, value).is_none()
+            let inserted = store.values.insert(entity, value).is_none();
+            store.revision = revision;
+            inserted
         } else {
-            let mut store = BTreeMap::new();
-            store.insert(entity, value);
-            self.dynamic_components.insert(name.to_owned(), store);
+            let mut values = BTreeMap::new();
+            values.insert(entity, value);
+            self.dynamic_components
+                .insert(name.to_owned(), DynamicStore { values, revision });
             true
         };
         if inserted {
@@ -648,7 +689,10 @@ impl World {
             return None;
         }
         let store = self.dynamic_components.get_mut(name)?;
-        let value = store.remove(&entity);
+        let value = store.values.remove(&entity);
+        if value.is_some() {
+            store.revision = next_dynamic_revision(&mut self.dynamic_revision);
+        }
         if store.is_empty() {
             self.dynamic_components.remove(name);
         }
@@ -758,9 +802,10 @@ impl World {
         }
     }
 
-    /// Returns None only when a cacheable adapter reports the same revision.
-    /// Untracked/custom adapters always return a fresh snapshot. Revision
-    /// tokens are scoped to this world, entity, and component name.
+    /// Returns None only when a cacheable component reports the same revision.
+    /// Dynamic values are tracked by their store; untracked/custom adapters
+    /// always return a fresh snapshot. Tokens are scoped to the world, entity,
+    /// component name, and storage kind.
     pub fn read_component_if_changed(
         &self,
         entity: Entity,
@@ -769,17 +814,23 @@ impl World {
     ) -> Result<Option<ComponentChange>, String> {
         self.require_alive(entity)?;
         validate_name(name)?;
-        let revision = self
-            .adapters
-            .get(name)
-            .and_then(|adapter| adapter.content_revision(self));
+        let (kind, revision) = if let Some(adapter) = self.adapters.get(name) {
+            ('a', adapter.content_revision(self))
+        } else {
+            (
+                'd',
+                self.dynamic_components
+                    .get(name)
+                    .and_then(|store| (self.dynamic_revision != 0).then_some(store.revision)),
+            )
+        };
         if let (Some(revision), Some(known)) = (revision, known) {
-            if component_token_matches(entity, name, revision, known) {
+            if component_token_matches(entity, name, kind, revision, known) {
                 return Ok(None);
             }
         }
         let revision =
-            revision.map(|revision| format!("{entity}|{}:{name}|{revision}", name.len()));
+            revision.map(|revision| format!("{entity}|{}:{name}|{kind}{revision}", name.len()));
         let value = self.read_component_value(entity, name)?;
         Ok(Some(ComponentChange {
             revision,
@@ -848,15 +899,18 @@ impl World {
         if let Some(adapter) = self.adapters.get(name).cloned() {
             adapter.write_field(self, entity, field, value)
         } else {
-            let component = self
+            let store = self
                 .dynamic_components
                 .get_mut(name)
-                .and_then(|store| store.get_mut(&entity))
                 .ok_or("component is missing")?;
-            let object = component
+            let object = store
+                .values
+                .get_mut(&entity)
+                .ok_or("component is missing")?
                 .as_object_mut()
                 .ok_or("component is not an object")?;
             object.insert(field.to_owned(), value);
+            store.revision = next_dynamic_revision(&mut self.dynamic_revision);
             Ok(())
         }
     }
@@ -874,15 +928,18 @@ impl World {
         if let Some(adapter) = self.adapters.get(name).cloned() {
             adapter.write_fields(self, entity, fields)
         } else {
-            let component = self
+            let store = self
                 .dynamic_components
                 .get_mut(name)
-                .and_then(|store| store.get_mut(&entity))
                 .ok_or("component is missing")?;
-            let object = component
+            let object = store
+                .values
+                .get_mut(&entity)
+                .ok_or("component is missing")?
                 .as_object_mut()
                 .ok_or("component is not an object")?;
             object.extend(fields);
+            store.revision = next_dynamic_revision(&mut self.dynamic_revision);
             Ok(())
         }
     }
@@ -1198,18 +1255,63 @@ mod revision_tests {
         let first = world.spawn();
         let second = world.spawn();
         for name in ["plain", "quoted\\\"|:é", "long|0:name"] {
-            let token = format!("{first}|{}:{name}|{}", name.len(), 123);
-            assert!(component_token_matches(first, name, 123, &token));
-            assert!(!component_token_matches(second, name, 123, &token));
-            assert!(!component_token_matches(first, name, 124, &token));
+            let token = format!("{first}|{}:{name}|d{}", name.len(), 123);
+            assert!(component_token_matches(first, name, 'd', 123, &token));
+            assert!(!component_token_matches(first, name, 'a', 123, &token));
+            assert!(!component_token_matches(second, name, 'd', 123, &token));
+            assert!(!component_token_matches(first, name, 'd', 124, &token));
             assert!(!component_token_matches(
                 first,
                 name,
+                'd',
                 123,
                 &(token.clone() + "extra")
             ));
-            assert!(!component_token_matches(first, "other", 123, &token));
+            assert!(!component_token_matches(first, "other", 'd', 123, &token));
         }
+    }
+    #[test]
+    fn exhausted_dynamic_sequence_disables_every_cached_store() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        world
+            .set_dynamic(entity, "First", serde_json::json!(1))
+            .unwrap();
+        world
+            .set_dynamic(entity, "Second", serde_json::json!(2))
+            .unwrap();
+        let first = world
+            .read_component_if_changed(entity, "First", None)
+            .unwrap()
+            .unwrap()
+            .revision
+            .unwrap();
+        let second = world
+            .read_component_if_changed(entity, "Second", None)
+            .unwrap()
+            .unwrap()
+            .revision
+            .unwrap();
+        world.dynamic_revision = u64::MAX;
+        world
+            .set_dynamic(entity, "First", serde_json::json!(3))
+            .unwrap();
+        for (name, old) in [("First", first), ("Second", second)] {
+            let change = world
+                .read_component_if_changed(entity, name, Some(&old))
+                .unwrap()
+                .unwrap();
+            assert!(change.revision.is_none());
+        }
+        world
+            .set_dynamic(entity, "First", serde_json::json!(4))
+            .unwrap();
+        assert!(world
+            .read_component_if_changed(entity, "First", None)
+            .unwrap()
+            .unwrap()
+            .revision
+            .is_none());
     }
     #[test]
     fn exhausted_revisions_never_reuse_old_tokens() {

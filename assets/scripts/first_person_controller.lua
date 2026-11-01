@@ -4,6 +4,9 @@ local ids = assert(ecs.get_resource('scene.entities'))
 local owner, player = assert(ids.first_person), assert(ids.player)
 local read_controls = engine.component_reader(player, 'PlayerControls')
 local read_rig = engine.component_reader(player, 'PlayerRig')
+local read_weapon_config = engine.component_reader(owner, 'WeaponConfig')
+local read_weapon_animation = engine.component_reader(owner, 'WeaponAnimation')
+local read_weapon_view = engine.component_reader(owner, 'FirstPersonView')
 local clips = assert(ecs.get_resource('first_person_clips'))
 local config = assert(ecs.get(owner,'WeaponConfig'))
 local function setting(name, fallback, low, high)
@@ -187,7 +190,7 @@ local function shoot(cadence_remainder)
     local aspect=tonumber(ecs.get_resource('render.scene_aspect')) or 16/9
     if aspect~=aspect then aspect=16/9 end
     aspect=clamp(aspect,.2,5)
-    local view=ecs.get(owner,'FirstPersonView') or {}
+    local view=read_weapon_view() or {}
     local u,v=s.flash_stance=='ads' and 640/1280 or 641/1280,
               s.flash_stance=='ads' and 361/720 or 329/720
     local x,y=u-.5,v+(view.vertical_offset or .055)-1
@@ -329,7 +332,7 @@ local function is_fire(clip) return clip=='fireHip' or clip=='fireADS' end
 -- Select authored loops, shared carry bridges and interrupted crouch phases.
 -- The host streams these frames and blends only discontinuous clip handoffs.
 local function present()
-    local view=ecs.get(owner,'FirstPersonView')
+    local view=read_weapon_view()
     if not view then return end
     local visible=view.enabled==true and s.state~='noGun' and s.state~='dead'
     local clip,p,direction,loop=s.clip,phase(),1,false
@@ -505,8 +508,8 @@ end
 -- Fixed-tick simulation: settle actions, resolve carry, then commit shots.
 ecs.system('player.first_person',function(dt)
     dt=clamp(dt,0,.1)
-    config=ecs.get(owner,'WeaponConfig') or config
-    animation=ecs.get(owner,'WeaponAnimation') or animation
+    config=read_weapon_config() or config
+    animation=read_weapon_animation() or animation
     if dt<=0 then present(); return end
     local controls=read_controls()
     local moving,sprint=movement(controls)

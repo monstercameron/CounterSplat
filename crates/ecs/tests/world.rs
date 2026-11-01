@@ -1168,7 +1168,7 @@ fn tracked_component_reads_invalidate_on_every_world_mutation_path() {
         .read_component_if_changed(c, "Null", None)
         .unwrap()
         .unwrap();
-    assert!(null.present && null.value == Value::Null && null.revision.is_none());
+    assert!(null.present && null.value == Value::Null && null.revision.is_some());
     let roundtrip: countersplat_ecs::ComponentChange =
         serde_json::from_value(serde_json::to_value(&null).unwrap()).unwrap();
     assert_eq!(roundtrip, null);
@@ -1181,4 +1181,154 @@ fn tracked_component_reads_invalidate_on_every_world_mutation_path() {
         .read_component_if_changed(c, "Null", Some("any"))
         .unwrap()
         .is_some());
+}
+
+#[test]
+fn dynamic_revisions_follow_all_mutations_and_never_alias_native_adapters() {
+    struct FixedRevision(u64);
+    impl ComponentAdapter for FixedRevision {
+        fn read(&self, _: &World, _: Entity) -> Result<Option<Value>, String> {
+            Ok(Some(json!(77)))
+        }
+        fn write(&self, _: &mut World, _: Entity, _: Value) -> Result<(), String> {
+            Ok(())
+        }
+        fn remove(&self, _: &mut World, _: Entity) -> Result<Option<Value>, String> {
+            Ok(None)
+        }
+        fn contains(&self, _: &World, _: Entity) -> bool {
+            true
+        }
+        fn content_revision(&self, _: &World) -> Option<u64> {
+            Some(self.0)
+        }
+    }
+
+    let mut world = World::new();
+    let a = world.spawn();
+    let b = world.spawn();
+    world
+        .set_dynamic(a, "Settings", json!({"speed": 1}))
+        .unwrap();
+    world
+        .set_dynamic(b, "Settings", json!({"speed": 2}))
+        .unwrap();
+    world.set_dynamic(a, "Other", json!(false)).unwrap();
+    let token = |world: &World, entity, name| {
+        world
+            .read_component_if_changed(entity, name, None)
+            .unwrap()
+            .unwrap()
+            .revision
+            .unwrap()
+    };
+    let mut settings = token(&world, a, "Settings");
+    let other = token(&world, a, "Other");
+    assert!(world
+        .read_component_if_changed(a, "Settings", Some(&settings))
+        .unwrap()
+        .is_none());
+
+    // A mutation to another entity in the same store is conservative; a
+    // different component name does not invalidate the cached value.
+    world
+        .set_dynamic(b, "Settings", json!({"speed": 3}))
+        .unwrap();
+    assert!(world
+        .read_component_if_changed(a, "Settings", Some(&settings))
+        .unwrap()
+        .is_some());
+    assert!(world
+        .read_component_if_changed(a, "Other", Some(&other))
+        .unwrap()
+        .is_none());
+    settings = token(&world, a, "Settings");
+    world
+        .write_component_field(a, "Settings", "speed", json!(4))
+        .unwrap();
+    assert_eq!(
+        world
+            .read_component_if_changed(a, "Settings", Some(&settings))
+            .unwrap()
+            .unwrap()
+            .value["speed"],
+        4
+    );
+    settings = token(&world, a, "Settings");
+    world
+        .write_component_fields(
+            a,
+            "Settings",
+            json!({"speed": 5, "enabled": true})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+    assert_eq!(
+        world
+            .read_component_if_changed(a, "Settings", Some(&settings))
+            .unwrap()
+            .unwrap()
+            .value["speed"],
+        5
+    );
+    settings = token(&world, a, "Settings");
+    assert!(world
+        .write_component_field(a, "Other", "bad", json!(1))
+        .is_err());
+    assert!(world
+        .read_component_if_changed(a, "Settings", Some(&settings))
+        .unwrap()
+        .is_none());
+    assert!(world
+        .read_component_if_changed(a, "Other", Some(&other))
+        .unwrap()
+        .is_none());
+    assert!(world.despawn(b));
+    assert!(world
+        .read_component_if_changed(a, "Settings", Some(&settings))
+        .unwrap()
+        .is_some());
+    settings = token(&world, a, "Settings");
+    world.remove_dynamic(a, "Settings").unwrap();
+    let missing = world
+        .read_component_if_changed(a, "Settings", Some(&settings))
+        .unwrap()
+        .unwrap();
+    assert!(!missing.present && missing.revision.is_none());
+    world
+        .set_dynamic(a, "Settings", json!({"speed": 6}))
+        .unwrap();
+    let recreated = token(&world, a, "Settings");
+    assert_ne!(settings, recreated);
+    assert_eq!(
+        world
+            .read_component_if_changed(a, "Settings", Some(&settings))
+            .unwrap()
+            .unwrap()
+            .value["speed"],
+        6
+    );
+
+    // Even an adapter with the exact same numeric revision cannot accept an
+    // old token from the dynamic store that used this name.
+    let sequence = recreated
+        .rsplit('|')
+        .next()
+        .unwrap()
+        .strip_prefix('d')
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+    world.remove_dynamic(a, "Settings").unwrap();
+    world
+        .register_component_adapter("Settings", FixedRevision(sequence))
+        .unwrap();
+    let native = world
+        .read_component_if_changed(a, "Settings", Some(&recreated))
+        .unwrap()
+        .unwrap();
+    assert_eq!(native.value, json!(77));
+    assert_ne!(native.revision.as_deref(), Some(recreated.as_str()));
 }

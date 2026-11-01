@@ -145,12 +145,18 @@ transfer costs. The latter uses an in-memory host and excludes rendering.
 countersplat-ecs --example mutation_bench` compares ordinary and tracked
 component mutations.
 
-Tracking is opt-in for component types whose changes pass through the ECS
-world. Untracked or externally mutable adapters return fresh data on every
-change-aware read; a successful mutable borrow conservatively invalidates a
-tracked component even if its value is not changed.
+Native tracking is opt-in for component types whose changes pass through the
+ECS world. Dynamic component stores track mutations automatically. Untracked
+or externally mutable adapters return fresh data on every change-aware read;
+a successful mutable borrow conservatively invalidates a tracked native
+component even if its value is not changed.
 
 Run `node scripts/benchmark_lua_gameplay_cache.mjs` to compare a batched
 camera/controls/rig read with a fresh camera and cached read-only settings.
 The fixture measures Lua/JavaScript conversion and uses an in-memory host;
 it does not measure Rust execution, rendering, or overall frame rate.
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-ecs --example dynamic_revision_bench` for dynamic reads and
+writes, and `node scripts/benchmark_lua_weapon_cache.mjs` for the
+first-person Lua/JavaScript transfer fixture. Neither measures GPU frame rate.
