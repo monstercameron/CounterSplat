@@ -463,6 +463,29 @@ impl Viewer {
         }
         .map_err(js_error)
     }
+    /// Read a resource value without encoding a JSON request.
+    pub fn ecs_get_resource(&self, layer: &str, name: &str) -> Result<Option<String>, JsValue> {
+        match layer {
+            "gameplay" => self.ui.script_resource_value(name),
+            "menu" => self.menu.script_resource_value(name),
+            _ => Err("unknown script world".into()),
+        }
+        .map_err(js_error)
+    }
+    /// Read one resource field without encoding a JSON request.
+    pub fn ecs_get_resource_field(
+        &self,
+        layer: &str,
+        name: &str,
+        field: &str,
+    ) -> Result<Option<String>, JsValue> {
+        match layer {
+            "gameplay" => self.ui.script_resource_field(name, field),
+            "menu" => self.menu.script_resource_field(name, field),
+            _ => Err("unknown script world".into()),
+        }
+        .map_err(js_error)
+    }
     /// Check a script-visible entity handle without a JSON request.
     pub fn ecs_is_alive(&self, layer: &str, id: &str) -> Result<bool, JsValue> {
         match layer {

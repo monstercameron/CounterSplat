@@ -415,6 +415,13 @@ export class LuaScene {
       // Undefined becomes Lua nil, while JSON null remains ecs.null. Scalar
       // arguments avoid transferring a temporary Lua request table.
       vm.global.set('__ecs_call_strings', (op, key1, value1, key2, value2) => {
+        if (op === 'get_resource' && key1 === 'name' && key2 == null &&
+            typeof host.target.ecs_get_resource === 'function' && directString(value1, 256))
+          return host.readValue(op, value1);
+        if (op === 'get_resource_field' && key1 === 'name' && key2 === 'field' &&
+            typeof host.target.ecs_get_resource_field === 'function' &&
+            directString(value1, 256) && directString(value2, 256))
+          return host.readValue(op, value1, value2);
         if (op === 'is_alive' && key1 === 'id' && key2 == null &&
             typeof host.target.ecs_is_alive === 'function' && directString(value1, 64))
           return host.readAlive(value1);
@@ -492,7 +499,8 @@ export class LuaScene {
   constructor(vm, target, layer, profile = false) {
     this.vm = vm; this.target = target; this.layer = layer;
     this.profile = profile ? {systems:Object.create(null), operations:Object.create(null),
-      bridge_paths:{changed_direct:0, changed_json:0, alive_direct:0, has_direct:0}} : null;
+      bridge_paths:{changed_direct:0, changed_json:0, alive_direct:0, has_direct:0,
+        resource_direct:0, resource_field_direct:0}} : null;
   }
   recordProfile(group, name, elapsed) {
     if (!this.profile || !Number.isFinite(elapsed) || elapsed < 0) return;
@@ -508,6 +516,17 @@ export class LuaScene {
     if (op.op === 'get_many' && !Array.isArray(op.names) && Object.keys(op.names || {}).length === 0) op.names = [];
     try { return JSON.parse(this.target.ecs_operation(this.layer, JSON.stringify(op))); }
     finally { if (this.profile) this.recordProfile('operations', op.op, performance.now()-start); }
+  }
+  readValue(op, first, second) {
+    const start = this.profile ? performance.now() : 0;
+    if (this.profile) this.profile.bridge_paths[op === 'get_resource' ? 'resource_direct' : 'resource_field_direct']++;
+    let found = false, value;
+    try {
+      const raw = op === 'get_resource' ? this.target.ecs_get_resource(this.layer, first) :
+        this.target.ecs_get_resource_field(this.layer, first, second);
+      if (raw != null) { found = true; value = JSON.parse(raw); }
+    } finally { if (this.profile) this.recordProfile('operations', op, performance.now()-start); }
+    return found ? encodeResult(value) : undefined;
   }
   readAlive(id) {
     const start = this.profile ? performance.now() : 0;

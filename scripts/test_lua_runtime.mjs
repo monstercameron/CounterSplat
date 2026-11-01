@@ -424,10 +424,24 @@ queryScene.close();
 // The scalar change-read path must behave like the JSON protocol, including
 // stale handles, mutations, request bounds, and unusual UTF-16 strings.
 const changedWorld = new WorldFixture({});
-changedWorld.components.set('entity', new Map([['Stats', {hp:10}]]));
+changedWorld.components.set('entity', new Map([['Stats', {hp:10}], ['Nullable', null], ['False', false]]));
+changedWorld.resources.set('null-resource', null);
+changedWorld.resources.set('false-resource', false);
+changedWorld.resources.set('object-resource', {nil:null, value:false});
 let changedDirectCalls = 0, changedJsonCalls = 0, aliveDirectCalls = 0, hasDirectCalls = 0;
+let resourceDirectCalls = 0, fieldDirectCalls = 0;
 const changedTarget = {
   ecs_operation(layer, raw) { changedJsonCalls++; return changedWorld.ecs_operation(layer, raw); },
+  ecs_get_resource(layer, name) {
+    resourceDirectCalls++;
+    const response = JSON.parse(changedWorld.ecs_operation(layer, JSON.stringify({op:'get_resource',name})));
+    return response.found ? JSON.stringify(response.value) : undefined;
+  },
+  ecs_get_resource_field(layer, name, field) {
+    fieldDirectCalls++;
+    const response = JSON.parse(changedWorld.ecs_operation(layer, JSON.stringify({op:'get_resource_field',name,field})));
+    return response.found ? JSON.stringify(response.value) : undefined;
+  },
   ecs_is_alive(layer, id) {
     aliveDirectCalls++;
     return JSON.parse(changedWorld.ecs_operation(layer, JSON.stringify({op:'is_alive',id}))).value;
@@ -444,6 +458,17 @@ const changedTarget = {
 };
 const changedScene = await LuaScene.create(factory, changedTarget, 'gameplay', engineApi, [], true);
 changedScene.vm.doStringSync(`
+  assert(ecs.get('entity','Stats').hp == 10 and ecs.get('entity','False') == false)
+  assert(ecs.get('entity','Nullable') == ecs.null and ecs.get('entity','Missing') == nil)
+  assert(select('#',ecs.get('entity','Nullable')) == 1 and select('#',ecs.get('entity','Missing')) == 0)
+  assert(ecs.get_resource('null-resource') == ecs.null and ecs.get_resource('false-resource') == false)
+  assert(ecs.get_resource('missing') == nil)
+  assert(ecs.get_resource_field('object-resource','nil') == ecs.null)
+  assert(ecs.get_resource_field('object-resource','value') == false)
+  assert(ecs.get_resource_field('object-resource','missing') == nil)
+  assert(ecs.get_resource(string.rep('x',257)) == nil)
+  assert(ecs.get_resource_field('object-resource',string.rep('x',257)) == nil)
+  assert(ecs.get(string.rep('x',65),'Stats') == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.has('entity','Stats') and not ecs.has('entity','Missing'))
   assert(not ecs.has('entity', string.rep('x', 257)))
@@ -469,6 +494,9 @@ assert(changedScene.profileReport().operations.get_if_changed.count >= 5);
 assert.equal(changedScene.profileReport().bridge_paths.changed_direct, changedDirectCalls);
 assert.equal(changedScene.profileReport().bridge_paths.alive_direct, aliveDirectCalls);
 assert.equal(changedScene.profileReport().bridge_paths.has_direct, hasDirectCalls);
+assert.equal(changedScene.profileReport().bridge_paths.resource_direct, resourceDirectCalls);
+assert.equal(changedScene.profileReport().bridge_paths.resource_field_direct, fieldDirectCalls);
+if (typeof String.prototype.isWellFormed === 'function') assert(resourceDirectCalls > 0 && fieldDirectCalls > 0);
 assert(changedScene.profileReport().bridge_paths.changed_json >= 3);
 changedScene.close();
 

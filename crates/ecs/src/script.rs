@@ -340,6 +340,32 @@ enum ScriptOperation<'a> {
 }
 
 impl World {
+    /// Read a script-visible resource value without a request wrapper.
+    pub fn script_resource_value_json(&self, name: &str) -> Result<Option<String>, String> {
+        if name.len() > MAX_REQUEST_BYTES {
+            return Err("ECS script request is too large".into());
+        }
+        self.get_dynamic_resource(name)
+            .map(|value| serde_json::to_string(value).map_err(|e| e.to_string()))
+            .transpose()
+    }
+
+    /// Read one field from an object-valued resource, retaining null/missing distinction.
+    pub fn script_resource_field_json(
+        &self,
+        name: &str,
+        field: &str,
+    ) -> Result<Option<String>, String> {
+        if name.len().saturating_add(field.len()) > MAX_REQUEST_BYTES {
+            return Err("ECS script request is too large".into());
+        }
+        self.get_dynamic_resource(name)
+            .and_then(Value::as_object)
+            .and_then(|value| value.get(field))
+            .map(|value| serde_json::to_string(value).map_err(|e| e.to_string()))
+            .transpose()
+    }
+
     /// Check a script entity handle without encoding an intermediate request.
     pub fn script_entity_alive(&self, id: &str) -> Result<bool, String> {
         if id.len() > MAX_REQUEST_BYTES {
@@ -793,6 +819,50 @@ mod tests {
         let invalid_general = r#"{"id":"bad","name":"Settings","op":"get_if_changed"}"#;
         assert!(world.apply_script_json(invalid_fast).is_err());
         assert!(world.apply_script_json(invalid_general).is_err());
+    }
+
+    #[test]
+    fn scalar_resource_reads_match_json_protocol() {
+        fn compare(world: &mut World, op: &str, name: &str, field: Option<&str>) {
+            let request = if op == "get_resource" {
+                serde_json::json!({"op":op,"name":name})
+            } else {
+                serde_json::json!({"op":op,"name":name,"field":field.unwrap()})
+            };
+            let original = world.apply_script_json(&request.to_string());
+            let scalar = if op == "get_resource" {
+                world.script_resource_value_json(name)
+            } else {
+                world.script_resource_field_json(name, field.unwrap())
+            };
+            match (original, scalar) {
+                (Ok(original), Ok(scalar)) => {
+                    let original: Value = serde_json::from_str(&original).unwrap();
+                    let scalar: Option<Value> =
+                        scalar.map(|text| serde_json::from_str(&text).unwrap());
+                    assert_eq!(original["found"], Value::Bool(scalar.is_some()));
+                    assert_eq!(original["value"], scalar.unwrap_or(Value::Null));
+                }
+                (Err(_), Err(_)) => {}
+                other => panic!("resource protocol mismatch: {other:?}"),
+            }
+        }
+        let mut world = World::new();
+        world.set_dynamic_resource("null", Value::Null);
+        world.set_dynamic_resource("false", Value::Bool(false));
+        world.set_dynamic_resource(
+            "object",
+            serde_json::json!({"nil":null,"__proto__":false,"items":[1,2]}),
+        );
+        for name in ["null", "false", "object", "missing", ""] {
+            compare(&mut world, "get_resource", name, None);
+        }
+        for field in ["nil", "__proto__", "items", "missing", ""] {
+            compare(&mut world, "get_resource_field", "object", Some(field));
+        }
+        compare(&mut world, "get_resource_field", "null", Some("nil"));
+        let oversized = "x".repeat(MAX_REQUEST_BYTES + 1);
+        compare(&mut world, "get_resource", &oversized, None);
     }
 
     #[test]

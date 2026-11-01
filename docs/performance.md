@@ -104,14 +104,15 @@ WebAssembly ECS fixture, without a GPU:
 cargo build --locked --release --target-dir .artifacts/target -p countersplat-ecs-wasm-bench --target wasm32-unknown-unknown
 wasm-bindgen --target web --out-dir .artifacts/ecs-wasm-bench/pkg --out-name ecs_bench .artifacts/target/wasm32-unknown-unknown/release/countersplat_ecs_wasm_bench.wasm
 node scripts/benchmark_lua_wasm_changed.mjs
+node scripts/benchmark_lua_wasm_values.mjs
 ```
 
 The fixture uses a tracked typed component and alternates both paths in the same
 Lua VM. It checks changes and stale handles, then reports the median of 21
-samples of 5,000 unchanged reads and 5,000 liveness/presence pairs. It excludes
-rendering and worker scheduling. The in-scene `?profile=1` report includes
-`lua.bridge_paths` counters for direct and JSON change reads, and direct
-liveness and presence checks, so the chosen paths can be checked in a live session.
+samples of unchanged, liveness, presence, and resource reads. They
+exclude rendering and worker scheduling. The in-scene `?profile=1` report
+includes `lua.bridge_paths` counters so the chosen paths can be checked in a
+live session.
 
 ## ECS query benchmark
 

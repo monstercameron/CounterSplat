@@ -2,7 +2,7 @@
 #![cfg(target_arch = "wasm32")]
 use countersplat_ecs::{ComponentAdapter, Entity, World};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use wasm_bindgen::prelude::*;
 
 #[derive(Serialize, Deserialize)]
@@ -72,6 +72,9 @@ impl BenchWorld {
                 },
             )
             .unwrap();
+        world.set_dynamic_resource("scene.entities", json!({"player": entity.to_string()}));
+        world.set_dynamic_resource("player.spawn_probe_pending", json!(false));
+        world.set_dynamic_resource("nullable", Value::Null);
         BenchWorld { world, entity }
     }
     pub fn id(&self) -> String {
@@ -93,6 +96,27 @@ impl BenchWorld {
             return Err(js_error("unknown script world"));
         }
         self.world.apply_script_json(request).map_err(js_error)
+    }
+    pub fn ecs_get_resource(&self, layer: &str, name: &str) -> Result<Option<String>, JsValue> {
+        if layer != "gameplay" {
+            return Err(js_error("unknown script world"));
+        }
+        self.world
+            .script_resource_value_json(name)
+            .map_err(js_error)
+    }
+    pub fn ecs_get_resource_field(
+        &self,
+        layer: &str,
+        name: &str,
+        field: &str,
+    ) -> Result<Option<String>, JsValue> {
+        if layer != "gameplay" {
+            return Err(js_error("unknown script world"));
+        }
+        self.world
+            .script_resource_field_json(name, field)
+            .map_err(js_error)
     }
     pub fn ecs_is_alive(&self, layer: &str, id: &str) -> Result<bool, JsValue> {
         if layer != "gameplay" {
