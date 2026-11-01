@@ -43,6 +43,9 @@ impl ComponentAdapter for Adapter {
     fn contains(&self, world: &World, entity: Entity) -> bool {
         world.has::<UiElement>(entity)
     }
+    fn indexed_entities<'a>(&self, world: &'a World) -> Option<countersplat_ecs::EntityIndex<'a>> {
+        Some(world.iter_with::<UiElement>())
+    }
 }
 
 struct FrameCounterAdapter;
@@ -66,6 +69,9 @@ impl ComponentAdapter for FrameCounterAdapter {
     }
     fn contains(&self, world: &World, entity: Entity) -> bool {
         world.has::<FrameCounter>(entity)
+    }
+    fn indexed_entities<'a>(&self, world: &'a World) -> Option<countersplat_ecs::EntityIndex<'a>> {
+        Some(world.iter_with::<FrameCounter>())
     }
 }
 

@@ -29,6 +29,12 @@ macro_rules! adapter {
             fn contains(&self, world: &World, entity: Entity) -> bool {
                 world.has::<$component>(entity)
             }
+            fn indexed_entities<'a>(
+                &self,
+                world: &'a World,
+            ) -> Option<countersplat_ecs::EntityIndex<'a>> {
+                Some(world.iter_with::<$component>())
+            }
         }
     };
 }

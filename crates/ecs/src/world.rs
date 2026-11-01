@@ -27,6 +27,9 @@ pub enum LifecycleEvent {
     },
 }
 
+/// An ordered, exact-size view of the entities in a component index.
+pub type EntityIndex<'a> = Box<dyn ExactSizeIterator<Item = Entity> + 'a>;
+
 /// A narrow adapter exposing a Rust-owned component to scripting and other external consumers.
 ///
 /// Methods execute on the world-owning thread. Adapters may validate input or expose a restricted view; they must
@@ -40,6 +43,15 @@ pub trait ComponentAdapter: Send + Sync + 'static {
     fn remove(&self, world: &mut World, entity: Entity) -> Result<Option<Value>, String>;
     /// Reports component presence for queries and component listings.
     fn contains(&self, world: &World, entity: Entity) -> bool;
+
+    /// Optionally supplies exactly the live entities accepted by contains,
+    /// once each and in entity order. A typed adapter can return
+    /// Some(world.iter_with::<T>()). Return None if no exact, efficient index
+    /// is available; an incomplete or unordered index would yield incorrect
+    /// query results.
+    fn indexed_entities<'a>(&self, _world: &'a World) -> Option<EntityIndex<'a>> {
+        None
+    }
 }
 
 struct SerdeAdapter<T>(PhantomData<fn() -> T>);
@@ -65,6 +77,9 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> ComponentAdapter for Serd
     }
     fn contains(&self, world: &World, entity: Entity) -> bool {
         world.has::<T>(entity)
+    }
+    fn indexed_entities<'a>(&self, world: &'a World) -> Option<EntityIndex<'a>> {
+        Some(world.iter_with::<T>())
     }
 }
 
@@ -293,6 +308,13 @@ impl World {
         self.typed::<T>()
             .map_or_else(Vec::new, |store| store.values.keys().copied().collect())
     }
+    /// Iterates a typed component index without first copying its entity IDs.
+    pub fn iter_with<T: Send + 'static>(&self) -> EntityIndex<'_> {
+        match self.typed::<T>() {
+            Some(store) => Box::new(store.values.keys().copied()),
+            None => Box::new(std::iter::empty()),
+        }
+    }
     /// Rust type names present on an entity, useful for native diagnostics.
     pub fn component_names(&self, entity: Entity) -> Vec<&'static str> {
         let mut names: Vec<_> = self
@@ -509,13 +531,45 @@ impl World {
             }
         }
 
-        if let Some((anchor, _)) = stores
+        // Compare index sizes before choosing an anchor, without copying their
+        // entity IDs. Custom adapters can omit an index and retain the normal
+        // contains-based fallback.
+        let dynamic_anchor = stores
             .iter()
             .enumerate()
             .min_by_key(|(_, store)| store.len())
-        {
-            // Stores are ordered by entity and only contain live handles, so
-            // the result has the same deterministic order as entities().
+            .map(|(index, store)| (index, store.len()));
+        let mut best_len = dynamic_anchor.map_or(usize::MAX, |(_, len)| len);
+        let mut indexed: Option<(usize, EntityIndex<'_>)> = None;
+        for (index, adapter) in adapters.iter().enumerate() {
+            if let Some(entities) = adapter.indexed_entities(self) {
+                let len = entities.len();
+                if len == 0 {
+                    return Ok(Vec::new());
+                }
+                if len < best_len {
+                    best_len = len;
+                    indexed = Some((index, entities));
+                }
+            }
+        }
+        if let Some((anchor, entities)) = indexed {
+            if stores.is_empty() && adapters.len() == 1 {
+                return Ok(entities.collect());
+            }
+            Ok(entities
+                .filter(|entity| {
+                    stores.iter().all(|store| store.contains_key(entity))
+                        && adapters.iter().enumerate().all(|(index, adapter)| {
+                            index == anchor || adapter.contains(self, *entity)
+                        })
+                })
+                .collect())
+        } else if let Some((anchor, _)) = dynamic_anchor {
+            // Dynamic stores only contain live handles in deterministic order.
+            if stores.len() == 1 && adapters.is_empty() {
+                return Ok(stores[anchor].keys().copied().collect());
+            }
             Ok(stores[anchor]
                 .keys()
                 .copied()

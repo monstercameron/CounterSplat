@@ -9,6 +9,9 @@ struct Position {
     x: f32,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SparseMarker;
+
 fn measure(world: &World, names: &[&str], iterations: usize) -> f64 {
     for _ in 0..20 {
         black_box(world.query_components(black_box(names)).unwrap());
@@ -31,12 +34,16 @@ fn main() {
         world
             .register_serde_component::<Position>("Position")
             .unwrap();
+        world
+            .register_serde_component::<SparseMarker>("SparseMarker")
+            .unwrap();
         for index in 0..size {
             let entity = world.spawn();
             world.insert(entity, Position { x: index as f32 }).unwrap();
             world.set_dynamic(entity, "Dense", json!(true)).unwrap();
             if index % 100 == 0 {
                 world.set_dynamic(entity, "Rare", json!(true)).unwrap();
+                world.insert(entity, SparseMarker).unwrap();
             }
         }
         for names in [
@@ -45,6 +52,9 @@ fn main() {
             &["Dense"][..],
             &["Position", "Rare"][..],
             &["Position"][..],
+            &["SparseMarker"][..],
+            &["Position", "SparseMarker"][..],
+            &["Dense", "SparseMarker"][..],
         ] {
             println!(
                 "{size:>5} entities {names:?}: {:.0} ns/query",

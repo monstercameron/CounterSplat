@@ -132,10 +132,13 @@ fn custom_adapter_controls_script_access_without_copying_native_state() {
 
 #[test]
 fn sparse_queries_match_live_entities_across_components_and_reused_slots() {
+    #[derive(Serialize, Deserialize)]
+    struct Marker;
     let mut world = World::new();
     world
         .register_serde_component::<Position>("Position")
         .unwrap();
+    world.register_serde_component::<Marker>("Marker").unwrap();
     world
         .register_component_adapter("ReadOnlyHealth", ReadOnlyHealth)
         .unwrap();
@@ -156,6 +159,9 @@ fn sparse_queries_match_live_entities_across_components_and_reused_slots() {
         }
         if index % 3 == 0 {
             world.insert(entity, index as u32).unwrap();
+        }
+        if index % 11 == 0 {
+            world.insert(entity, Marker).unwrap();
         }
         if index % 5 == 0 {
             // Null is still a present dynamic component.
@@ -183,6 +189,13 @@ fn sparse_queries_match_live_entities_across_components_and_reused_slots() {
         &["Rare", "Position"],
         &["Position", "ReadOnlyHealth", "Rare", "Tag"],
         &["ReadOnlyHealth", "Position"],
+        &["Marker", "Position"],
+        &["Position", "Marker"],
+        &["Position", "Position"],
+        &["Marker", "ReadOnlyHealth", "Position"],
+        &["Tag", "Marker"],
+        &["Marker", "Rare"],
+        &["Rare", "Marker"],
     ];
     for names in queries {
         let expected = world
@@ -192,6 +205,7 @@ fn sparse_queries_match_live_entities_across_components_and_reused_slots() {
                 names.iter().all(|name| match *name {
                     "Position" => world.has::<Position>(*entity),
                     "ReadOnlyHealth" => world.has::<u32>(*entity),
+                    "Marker" => world.has::<Marker>(*entity),
                     other => world.get_dynamic(*entity, other).is_some(),
                 })
             })
