@@ -221,6 +221,7 @@ const responses = {
   spawn: 'new-entity', is_alive: true, entities: ['entity'],
   hierarchy: [{id:'entity', parent:null}], structure_revision: '7',
   components: ['Name'], get: {value:'ok'}, has: true, remove: 'removed',
+  get_if_changed: {revision:'fresh', present:true, value:{value:'changed'}},
   get_resource: {value:'resource'}, get_resource_field: 'field-value',
   remove_resource: 'removed-resource', parent: 'parent', children: ['child'],
   drain: [{value:1}], snapshot: {entities:[]},
@@ -236,6 +237,8 @@ scalar.vm.doStringSync(`
   assert(ecs.entities()[1] == 'entity' and ecs.hierarchy()[1].parent == ecs.null)
   assert(ecs.structure_revision() == '7' and ecs.components('entity')[1] == 'Name')
   assert(ecs.get('entity', 'Name').value == 'ok' and ecs.has('entity', 'Name'))
+  assert(ecs.get_if_changed('entity', 'Name').value.value == 'changed')
+  assert(ecs.get_if_changed('entity', 'Name', 'old').revision == 'fresh')
   assert(ecs.remove('entity', 'Name') == 'removed')
   assert(ecs.get_resource('settings').value == 'resource')
   assert(ecs.get_resource_field('settings', 'field') == 'field-value')
@@ -247,6 +250,8 @@ assert.deepEqual(calls, [
   {op:'spawn'}, {op:'is_alive', id:'entity'}, {op:'entities'}, {op:'hierarchy'},
   {op:'structure_revision'}, {op:'components', id:'entity'},
   {op:'get', id:'entity', name:'Name'}, {op:'has', id:'entity', name:'Name'},
+  {op:'get_if_changed', id:'entity', name:'Name'},
+  {op:'get_if_changed', id:'entity', name:'Name', revision:'old'},
   {op:'remove', id:'entity', name:'Name'}, {op:'get_resource', name:'settings'},
   {op:'get_resource_field', name:'settings', field:'field'},
   {op:'remove_resource', name:'settings'}, {op:'parent', id:'entity'},

@@ -110,15 +110,13 @@ function ecs.components(id) return invoke_one_string("components", "id", id) end
 function ecs.query(components) return invoke("query", { components = components }) end
 function ecs.get(id, name) return invoke_two_strings("get", "id", id, "name", name) end
 function ecs.get_if_changed(id, name, revision)
-    local args = {id = id, name = name, revision = revision}
     if type(id) == "string" and type(name) == "string" and
         (revision == nil or type(revision) == "string") then
-        args.op = "get_if_changed"
-        local result = call_changed(args)
+        local result = call_changed(id, name, revision)
         if result ~= false then return decode(result) end
         return nil
     end
-    return invoke("get_if_changed", args)
+    return invoke("get_if_changed", {id = id, name = name, revision = revision})
 end
 function ecs.get_many(id, names) return invoke("get_many", { id = id, names = names }) end
 function ecs.has(id, name) return invoke_two_strings("has", "id", id, "name", name) end
@@ -229,7 +227,12 @@ export class LuaScene {
       // Change-aware reads either return their result object or no change. A
       // boolean sentinel avoids transferring a wrapper table for the common
       // unchanged case; false cannot be a valid change record.
-      vm.global.set('__ecs_call_changed', request => { const result = host.call(request, true); return result.found ? encodeResult(result.value) : false; });
+      vm.global.set('__ecs_call_changed', (id, name, revision) => {
+        const request = {op:'get_if_changed', id, name};
+        if (revision != null) request.revision = revision;
+        const result = host.call(request, true);
+        return result.found ? encodeResult(result.value) : false;
+      });
       if (profile) {
         vm.global.set('__profile_now', () => performance.now());
         vm.global.set('__profile_sample', (name, elapsed) => host.recordProfile('systems', name, elapsed));

@@ -204,7 +204,7 @@ countersplat-render --lib benchmark_lod_label_staging -- --ignored --nocapture
 --test-threads=1` to compare fresh and reused LOD-label preparation. The
 CPU-only benchmark excludes the GPU transfer and rendering.
 
-Run `node scripts/benchmark_lua_changed_reads.mjs` to compare the previous
-wrapper-table response with the scalar unchanged sentinel on the browser Lua
-bridge. This fixture measures Lua/JavaScript transport; it does not include
+Run `node scripts/benchmark_lua_changed_reads.mjs` to compare the original
+wrapper-table response, a table request with a scalar response, and scalar
+arguments with a scalar response on the browser Lua bridge. This fixture measures Lua/JavaScript transport; it does not include
 Rust execution, GPU rendering, or frame rate.
