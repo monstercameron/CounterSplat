@@ -5,7 +5,7 @@
 use crate::{Entity, World, WorldOperation, WorldOutcome};
 use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
 use serde_json::{json, Value};
-use std::{borrow::Cow, str::FromStr};
+use std::{borrow::Cow, collections::HashSet, str::FromStr};
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
@@ -74,6 +74,52 @@ fn script_component_result(world: &World, entity: Entity, name: &str) -> Result<
     String::from_utf8(output).map_err(|error| error.to_string())
 }
 
+fn script_components_result(
+    world: &World,
+    entity: Entity,
+    names: &[RequestName<'_>],
+) -> Result<String, String> {
+    world.require_alive(entity)?;
+    // Preserve repeated adapter reads and last-value semantics for duplicates.
+    // Avoid quadratic work for large, untrusted requests.
+    let duplicates = if names.len() <= 16 {
+        names.iter().enumerate().any(|(index, name)| {
+            names[..index]
+                .iter()
+                .any(|earlier| earlier.as_ref() == name.as_ref())
+        })
+    } else {
+        let mut seen = HashSet::with_capacity(names.len());
+        names.iter().any(|name| !seen.insert(name.as_ref()))
+    };
+    if duplicates {
+        let owned = names
+            .iter()
+            .map(|name| name.as_ref().to_owned())
+            .collect::<Vec<_>>();
+        return script_result(Some(world.read_component_values(entity, &owned)?));
+    }
+
+    let mut output = Vec::with_capacity(256);
+    output.extend_from_slice(br#"{"found":true,"value":{"#);
+    let mut scratch = Vec::with_capacity(128);
+    let mut first = true;
+    for name in names {
+        scratch.clear();
+        if world.write_component_json(entity, name.as_ref(), &mut scratch)? {
+            if !first {
+                output.push(b',');
+            }
+            first = false;
+            serde_json::to_writer(&mut output, name.as_ref()).map_err(|error| error.to_string())?;
+            output.push(b':');
+            output.extend_from_slice(&scratch);
+        }
+    }
+    output.extend_from_slice(b"}}");
+    String::from_utf8(output).map_err(|error| error.to_string())
+}
+
 #[derive(Deserialize)]
 struct RequestName<'a>(#[serde(borrow)] Cow<'a, str>);
 
@@ -115,6 +161,12 @@ enum ScriptOperation<'a> {
         id: Cow<'a, str>,
         #[serde(borrow)]
         name: Cow<'a, str>,
+    },
+    GetMany {
+        #[serde(borrow)]
+        id: Cow<'a, str>,
+        #[serde(borrow)]
+        names: Vec<RequestName<'a>>,
     },
     Has {
         #[serde(borrow)]
@@ -205,6 +257,9 @@ impl World {
             S::Query { components } => O::Query { components },
             S::Get { id, name } => {
                 return script_component_result(self, Entity::from_str(&id)?, &name);
+            }
+            S::GetMany { id, names } => {
+                return script_components_result(self, Entity::from_str(&id)?, &names);
             }
             S::Has { id, name } => {
                 return script_result(Some(

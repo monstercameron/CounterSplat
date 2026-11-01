@@ -433,6 +433,24 @@ fn install_ecs_api(
         lua,
         &api,
         bridge,
+        "get_many",
+        |lua, bridge, (id, names): (String, Vec<String>)| {
+            maybe_value(
+                lua,
+                request(
+                    bridge,
+                    WorldOperation::ReadComponents {
+                        entity: entity(id)?,
+                        names,
+                    },
+                )?,
+            )
+        },
+    )?;
+    bind(
+        lua,
+        &api,
+        bridge,
         "has",
         |_, bridge, (id, name): (String, String)| match request(
             bridge,

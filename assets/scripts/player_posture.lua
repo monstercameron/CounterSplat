@@ -162,9 +162,8 @@ ecs.on('ui.action',function(action)
 end)
 
 ecs.system('player.posture',function(dt)
-    local posture=ecs.get(player,'PlayerPosture')
-    local controls=ecs.get(player,'PlayerControls')
-    local body=ecs.get(player,'PhysicsBody')
+    local state=ecs.get_many(player, {'PlayerPosture','PlayerControls','PhysicsBody'})
+    local posture,controls,body=state.PlayerPosture,state.PlayerControls,state.PhysicsBody
     if not posture or not controls or not body then return end
     local old_amount,old_moving,old_crouched = posture.amount,posture.moving,posture.crouched
     local old_blocked,old_scale,old_eye = posture.blocked,posture.active_units_per_meter,posture.crouch_eye_height_m

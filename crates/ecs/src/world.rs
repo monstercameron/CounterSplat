@@ -623,6 +623,23 @@ impl World {
         }
     }
 
+    /// Reads several named components from one entity. Missing components are
+    /// omitted; present JSON null values remain present in the returned map.
+    pub fn read_component_values(
+        &self,
+        entity: Entity,
+        names: &[String],
+    ) -> Result<BTreeMap<String, Value>, String> {
+        self.require_alive(entity)?;
+        let mut values = BTreeMap::new();
+        for name in names {
+            if let Some(value) = self.read_component_value(entity, name)? {
+                values.insert(name.clone(), value);
+            }
+        }
+        Ok(values)
+    }
+
     /// Checks script-visible presence without serializing or cloning the component.
     pub fn has_component_value(&self, entity: Entity, name: &str) -> Result<bool, String> {
         self.require_alive(entity)?;

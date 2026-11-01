@@ -59,9 +59,8 @@ ecs.on("ui.action", function(action)
 end)
 
 ecs.system("player.camera_bob", function(dt)
-    local camera = ecs.get(player, "PlayerCamera")
-    local controls = ecs.get(player, "PlayerControls")
-    local rig = ecs.get(player, "PlayerRig")
+    local state = ecs.get_many(player, {"PlayerCamera", "PlayerControls", "PlayerRig"})
+    local camera, controls, rig = state.PlayerCamera, state.PlayerControls, state.PlayerRig
     if not camera or not controls or not rig then return end
     dt = math.max(0, math.min(dt, 0.25))
     if dt == 0 then return end

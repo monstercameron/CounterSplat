@@ -89,6 +89,7 @@ function ecs.structure_revision() return invoke("structure_revision") end
 function ecs.components(id) return invoke("components", { id = id }) end
 function ecs.query(components) return invoke("query", { components = components }) end
 function ecs.get(id, name) return invoke("get", { id = id, name = name }) end
+function ecs.get_many(id, names) return invoke("get_many", { id = id, names = names }) end
 function ecs.has(id, name) return invoke("has", { id = id, name = name }) end
 function ecs.set(id, name, value) invoke("set", { id = id, name = name, value = value }) end
 function ecs.remove(id, name) return invoke("remove", { id = id, name = name }) end
@@ -224,6 +225,7 @@ export class LuaScene {
     const op = normalize(request);
     // An empty Lua table is ambiguous; a query explicitly expects a sequence.
     if (op.op === 'query' && !Array.isArray(op.components) && Object.keys(op.components || {}).length === 0) op.components = [];
+    if (op.op === 'get_many' && !Array.isArray(op.names) && Object.keys(op.names || {}).length === 0) op.names = [];
     try { return JSON.parse(this.target.ecs_operation(this.layer, JSON.stringify(op))); }
     finally { if (this.profile) this.recordProfile('operations', op.op, performance.now()-start); }
   }

@@ -55,8 +55,8 @@ ecs.on("ui.action", function(action)
 end)
 
 ecs.system("player.camera_zoom", function(dt)
-    local camera = ecs.get(player, "PlayerCamera")
-    local controls = ecs.get(player, "PlayerControls")
+    local state = ecs.get_many(player, {"PlayerCamera", "PlayerControls"})
+    local camera, controls = state.PlayerCamera, state.PlayerControls
     if not camera or not controls then return end
     dt = math.max(0, math.min(dt, 0.25))
     if dt == 0 then return end

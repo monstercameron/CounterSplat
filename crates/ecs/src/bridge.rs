@@ -67,6 +67,11 @@ pub enum WorldOperation {
         entity: Entity,
         name: String,
     },
+    /// Read several components of one entity; missing names are omitted.
+    ReadComponents {
+        entity: Entity,
+        names: Vec<String>,
+    },
     /// Test presence without reading or serializing the component value.
     HasComponent {
         entity: Entity,
@@ -208,6 +213,10 @@ impl World {
             Op::ReadComponent { entity, name } => {
                 Ok(Out::Value(self.read_component_value(entity, &name)?))
             }
+            Op::ReadComponents { entity, names } => Ok(Out::Value(Some(serde_json::json!(self
+                .read_component_values(
+                entity, &names
+            )?)))),
             Op::HasComponent { entity, name } => {
                 Ok(Out::Bool(self.has_component_value(entity, &name)?))
             }

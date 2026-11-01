@@ -31,6 +31,26 @@ fn measure(world: &mut World, request: &str, iterations: usize) -> f64 {
     samples[3]
 }
 
+fn measure_three(world: &mut World, requests: &[String]) -> f64 {
+    for _ in 0..200 {
+        for request in requests {
+            black_box(world.apply_script_json(request).unwrap());
+        }
+    }
+    let mut samples = Vec::new();
+    for _ in 0..7 {
+        let start = Instant::now();
+        for _ in 0..12_000 {
+            for request in requests {
+                black_box(world.apply_script_json(black_box(request)).unwrap());
+            }
+        }
+        samples.push(start.elapsed().as_nanos() as f64 / 12_000.0);
+    }
+    samples.sort_by(f64::total_cmp);
+    samples[3]
+}
+
 fn main() {
     let mut world = World::new();
     world.register_serde_component::<Body>("Body").unwrap();
@@ -92,6 +112,25 @@ fn main() {
             measure(&mut world, &request.to_string(), 12_000)
         );
     }
+    world
+        .set_dynamic(entity, "Posture", json!({"amount":0.0,"moving":false}))
+        .unwrap();
+    world
+        .set_dynamic(entity, "Controls", json!({"enabled":true,"speed":4.0}))
+        .unwrap();
+    let requests = ["Posture", "Controls", "Body"]
+        .map(|name| json!({"op":"get", "id":entity.to_string(), "name":name}).to_string());
+    let batch =
+        json!({"op":"get_many", "id":entity.to_string(), "names":["Posture","Controls","Body"]})
+            .to_string();
+    println!(
+        "three separate component reads: {:.0} ns",
+        measure_three(&mut world, &requests)
+    );
+    println!(
+        "three batched component reads: {:.0} ns",
+        measure(&mut world, &batch, 12_000)
+    );
     for (size, iterations) in [(200, 1000), (2_000, 100)] {
         let mut world = World::new();
         let mut parent = None;

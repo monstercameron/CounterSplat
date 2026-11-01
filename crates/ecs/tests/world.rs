@@ -338,6 +338,76 @@ fn borrowed_component_reads_preserve_adapter_and_json_semantics() {
 }
 
 #[test]
+fn batched_reads_preserve_missing_null_and_duplicate_semantics() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct Counting(Arc<AtomicUsize>);
+    impl ComponentAdapter for Counting {
+        fn read(&self, _: &World, _: Entity) -> Result<Option<Value>, String> {
+            Ok(Some(json!(self.0.fetch_add(1, Ordering::Relaxed))))
+        }
+        fn write(&self, _: &mut World, _: Entity, _: Value) -> Result<(), String> {
+            Err("read only".into())
+        }
+        fn remove(&self, _: &mut World, _: Entity) -> Result<Option<Value>, String> {
+            Err("read only".into())
+        }
+        fn contains(&self, _: &World, _: Entity) -> bool {
+            true
+        }
+    }
+
+    let mut world = World::new();
+    world
+        .register_serde_component::<Position>("Position")
+        .unwrap();
+    let count = Arc::new(AtomicUsize::new(0));
+    world
+        .register_component_adapter("Counter", Counting(count.clone()))
+        .unwrap();
+    let entity = world.spawn();
+    world.insert(entity, Position { x: 1.0, y: 2.0 }).unwrap();
+    world.set_dynamic(entity, "Nullable", Value::Null).unwrap();
+    world
+        .set_dynamic(entity, "quote\"key", json!("safe"))
+        .unwrap();
+    let names = vec![
+        "Position".into(),
+        "Nullable".into(),
+        "Missing".into(),
+        "quote\"key".into(),
+    ];
+    let expected = world.read_component_values(entity, &names).unwrap();
+    let request = json!({"op":"get_many", "id":entity.to_string(), "names":names});
+    let response: Value =
+        serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+    assert_eq!(response, json!({"found":true,"value":expected}));
+    let duplicates =
+        json!({"op":"get_many", "id":entity.to_string(), "names":["Counter","Counter"]});
+    let response: Value =
+        serde_json::from_str(&world.apply_script_json(&duplicates.to_string()).unwrap()).unwrap();
+    assert_eq!(response, json!({"found":true,"value":{"Counter":1}}));
+    assert_eq!(count.load(Ordering::Relaxed), 2);
+    let mut many = (0..32).map(|i| format!("Missing{i}")).collect::<Vec<_>>();
+    many.extend(["Counter".into(), "Counter".into()]);
+    let request = json!({"op":"get_many", "id":entity.to_string(), "names":many});
+    let response: Value =
+        serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+    assert_eq!(response, json!({"found":true,"value":{"Counter":3}}));
+    assert_eq!(count.load(Ordering::Relaxed), 4);
+
+    let empty = json!({"op":"get_many", "id":entity.to_string(), "names":[]});
+    let response: Value =
+        serde_json::from_str(&world.apply_script_json(&empty.to_string()).unwrap()).unwrap();
+    assert_eq!(response, json!({"found":true,"value":{}}));
+    assert!(world.despawn(entity));
+    assert!(world.apply_script_json(&empty.to_string()).is_err());
+}
+
+#[test]
 fn component_presence_does_not_copy_or_serialize_values() {
     let mut world = World::new();
     world

@@ -16,13 +16,19 @@ const [engineApi, gameplay, menu] = await Promise.all([
 
 // A minimal transport fixture; Rust integration tests separately exercise the real ECS adapter.
 class WorldFixture {
-  constructor(ids) { this.resources = new Map([['scene.entities', ids]]); this.events = new Map(); }
+  constructor(ids) { this.resources = new Map([['scene.entities', ids]]); this.events = new Map(); this.components = new Map(); }
   ecs_operation(_layer, encoded) {
     const op = JSON.parse(encoded);
     let value, found = true;
     switch (op.op) {
       case 'hierarchy': value = [{id:'root', parent:null}, {id:'child', parent:'root'}]; break;
       case 'structure_revision': value = '0'; break;
+      case 'get_many': {
+        value = Object.create(null);
+        const components = this.components.get(op.id) || new Map();
+        for (const name of op.names) if (components.has(name)) value[name] = components.get(name);
+        break;
+      }
       case 'get_resource': found = this.resources.has(op.name); value = this.resources.get(op.name); break;
       case 'get_resource_field': {
         const resource = this.resources.get(op.name);
@@ -64,6 +70,7 @@ assert.deepEqual(game.drain('engine.scene'), [{action:'push', scene:'pause_menu'
 game.emit('ui.action', {id:'game-levels', kind:{type:'clicked'}});
 runGameplay();
 assert.deepEqual(game.drain('engine.scene'), [{action:'replace', scene:'level_selector'}]);
+world.components.set('entity', new Map([['Health', 50], ['Nullable', null], ['__proto__', 'safe']]));
 world.resources.set('special-keys', JSON.parse('{"__proto__":{"items":[{},[],null]},"constructor":"safe","kind":"user","entries":"data"}'));
 game.vm.doStringSync(`
   local count = select('#', pcall(function() return 1, nil, 3 end))
@@ -71,6 +78,9 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
+  local batch = ecs.get_many('entity', {'Health', 'Nullable', 'Missing', '__proto__'})
+  assert(batch.Health == 50 and batch.Nullable == ecs.null and batch.Missing == nil)
+  assert(batch.__proto__ == 'safe' and next(ecs.get_many('entity', {})) == nil)
   local special = ecs.get_resource('special-keys')
   assert(special.__proto__.items[1] ~= nil and #special.__proto__.items[2] == 0)
   assert(special.__proto__.items[3] == ecs.null)

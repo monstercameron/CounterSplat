@@ -12,6 +12,12 @@ and `ecs.get_resource_field(name, field)` reads individual resource fields
 without copying whole maps while still observing runtime changes. The level and
 voxel panels fetch their controls only when their source settings
 change, and settled camera/posture systems avoid writing unchanged components.
+Lua can use `ecs.get_many(entity, {"A", "B"})` to read several
+components through one bridge call. The result maps names to values, omits
+missing components, and preserves present JSON null values as `ecs.null`.
+Run `node scripts/benchmark_lua_batch.mjs --batch` to compare batched and
+individual reads in the browser-Lua fixture.
+
 The ECS browser updates only rows that actually change. It caches its tree
 using `ecs.structure_revision()`, which changes on entity, parent,
 component-membership, and adapter changes. Component value edits do not
