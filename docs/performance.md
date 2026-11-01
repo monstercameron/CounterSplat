@@ -108,9 +108,10 @@ node scripts/benchmark_lua_wasm_changed.mjs
 
 The fixture uses a tracked typed component and alternates both paths in the same
 Lua VM. It checks changes and stale handles, then reports the median of 21
-samples of 5,000 unchanged reads. It excludes rendering and worker scheduling.
-The in-scene `?profile=1` report includes `lua.bridge_paths` counters for direct
-and JSON change reads so that the chosen path can be checked in a live session.
+samples of 5,000 unchanged reads and 5,000 liveness/presence pairs. It excludes
+rendering and worker scheduling. The in-scene `?profile=1` report includes
+`lua.bridge_paths` counters for direct and JSON change reads, and direct
+liveness and presence checks, so the chosen paths can be checked in a live session.
 
 ## ECS query benchmark
 

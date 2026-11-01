@@ -340,6 +340,22 @@ enum ScriptOperation<'a> {
 }
 
 impl World {
+    /// Check a script entity handle without encoding an intermediate request.
+    pub fn script_entity_alive(&self, id: &str) -> Result<bool, String> {
+        if id.len() > MAX_REQUEST_BYTES {
+            return Err("ECS script request is too large".into());
+        }
+        Ok(self.is_alive(Entity::from_str(id)?))
+    }
+
+    /// Check script-visible component presence using the normal adapter rules.
+    pub fn script_has_component(&self, id: &str, name: &str) -> Result<bool, String> {
+        if id.len().saturating_add(name.len()) > MAX_REQUEST_BYTES {
+            return Err("ECS script request is too large".into());
+        }
+        self.has_component_value(Entity::from_str(id)?, name)
+    }
+
     /// Read a component change with scalar arguments, returning JSON only when
     /// its snapshot changed. This uses the same validation and revision rules
     /// as `get_if_changed` in the JSON protocol.
@@ -777,6 +793,48 @@ mod tests {
         let invalid_general = r#"{"id":"bad","name":"Settings","op":"get_if_changed"}"#;
         assert!(world.apply_script_json(invalid_fast).is_err());
         assert!(world.apply_script_json(invalid_general).is_err());
+    }
+
+    #[test]
+    fn scalar_presence_reads_match_json_protocol() {
+        fn compare(world: &mut World, id: &str, name: &str) {
+            for op in ["is_alive", "has"] {
+                let request = if op == "is_alive" {
+                    serde_json::json!({"op":op, "id":id})
+                } else {
+                    serde_json::json!({"op":op, "id":id, "name":name})
+                };
+                let original = world.apply_script_json(&request.to_string());
+                let scalar = if op == "is_alive" {
+                    world.script_entity_alive(id)
+                } else {
+                    world.script_has_component(id, name)
+                };
+                match (original, scalar) {
+                    (Ok(original), Ok(scalar)) => {
+                        let original: Value = serde_json::from_str(&original).unwrap();
+                        assert_eq!(original["found"], true);
+                        assert_eq!(original["value"], scalar);
+                    }
+                    (Err(_), Err(_)) => {}
+                    other => panic!("presence protocol mismatch: {other:?}"),
+                }
+            }
+        }
+        let mut world = World::new();
+        let entity = world.spawn();
+        let id = entity.to_string();
+        world.set_dynamic(entity, "café", Value::Null).unwrap();
+        for name in ["café", "Missing", "", " bad "] {
+            compare(&mut world, &id, name);
+        }
+        compare(&mut world, "bad", "café");
+        let foreign = World::new().spawn().to_string();
+        compare(&mut world, &foreign, "café");
+        world.despawn(entity);
+        compare(&mut world, &id, "café");
+        let oversized = "x".repeat(MAX_REQUEST_BYTES + 1);
+        compare(&mut world, &oversized, "café");
     }
 
     #[test]

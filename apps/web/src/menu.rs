@@ -37,6 +37,12 @@ impl MenuUi {
     pub fn script_operation(&mut self, request: &str) -> Result<String, String> {
         self.world.apply_script_json(request)
     }
+    pub fn script_entity_alive(&self, id: &str) -> Result<bool, String> {
+        self.world.script_entity_alive(id)
+    }
+    pub fn script_has_component(&self, id: &str, name: &str) -> Result<bool, String> {
+        self.world.script_has_component(id, name)
+    }
     pub fn script_component_change(
         &self,
         id: &str,

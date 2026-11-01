@@ -94,6 +94,18 @@ impl BenchWorld {
         }
         self.world.apply_script_json(request).map_err(js_error)
     }
+    pub fn ecs_is_alive(&self, layer: &str, id: &str) -> Result<bool, JsValue> {
+        if layer != "gameplay" {
+            return Err(js_error("unknown script world"));
+        }
+        self.world.script_entity_alive(id).map_err(js_error)
+    }
+    pub fn ecs_has_component(&self, layer: &str, id: &str, name: &str) -> Result<bool, JsValue> {
+        if layer != "gameplay" {
+            return Err(js_error("unknown script world"));
+        }
+        self.world.script_has_component(id, name).map_err(js_error)
+    }
     pub fn ecs_get_if_changed(
         &self,
         layer: &str,

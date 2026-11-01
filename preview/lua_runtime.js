@@ -415,6 +415,13 @@ export class LuaScene {
       // Undefined becomes Lua nil, while JSON null remains ecs.null. Scalar
       // arguments avoid transferring a temporary Lua request table.
       vm.global.set('__ecs_call_strings', (op, key1, value1, key2, value2) => {
+        if (op === 'is_alive' && key1 === 'id' && key2 == null &&
+            typeof host.target.ecs_is_alive === 'function' && directString(value1, 64))
+          return host.readAlive(value1);
+        if (op === 'has' && key1 === 'id' && key2 === 'name' &&
+            typeof host.target.ecs_has_component === 'function' &&
+            directString(value1, 64) && directString(value2, 256))
+          return host.readHas(value1, value2);
         const request = {op, [key1]:value1};
         if (key2 != null) request[key2] = value2;
         const result = host.call(request, true);
@@ -485,7 +492,7 @@ export class LuaScene {
   constructor(vm, target, layer, profile = false) {
     this.vm = vm; this.target = target; this.layer = layer;
     this.profile = profile ? {systems:Object.create(null), operations:Object.create(null),
-      bridge_paths:{changed_direct:0, changed_json:0}} : null;
+      bridge_paths:{changed_direct:0, changed_json:0, alive_direct:0, has_direct:0}} : null;
   }
   recordProfile(group, name, elapsed) {
     if (!this.profile || !Number.isFinite(elapsed) || elapsed < 0) return;
@@ -501,6 +508,18 @@ export class LuaScene {
     if (op.op === 'get_many' && !Array.isArray(op.names) && Object.keys(op.names || {}).length === 0) op.names = [];
     try { return JSON.parse(this.target.ecs_operation(this.layer, JSON.stringify(op))); }
     finally { if (this.profile) this.recordProfile('operations', op.op, performance.now()-start); }
+  }
+  readAlive(id) {
+    const start = this.profile ? performance.now() : 0;
+    if (this.profile) this.profile.bridge_paths.alive_direct++;
+    try { return this.target.ecs_is_alive(this.layer, id); }
+    finally { if (this.profile) this.recordProfile('operations', 'is_alive', performance.now()-start); }
+  }
+  readHas(id, name) {
+    const start = this.profile ? performance.now() : 0;
+    if (this.profile) this.profile.bridge_paths.has_direct++;
+    try { return this.target.ecs_has_component(this.layer, id, name); }
+    finally { if (this.profile) this.recordProfile('operations', 'has', performance.now()-start); }
   }
   readChanged(id, name, revision) {
     // Keep requests with unusual strings on the exact general protocol. The

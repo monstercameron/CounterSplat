@@ -463,6 +463,24 @@ impl Viewer {
         }
         .map_err(js_error)
     }
+    /// Check a script-visible entity handle without a JSON request.
+    pub fn ecs_is_alive(&self, layer: &str, id: &str) -> Result<bool, JsValue> {
+        match layer {
+            "gameplay" => self.ui.script_entity_alive(id),
+            "menu" => self.menu.script_entity_alive(id),
+            _ => Err("unknown script world".into()),
+        }
+        .map_err(js_error)
+    }
+    /// Check script-visible component presence without a JSON request.
+    pub fn ecs_has_component(&self, layer: &str, id: &str, name: &str) -> Result<bool, JsValue> {
+        match layer {
+            "gameplay" => self.ui.script_has_component(id, name),
+            "menu" => self.menu.script_has_component(id, name),
+            _ => Err("unknown script world".into()),
+        }
+        .map_err(js_error)
+    }
     /// Read a changed component without encoding an intermediate JSON request.
     /// An absent result means the caller's revision is still current.
     pub fn ecs_get_if_changed(
