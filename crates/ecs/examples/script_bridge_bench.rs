@@ -76,6 +76,17 @@ fn main() {
             json!({"op":"get_resource_field", "name":"scene.entities", "field":"player"}),
         ),
         ("drain empty", json!({"op":"drain", "name":"input.key"})),
+        (
+            "drain next empty",
+            json!({"op":"drain_next", "names":[
+            "input.key", "input.mouse_delta", "input.mouse_button", "input.reset",
+            "ui.action", "editor.entity_selected", "physics.ready", "physics.ground_result",
+            "physics.clearance_result", "physics.trace_result", "physics.motion_resolved",
+            "physics.motion_error", "physics.collision", "physics.error", "weapon.trigger",
+            "weapon.aim", "weapon.reload", "weapon.equip", "weapon.mode", "weapon.hit",
+            "weapon.die", "weapon.posture"
+        ], "start":0}),
+        ),
     ] {
         println!(
             "{name:>20}: {:.0} ns/op",

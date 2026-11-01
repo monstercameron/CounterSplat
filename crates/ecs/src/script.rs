@@ -5,7 +5,7 @@
 use crate::{Entity, World, WorldOperation, WorldOutcome};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::str::FromStr;
+use std::{borrow::Cow, str::FromStr};
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
@@ -24,8 +24,23 @@ fn script_result<T: Serialize>(value: Option<T>) -> Result<String, String> {
 }
 
 #[derive(Deserialize)]
+struct RequestName<'a>(#[serde(borrow)] Cow<'a, str>);
+
+impl AsRef<str> for RequestName<'_> {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+#[derive(Serialize)]
+struct EventBatch {
+    index: usize,
+    events: Vec<Value>,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
-enum ScriptOperation {
+enum ScriptOperation<'a> {
     Spawn,
     Despawn {
         id: String,
@@ -44,12 +59,16 @@ enum ScriptOperation {
         components: Vec<String>,
     },
     Get {
-        id: String,
-        name: String,
+        #[serde(borrow)]
+        id: Cow<'a, str>,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
     },
     Has {
-        id: String,
-        name: String,
+        #[serde(borrow)]
+        id: Cow<'a, str>,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
     },
     Set {
         id: String,
@@ -61,11 +80,14 @@ enum ScriptOperation {
         name: String,
     },
     GetResource {
-        name: String,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
     },
     GetResourceField {
-        name: String,
-        field: String,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
+        #[serde(borrow)]
+        field: Cow<'a, str>,
     },
     SetResource {
         name: String,
@@ -89,10 +111,12 @@ enum ScriptOperation {
         value: Value,
     },
     Drain {
-        name: String,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
     },
     DrainNext {
-        names: Vec<String>,
+        #[serde(borrow)]
+        names: Vec<RequestName<'a>>,
         #[serde(default)]
         start: usize,
     },
@@ -129,10 +153,11 @@ impl World {
             S::Get { id, name } => {
                 return script_result(self.borrow_component_value(Entity::from_str(&id)?, &name)?);
             }
-            S::Has { id, name } => O::HasComponent {
-                entity: Entity::from_str(&id)?,
-                name,
-            },
+            S::Has { id, name } => {
+                return script_result(Some(
+                    self.has_component_value(Entity::from_str(&id)?, &name)?,
+                ));
+            }
             S::Set { id, name, value } => O::WriteComponent {
                 entity: Entity::from_str(&id)?,
                 name,
@@ -147,7 +172,7 @@ impl World {
                 return script_result(
                     self.get_dynamic_resource(&name)
                         .and_then(Value::as_object)
-                        .and_then(|object| object.get(&field)),
+                        .and_then(|object| object.get(field.as_ref())),
                 );
             }
             S::SetResource { name, value } => O::WriteResource { name, value },
@@ -163,8 +188,13 @@ impl World {
                 entity: Entity::from_str(&id)?,
             },
             S::Emit { name, value } => O::EmitEvent { name, value },
-            S::Drain { name } => O::DrainEvents { name },
-            S::DrainNext { names, start } => O::DrainNextEvents { names, start },
+            S::Drain { name } => return script_result(Some(self.drain_events(&name))),
+            S::DrainNext { names, start } => {
+                return script_result(
+                    self.drain_next_events(&names, start)
+                        .map(|(index, events)| EventBatch { index, events }),
+                );
+            }
             S::Snapshot => O::Snapshot,
         };
         let result = self.apply_operation(operation)?;
@@ -197,6 +227,41 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn request_names_borrow_when_possible_and_support_escaped_text() {
+        let request =
+            json!({"op":"drain_next","names":["plain","quoted\"name"],"start":0}).to_string();
+        let operation: ScriptOperation<'_> = serde_json::from_str(&request).unwrap();
+        match operation {
+            ScriptOperation::DrainNext { names, .. } => {
+                assert!(matches!(names[0].0, Cow::Borrowed("plain")));
+                assert!(matches!(&names[1].0, Cow::Owned(name) if name == "quoted\"name"));
+            }
+            _ => panic!("expected ordered event drain"),
+        }
+
+        let mut world = World::new();
+        let entity = world.spawn();
+        let name = "quoted\"component";
+        world
+            .set_dynamic(entity, name, json!({"text":"works"}))
+            .unwrap();
+        let request = json!({"op":"get","id":entity.to_string(),"name":name});
+        let response: Value =
+            serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+        assert_eq!(response, json!({"found":true,"value":{"text":"works"}}));
+
+        let channel = "quoted\"channel";
+        world.emit_event(channel, Value::Null);
+        let request = json!({"op":"drain_next","names":["other",channel],"start":0});
+        let response: Value =
+            serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+        assert_eq!(
+            response,
+            json!({"found":true,"value":{"index":1,"events":[null]}})
+        );
+    }
+
     #[test]
     fn json_bridge_uses_real_world_operations_and_preserves_null_and_handles() {
         let mut world = World::new();
