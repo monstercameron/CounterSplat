@@ -8,8 +8,16 @@ pub struct PlayerCamera {
     pub position: [f32; 3],
     /// World-space visual offset. Physics and the player position remain unchanged.
     pub view_offset: [f32; 3],
+    /// Temporary visual smoothing of an already collision-checked posture change.
+    pub view_posture_offset_y: f32,
+    /// Independent visual-only gait and turn offsets, in radians.
+    pub view_bob_pitch: f32,
+    pub view_bob_roll: f32,
+    pub view_turn_roll: f32,
     pub yaw: f32,
     pub pitch: f32,
+    /// Roll around the viewing axis, in radians.
+    pub roll: f32,
     pub fov_degrees: f32,
     /// Optional script-controlled render FOV; the configured base FOV stays unchanged.
     pub view_fov_degrees: Option<f32>,
@@ -19,8 +27,13 @@ impl Default for PlayerCamera {
         Self {
             position: [0.0, 0.0, 0.0],
             view_offset: [0.0, 0.0, 0.0],
+            view_posture_offset_y: 0.0,
+            view_bob_pitch: 0.0,
+            view_bob_roll: 0.0,
+            view_turn_roll: 0.0,
             yaw: 0.0,
             pitch: 0.0,
+            roll: 0.0,
             fov_degrees: 60.0,
             view_fov_degrees: None,
         }
@@ -41,11 +54,16 @@ impl PlayerCamera {
         let camera = Self {
             position,
             view_offset: [0.0; 3],
+            view_posture_offset_y: 0.0,
+            view_bob_pitch: 0.0,
+            view_bob_roll: 0.0,
+            view_turn_roll: 0.0,
             yaw: direction[0].atan2(-direction[2]),
             pitch: (direction[1] / length)
                 .clamp(-1.0, 1.0)
                 .asin()
                 .clamp(-1.553_343, 1.553_343),
+            roll: 0.0,
             fov_degrees,
             view_fov_degrees: None,
         };
@@ -54,7 +72,15 @@ impl PlayerCamera {
     }
     /// Visual eye position; collision and gameplay use `position` directly.
     pub fn render_position(&self) -> [f32; 3] {
-        std::array::from_fn(|i| self.position[i] + self.view_offset[i])
+        std::array::from_fn(|i| {
+            self.position[i]
+                + self.view_offset[i]
+                + if i == 1 {
+                    self.view_posture_offset_y
+                } else {
+                    0.0
+                }
+        })
     }
 
     /// Render FOV in degrees, including any script-controlled lens effect.
@@ -62,11 +88,37 @@ impl PlayerCamera {
         self.view_fov_degrees.unwrap_or(self.fov_degrees)
     }
 
-    /// Unit view direction in world coordinates.
-    pub fn direction(&self) -> [f32; 3] {
+    fn direction_at(&self, pitch: f32) -> [f32; 3] {
         let (sy, cy) = self.yaw.sin_cos();
-        let (sp, cp) = self.pitch.sin_cos();
+        let (sp, cp) = pitch.sin_cos();
         [sy * cp, sp, -cy * cp]
+    }
+    fn up_at(&self, pitch: f32, roll: f32) -> [f32; 3] {
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sp, cp) = pitch.sin_cos();
+        let (sr, cr) = roll.sin_cos();
+        let right = [cy, 0.0, sy];
+        let up = [-sy * sp, cp, cy * sp];
+        std::array::from_fn(|i| up[i] * cr + right[i] * sr)
+    }
+    /// Gameplay aim excludes visual camera effects.
+    pub fn direction(&self) -> [f32; 3] {
+        self.direction_at(self.pitch)
+    }
+    /// Authored camera up, excluding visual-only motion.
+    pub fn up(&self) -> [f32; 3] {
+        self.up_at(self.pitch, self.roll)
+    }
+    /// View direction including gait pitch; never changes gameplay aim.
+    pub fn render_direction(&self) -> [f32; 3] {
+        self.direction_at((self.pitch + self.view_bob_pitch).clamp(-1.553_343, 1.553_343))
+    }
+    /// View up including independently composable gait and turning rolls.
+    pub fn render_up(&self) -> [f32; 3] {
+        self.up_at(
+            (self.pitch + self.view_bob_pitch).clamp(-1.553_343, 1.553_343),
+            self.roll + self.view_bob_roll + self.view_turn_roll,
+        )
     }
     pub fn validate(&self) -> Result<(), &'static str> {
         if !self
@@ -77,10 +129,17 @@ impl PlayerCamera {
                 .view_offset
                 .iter()
                 .all(|v| v.is_finite() && v.abs() <= 100.0)
+            || !self.view_posture_offset_y.is_finite()
+            || self.view_posture_offset_y.abs() > 100.0
+            || ![self.view_bob_pitch, self.view_bob_roll, self.view_turn_roll]
+                .iter()
+                .all(|value| value.is_finite() && value.abs() <= 0.25)
             || !self.yaw.is_finite()
             || self.yaw.abs() > 1_000_000.0
             || !self.pitch.is_finite()
             || self.pitch.abs() > 1.553_343
+            || !self.roll.is_finite()
+            || self.roll.abs() > std::f32::consts::PI
             || !self.fov_degrees.is_finite()
             || !(1.0..179.0).contains(&self.fov_degrees)
             || self
@@ -146,6 +205,7 @@ pub struct PlayerBindings {
     pub up: String,
     pub down: String,
     pub sprint: String,
+    pub crouch: String,
     pub jump: String,
 }
 impl Default for PlayerBindings {
@@ -158,6 +218,7 @@ impl Default for PlayerBindings {
             up: "KeyE".into(),
             down: "KeyQ".into(),
             sprint: "ShiftLeft".into(),
+            crouch: "ControlLeft".into(),
             jump: "Space".into(),
         }
     }
@@ -172,6 +233,7 @@ impl PlayerBindings {
             &self.up,
             &self.down,
             &self.sprint,
+            &self.crouch,
             &self.jump,
         ] {
             if key.is_empty() || key.len() > 32 || !key.bytes().all(|c| c.is_ascii_alphanumeric()) {
@@ -285,6 +347,48 @@ mod tests {
         .is_err());
     }
     #[test]
+    fn camera_roll_changes_up_without_turning_or_moving_the_camera() {
+        let mut camera = PlayerCamera {
+            yaw: 0.7,
+            pitch: 0.3,
+            ..Default::default()
+        };
+        let direction = camera.direction();
+        let original_up = camera.up();
+        camera.roll = std::f32::consts::FRAC_PI_2;
+        let up = camera.up();
+        assert_eq!(camera.direction(), direction);
+        assert!((up.iter().zip(direction).map(|(a, b)| a * b).sum::<f32>()).abs() < 1e-6);
+        assert!((up.iter().map(|v| v * v).sum::<f32>() - 1.0).abs() < 1e-6);
+        assert!((up.iter().zip(original_up).map(|(a, b)| a * b).sum::<f32>()).abs() < 1e-6);
+        let old: PlayerCamera = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.roll, 0.0);
+    }
+    #[test]
+    fn visual_rotation_preserves_aim_and_keeps_the_render_basis_orthogonal() {
+        let mut camera = PlayerCamera::default();
+        let aim = camera.direction();
+        camera.view_bob_pitch = 0.05;
+        camera.view_bob_roll = 0.02;
+        camera.view_turn_roll = -0.03;
+        assert_eq!(camera.direction(), aim);
+        assert_ne!(camera.render_direction(), aim);
+        let direction = camera.render_direction();
+        let up = camera.render_up();
+        assert!(
+            direction
+                .iter()
+                .zip(up)
+                .map(|(a, b)| a * b)
+                .sum::<f32>()
+                .abs()
+                < 1e-6
+        );
+        assert!(camera.validate().is_ok());
+        camera.view_turn_roll = f32::NAN;
+        assert!(camera.validate().is_err());
+    }
+    #[test]
     fn camera_view_offset_is_visual_only_and_old_settings_get_defaults() {
         let camera = PlayerCamera {
             position: [1.0, 2.0, 3.0],
@@ -292,6 +396,18 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(camera.render_position(), [1.1, 2.2, 2.7]);
+        let crouch = PlayerCamera {
+            view_posture_offset_y: 0.3,
+            ..camera.clone()
+        };
+        assert!((crouch.render_position()[1] - 2.5).abs() < 1e-6);
+        assert_eq!(crouch.position, camera.position);
+        assert!(PlayerCamera {
+            view_posture_offset_y: f32::NAN,
+            ..camera.clone()
+        }
+        .validate()
+        .is_err());
         assert_eq!(camera.position, [1.0, 2.0, 3.0]);
         assert_eq!(camera.render_fov_degrees(), camera.fov_degrees);
         let zoomed = PlayerCamera {

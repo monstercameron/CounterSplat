@@ -19,6 +19,9 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/voxel-worker.js') -Desti
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/voxel_runtime.js') -Destination (Join-Path $output 'voxel_runtime.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/mouse_capture.js') -Destination (Join-Path $output 'mouse_capture.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/mouse_buttons.js') -Destination (Join-Path $output 'mouse_buttons.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/first_person_frames.js') -Destination (Join-Path $output 'first_person_frames.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/display_settings.js') -Destination (Join-Path $output 'display_settings.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/frame_profile.js') -Destination (Join-Path $output 'frame_profile.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/player_rig.js') -Destination (Join-Path $output 'player_rig.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/chunk_decoder_pool.js') -Destination (Join-Path $output 'chunk_decoder_pool.js') -Force
 foreach ($module in @('chunk_preload.js', 'metadata_client.js', 'metadata_loader.js', 'metadata-worker.js', 'asset_loader.js')) {
@@ -42,6 +45,7 @@ $menu = Get-Content -LiteralPath (Join-Path $sceneDir 'menu.json') -Raw | Conver
 $references = @($scene.resources.assets.PSObject.Properties.Value) + @($menu.resources.assets.PSObject.Properties.Value) + @($scene.resources.scripts.PSObject.Properties.Value) + @($menu.resources.scripts.PSObject.Properties.Value)
 $assetPrefix = [IO.Path]::GetFullPath((Join-Path $projectRoot 'assets')).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 $outputPrefix = [IO.Path]::GetFullPath($output).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+$createdDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($reference in $references) {
     $uri = [string]$reference.uri
     if ($uri.StartsWith('/') -or $uri -match '^[a-zA-Z][a-zA-Z0-9+.-]*:') { continue }
@@ -53,7 +57,10 @@ foreach ($reference in $references) {
         throw "Scene resource escapes the assets/package directory: $uri"
     }
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Scene resource is missing: $uri" }
-    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
-    Copy-Item -LiteralPath $source -Destination $destination -Force
+    $destinationDirectory = [IO.Path]::GetDirectoryName($destination)
+    if ($createdDirectories.Add($destinationDirectory)) {
+        [IO.Directory]::CreateDirectory($destinationDirectory) | Out-Null
+    }
+    [IO.File]::Copy($source, $destination, $true)
 }
 Write-Host "CounterSplat canvas package generated in $output"

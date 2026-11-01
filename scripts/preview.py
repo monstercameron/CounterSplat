@@ -6,9 +6,11 @@ Build the browser package first. Serves preview files, declared scene resources,
 import argparse
 import json
 import mimetypes
+import os
 import re
 import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -78,14 +80,34 @@ def scene_catalog(root: Path):
     return {"version": 1, "scenes": entries}
 
 
-def declared_scene_resource(root: Path, relative: str):
-    """Resolve resources declared by known scenes, confined to their assets directory."""
-    requested = (root / relative).resolve()
-    assets = (root / "assets").resolve()
-    scenes = (root / "assets" / "scenes").resolve()
-    for candidate in scenes.glob("*.json"):
+def _lexical_path(path: Path):
+    """Normalize a declaration without following symlinks or requiring a file."""
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _scene_signature(scenes: Path):
+    """Invalidate the index when a scene is added, replaced, edited, or removed."""
+    result = []
+    for candidate in sorted(scenes.glob("*.json")):
         try:
-            scene_path = scene_resource(scenes, candidate.name)
+            info = candidate.stat()
+            result.append((candidate.name, str(candidate.resolve()), info.st_mtime_ns,
+                           info.st_ctime_ns, info.st_size))
+        except OSError:
+            continue
+    return tuple(result)
+
+
+@lru_cache(maxsize=16)
+def _declared_index(root: Path, signature: tuple):
+    # Index exact declared paths once, rather than resolving every frame on every
+    # request. Recheck the requested target's real path when it is served so a
+    # changed symlink can never escape the assets directory.
+    scenes = (root / "assets" / "scenes").resolve()
+    declared = set()
+    for name, *_ in signature:
+        try:
+            scene_path = scene_resource(scenes, name)
             if scene_path is None:
                 continue
             scene = json.loads(scene_path.read_text(encoding="utf-8"))
@@ -97,11 +119,25 @@ def declared_scene_resource(root: Path, relative: str):
                     continue
                 parsed = urlsplit(uri)
                 if not parsed.scheme and not parsed.netloc and not parsed.path.startswith("/"):
-                    if (scene_path.parent / unquote(parsed.path)).resolve() == requested:
-                        return True, requested if requested.is_relative_to(assets) and requested.is_file() else None
+                    declared.add(_lexical_path(scene_path.parent / unquote(parsed.path)))
         except (OSError, ValueError, AttributeError, TypeError):
             continue
-    return False, None
+    return frozenset(declared)
+
+
+def declared_scene_resource(root: Path, relative: str):
+    """Resolve exactly declared resources, confined to their assets directory."""
+    root = root.resolve()
+    scenes = (root / "assets" / "scenes").resolve()
+    lexical = _lexical_path(root / relative)
+    if lexical not in _declared_index(root, _scene_signature(scenes)):
+        return False, None
+    try:
+        requested = (root / relative).resolve()
+        assets = (root / "assets").resolve()
+        return True, requested if requested.is_relative_to(assets) and requested.is_file() else None
+    except OSError:
+        return True, None
 
 
 def main():

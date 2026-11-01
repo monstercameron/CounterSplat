@@ -1,18 +1,18 @@
 # Player camera and controls
 
 The browser game has a grounded first-person player camera when voxel collision is available. Click the canvas to focus it, then use **W/A/S/D** to move,
-**E/Q** to move up/down, **Space** to jump, and **Left Shift** to sprint. In browsers that permit
+**E/Q** to move up/down, **Space** to jump, hold **Shift** to run, and hold **Ctrl** to crouch. In browsers that permit
 pointer lock, clicking the scene captures the mouse for continuous look; press **` / ~** to release it. The Codex
 in-app browser uses left-drag look when pointer lock is unavailable. Hold **right mouse** for a smooth 5× zoom and release to return to the normal view. **Escape** opens the pause menu. Movement stops on focus loss, pause, or
 when UI arrangement starts, so a missed key release cannot leave the player moving.
 
 Open **Player controls** in the lower right of the canvas to change movement and mouse-look enablement, speed,
-sprint multiplier, look sensitivity, field of view, jump speed and gravity, eye height, level scale, Y inversion, and all eight key bindings. Click a binding and
+sprint multiplier, look sensitivity, field of view, jump speed and gravity, eye height, level scale, Y inversion, and all nine key bindings. Click a binding and
 press the desired physical key; Escape cancels a pending binding. **Reset controls** restores the scene defaults.
 **Reset view** in the Scene view panel returns the camera to the starting position and orientation while retaining
 a chosen FOV. Browser-local preferences survive scene changes and refreshes and do not rewrite scene JSON.
 
-`PlayerCamera`, `PlayerControls`, and `PlayerRig` are validated, serializable components in `countersplat-scene`; their generic
+`PlayerCamera`, `PlayerControls`, `PlayerRig`, and `CameraController` are validated, serializable components in `countersplat-scene`; their generic
 ECS adapters live in `countersplat-scene-ecs`. The gameplay manifest creates a `player` entity in the `player`
 layer. The browser instantiates the `player` and `ui` layers into one gameplay ECS world, so Lua can use the same
 `ecs.get` and `ecs.set` APIs for camera state and UI controls. The skybox, level, player and UI layers share the gameplay ECS world. The
@@ -20,17 +20,64 @@ renderer reads the current camera component and uses it for both the view matrix
 
 By default, `resources.preview.player_spawn` is `"level"`, which seeds the camera from the selected level's camera
 hint (or the scan bounds when no hint exists). Set it to `"scene"` to use the `PlayerCamera` pose in gameplay JSON.
+The host publishes a validated candidate or an error as the `player.level_view` ECS resource;
+`player_controls.lua` selects the spawn, updates `PlayerCamera`, and records `player.spawn_camera`
+for reset. An invalid level candidate is ignored when the scene pose is selected. Other hosts can omit the
+candidate and supply a reset pose, or let the script use the authored camera. Lua also decides whether to
+adjust the spawn to a collision-probed floor.
 Yaw is radians with zero facing -Z; positive pitch looks upward. `PlayerControls` stores movement speed in
 nominal meters per second, sensitivity in radians per pointer pixel, and physical key codes such as `KeyW` or `ArrowUp`.
 An optional `fov_degrees` setting overrides the spawn camera's FOV. Scene defaults are validated on loading and
 script writes use the same validation; malformed saved browser preferences are ignored.
 
-[`player_controls.lua`](../assets/scripts/player_controls.lua) consumes `input.key`, `input.mouse_delta`,
-`input.reset`, and `ui.action` via `ecs.on`. The browser distributes each event to the registered listeners and
-runs Lua systems at the engine's fixed simulation tick. The script normalizes diagonal movement, clamps pitch,
-tracks key releases, applies UI changes through ECS, and emits `player.controls_changed` for browser persistence.
-The navigation script receives the same key and UI events, preserving Escape menu behavior. `ecs.on` events are
-host-dispatched copies; they are distinct from the single-consumer ECS queues.
+[`player_controls.lua`](../assets/scripts/player_controls.lua) handles movement, jumping, control settings and
+key bindings. [`neural_camera.lua`](../assets/scripts/neural_camera.lua) owns direct mouse look and turn tilt
+when the `camera_controller` entity is enabled. It resolves its `target` scene ID to the current player camera.
+The browser distributes input events to registered Lua listeners and runs systems at the fixed simulation tick.
+The Lua systems own player and weapon behavior; Rust supplies validated ECS components, collision calculations,
+and rendering. The browser collision worker transports asynchronous query results back to Lua for gameplay
+decisions.
+If the controller is disabled or removed, the original direct-look handler remains available; the existing
+`PlayerControls.mouse_look` switch still enables or disables mouse look. The navigation script receives the same
+events, preserving Escape menu behavior. `ecs.on` events are host-dispatched copies and are distinct from the
+single-consumer ECS queues.
+
+
+## Running and crouching
+
+Either Shift key runs while held. Either Ctrl key crouches while held; the
+bindings can be changed in **Player controls**. Crouch takes priority over run
+and uses the scene's crouch-speed multiplier. The player entity's
+`PlayerPosture` component exposes crouch enablement, height ratio, movement
+speed, and transition time through **Entity settings**.
+
+[`player_posture.lua`](../assets/scripts/player_posture.lua) owns the behavior.
+It shortens the player's actual capsule and preserves its foot position while
+the camera eases to the new eye height. Releasing Ctrl checks the added head
+volume on the voxel worker before restoring standing height. If a ceiling is in
+the way, the player remains crouched and can move out from under it. If the
+collider is disabled or unavailable, the player can stand without that query.
+Changes to rig scale or eye height made while crouched apply when standing is
+clear. Crouch posture and movement are sent to the first-person footage script.
+
+## NeuralSight camera controller
+
+The default `camera_controller` entity ports the direct look and spring-smoothed turn tilt from Neural-Sight's
+`app/src/main.js` and `app/src/turn-tilt.js`. Its scene default mouse sensitivity is 0.11 degrees per pointer
+pixel; the existing sensitivity slider uses radians per pixel, and any saved user preference takes precedence.
+Pitch is limited to 80 degrees by default. Camera movement is immediate; the small visual roll follows the
+turn rate, settles smoothly, and is reduced while the right mouse button is held.
+
+Open **Camera & lens** for the turn-tilt switch, strength slider, and **Reset camera motion**. Select
+**Camera controller** in **ECS entities** to tune the pitch limit, maximum tilt, response speeds, aim damping,
+and gait rotation. The component and its target live in scene JSON; inspector and panel changes are saved
+locally in the browser, and reset returns to the scene defaults. The camera controller can be retargeted by
+setting its `target` to another scene entity with `PlayerCamera` and `PlayerControls`; the target remains
+scene-owned when browser tuning is restored.
+
+`PlayerCamera.view_turn_roll`, `view_bob_pitch`, and `view_bob_roll` are visual offsets. They are composed
+with the authored camera orientation when rendering and do not change the player's base aim, body, or collision
+position. Reset, pointer-lock loss, pause, and removing the controller clear transient turn motion.
 
 ## Camera zoom
 
@@ -40,7 +87,12 @@ host-dispatched copies; they are distinct from the single-consumer ECS queues.
 
 [`camera_bob.lua`](../assets/scripts/camera_bob.lua) adds a visual-only sway while the player moves. Open **Entity settings**, select `player`, and use the export-page arrows to tune **View bob**, **Bob steps / sec**, **Bob vertical (m)**, **Bob sideways (m)**, and **Bob response**. The values live in `PlayerControls`, are initialized in `gameplay.json`, and are saved with the other browser control preferences. **Reset controls** restores their scene defaults.
 
-Cadence describes steps per second at normal walk speed and increases with actual travel speed. Amplitudes are in metres and scale with the player rig. Bob starts and settles smoothly, pauses in the air when voxel collision is active, and stops when movement is blocked. The script writes only `PlayerCamera.view_offset`; physics, the collider, spawn position, and streaming distance use the unchanged `PlayerCamera.position`.
+Cadence describes steps per second at normal walk speed and increases with actual travel speed. The active
+NeuralSight profile adapts `app/src/view-bob.js`: longer running strides, an asymmetric running foot plant,
+small visual pitch and roll, and reduced gait while aiming. Positional amplitudes remain configurable in metres
+and scale with the player rig. Bob starts and settles smoothly, pauses in the air when voxel collision is active,
+and stops when movement is blocked. `PlayerCamera.position`, gameplay aim, collision, and the spawn pose stay
+unchanged by these visual offsets. Older scenes without the controller retain the original bob behavior.
 
 The player has a `PhysicsBody` component. Physics, collision and gravity are on by default; the player stands
 on the level voxels and can jump while grounded. With gravity off, Space follows a free-fly jump arc.
@@ -70,3 +122,6 @@ floor is found, the collider is unavailable, the player has moved, or the scene 
 The Lua player system derives the capsule radius, vertical half-segment and center offset from
 `PlayerRig`, and preserves the player's foot position when height or scale changes. Eye height, scale,
 and head clearance are also exported to **Entity settings** for tuning through the same ECS fields.
+
+The **Camera & lens** panel adds field of view, yaw, pitch, roll, photographic exposure, shutter and focus controls.
+See [camera and lens](camera.md) for the ECS component, Lua API, and limits of the real-time blur effects.

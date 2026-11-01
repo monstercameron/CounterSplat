@@ -9,15 +9,15 @@
 mod menu;
 mod selector;
 mod ui_layer;
-mod ui_layout;
 pub use selector::Selector;
 
 use countersplat_assets::{environment, lod::LodMeta, sog, viewer::CameraHint};
-use countersplat_core::{rate::Rate, scheduler::Scheduler, time::FixedClock};
+use countersplat_core::{inflight::InFlight, rate::Rate, scheduler::Scheduler, time::FixedClock};
 use countersplat_render::{
-    camera, env,
+    camera, env, first_person, postprocess,
     scene::{self, GsplatScene, Pipelines, View},
     stream::{DrawRegion, LevelStream, StreamSettings},
+    tracer::TracerRenderer,
     voxel_debug::VoxelDebug,
     worker_decode::StagedChunk,
     DEPTH_FORMAT,
@@ -25,14 +25,7 @@ use countersplat_render::{
 use countersplat_scene::{LevelAssets, SceneManifest, Skybox};
 use countersplat_ui::{InputEvent, Modifiers, PointerButton};
 use js_sys::{Array, Uint8Array};
-use std::{
-    collections::BTreeMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{collections::BTreeMap, time::Duration};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -59,6 +52,14 @@ fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureVi
         .create_view(&Default::default())
 }
 
+/// Previous submitted camera, used only for bounded camera-motion blur.
+struct PreviousCamera {
+    time: Duration,
+    clip: camera::Mat4,
+    position: [f32; 3],
+    direction: [f32; 3],
+}
+
 /// A live WebGPU renderer attached to the supplied HTML canvas.
 #[wasm_bindgen]
 pub struct Viewer {
@@ -69,17 +70,25 @@ pub struct Viewer {
     config: wgpu::SurfaceConfiguration,
     surface_view_format: wgpu::TextureFormat,
     depth: wgpu::TextureView,
+    postprocess: postprocess::PostProcess,
+    first_person: first_person::FirstPersonLayer,
+    first_person_settings: first_person::Settings,
     pipelines: Pipelines,
     pool: GsplatScene,
     stream: LevelStream,
     voxel_debug: VoxelDebug,
+    tracers: TracerRenderer,
     scheduler: Scheduler,
     frame_limit: Option<u32>,
-    pending_gpu: Arc<AtomicBool>,
+    gpu_frames: InFlight,
     pending_resize: Option<(u32, u32)>,
+    render_size: (u32, u32),
+    pending_render_size: Option<(u32, u32)>,
+    viewport_scale: postprocess::ViewportScale,
     script_ticks: u32,
     far: f32,
     model: camera::Mat4,
+    previous_camera: Option<PreviousCamera>,
     submitted_frames: u64,
     busy_skips: u64,
     missed_deadlines: u128,
@@ -243,8 +252,12 @@ impl Viewer {
         };
         surface.configure(&device, &config);
         let depth = depth_view(&device, width, height);
-        let voxel_debug = VoxelDebug::new(&device, surface_view_format);
-        let pipelines = Pipelines::new(&device, surface_view_format).map_err(js_error)?;
+        let postprocess =
+            postprocess::PostProcess::new(&device, surface_view_format, width, height);
+        let first_person = first_person::FirstPersonLayer::new(&device, postprocess::SCENE_FORMAT);
+        let voxel_debug = VoxelDebug::new(&device, postprocess::SCENE_FORMAT);
+        let tracers = TracerRenderer::new(&device, postprocess::SCENE_FORMAT);
+        let pipelines = Pipelines::new(&device, postprocess::SCENE_FORMAT).map_err(js_error)?;
         let rows = stream.palette_texture_rows(device.limits().max_texture_dimension_2d);
         let pool = scene::pool_with_centroid_rows(
             &device,
@@ -281,20 +294,9 @@ impl Viewer {
             |hint| hint.target,
         );
         let fov = hint.map_or(60.0, |hint| hint.fov_degrees);
-        let spawn_source = manifest
-            .resources
-            .values
-            .get("preview")
-            .and_then(|value| value.get("player_spawn"))
-            .and_then(|value| value.as_str())
-            .unwrap_or("level");
-        let use_level_camera = match spawn_source {
-            "level" => true,
-            "scene" => false,
-            _ => return Err(js_error("preview.player_spawn must be `level` or `scene`")),
-        };
-        ui.set_camera_spawn(eye, target, fov, use_level_camera)
-            .map_err(js_error)?;
+        // Supply the level's camera hint as data. The scene's Lua player
+        // script chooses whether to use it or the authored scene camera.
+        ui.publish_level_view(eye, target, fov);
         let rate = Rate::new(60, 1).map_err(js_error)?;
         let fixed = FixedClock::with_rate(rate, Duration::from_millis(250), 4).map_err(js_error)?;
         Ok(Self {
@@ -305,17 +307,25 @@ impl Viewer {
             config,
             surface_view_format,
             depth,
+            postprocess,
+            first_person,
+            first_person_settings: first_person::Settings::default(),
             pipelines,
             pool,
             stream,
             voxel_debug,
+            tracers,
             scheduler: Scheduler::new(fixed, rate),
             frame_limit: None,
-            pending_gpu: Arc::new(AtomicBool::new(false)),
+            gpu_frames: InFlight::new(2).expect("positive in-flight frame limit"),
             pending_resize: None,
+            render_size: (width, height),
+            pending_render_size: None,
+            viewport_scale: postprocess::ViewportScale::Fill,
             script_ticks: 0,
             far: size * 20.0 + 100.0,
             model,
+            previous_camera: None,
             submitted_frames: 0,
             busy_skips: 0,
             missed_deadlines: 0,
@@ -329,11 +339,44 @@ impl Viewer {
         })
     }
 
-    /// Queue a resize; it is applied only when the previous frame has finished.
+    /// Queue a resize; it is applied after all submitted frames have finished.
     pub fn resize(&mut self, width: u32, height: u32) {
         let limit = self.device.limits().max_texture_dimension_2d;
         let size = (width.clamp(1, limit), height.clamp(1, limit));
         self.pending_resize = (size != (self.config.width, self.config.height)).then_some(size);
+    }
+
+    /// Maximum supported 2D texture dimension on the active device.
+    pub fn max_texture_dimension(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
+    }
+
+    /// Set the 3D scene resolution independently of the display canvas and UI.
+    /// The limit bounds HDR/depth/bloom memory while still supporting 4K and ultrawide.
+    pub fn set_render_resolution(&mut self, width: u32, height: u32) -> Result<(), JsValue> {
+        const MAX_PIXELS: u64 = 16_777_216;
+        let limit = self.device.limits().max_texture_dimension_2d;
+        if width == 0
+            || height == 0
+            || width > limit
+            || height > limit
+            || u64::from(width) * u64::from(height) > MAX_PIXELS
+        {
+            return Err(js_error(
+                "render resolution exceeds the device or pixel limit",
+            ));
+        }
+        self.pending_render_size = ((width, height) != self.render_size).then_some((width, height));
+        Ok(())
+    }
+
+    /// Fill crops the scene; fit shows the whole scene with bars. UI remains visible.
+    pub fn set_viewport_fill(&mut self, fill: bool) {
+        self.viewport_scale = if fill {
+            postprocess::ViewportScale::Fill
+        } else {
+            postprocess::ViewportScale::Fit
+        };
     }
 
     /// Set the canvas width in CSS points for high-DPI UI and pointer mapping.
@@ -344,6 +387,9 @@ impl Viewer {
     }
     /// Set which ECS UI scene owns input and is drawn over the game.
     pub fn set_menu_visible(&mut self, visible: bool) {
+        if self.menu_visible != visible {
+            self.previous_camera = None;
+        }
         self.menu_visible = visible;
     }
     /// Apply an owned script command to the specified ECS world.
@@ -469,6 +515,74 @@ impl Viewer {
         }
     }
 
+    /// Upload a decoded scene frame directly to the WebGPU texture. The browser
+    /// retains ownership of the ImageBitmap and may close it after this call.
+    pub fn install_first_person_frame(
+        &mut self,
+        image: web_sys::ImageBitmap,
+    ) -> Result<(), JsValue> {
+        let (width, height) = (image.width(), image.height());
+        let limit = self.device.limits().max_texture_dimension_2d.min(4096);
+        if width == 0 || height == 0 || width > limit || height > limit {
+            return Err(js_error("invalid first-person frame dimensions"));
+        }
+        let texture = self.first_person.frame_texture(&self.device, width, height);
+        self.queue.copy_external_image_to_texture(
+            &wgpu::CopyExternalImageSourceInfo {
+                source: wgpu::ExternalImageSource::ImageBitmap(image),
+                origin: wgpu::Origin2d::ZERO,
+                flip_y: false,
+            },
+            wgpu::CopyExternalImageDestInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+                color_space: wgpu::PredefinedColorSpace::Srgb,
+                premultiplied_alpha: false,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.first_person.mark_ready();
+        Ok(())
+    }
+    /// Presentation settings are read from the script-owned ECS component.
+    pub fn set_first_person_settings(
+        &mut self,
+        visible: bool,
+        opacity: f32,
+        key_threshold: f32,
+        key_softness: f32,
+        despill: f32,
+        vertical_offset: f32,
+    ) {
+        self.first_person_settings = first_person::Settings {
+            visible,
+            opacity,
+            key_threshold,
+            key_softness,
+            despill,
+            vertical_offset,
+            ..self.first_person_settings
+        };
+    }
+    /// A renderer-only frame capture used to blend discontinuous footage clips.
+    pub fn capture_first_person_frame(&mut self) -> bool {
+        self.first_person
+            .capture_previous(&self.device, &self.queue)
+    }
+    /// Apply a Lua-authored visual transform without changing player physics.
+    pub fn set_first_person_motion(&mut self, x: f32, y: f32, roll: f32, blend: f32) {
+        self.first_person_settings.motion_x = x;
+        self.first_person_settings.motion_y = y;
+        self.first_person_settings.motion_roll = roll;
+        self.first_person_settings.blend = blend;
+    }
+
     /// Install a decoded cube from a worker under an opaque scene asset ID.
     pub fn install_skybox(
         &mut self,
@@ -485,7 +599,7 @@ impl Viewer {
             &self.queue,
             face_size as usize,
             &rgba16f,
-            self.surface_view_format,
+            postprocess::SCENE_FORMAT,
         )
         .map_err(js_error)?;
         self.sky_assets.insert(asset, sky);
@@ -509,21 +623,32 @@ impl Viewer {
         self.scheduler.set_paused(paused);
         if paused {
             self.ui.reset_timing();
+            self.previous_camera = None;
         }
     }
 
     /// Advance fixed ticks and, when due, present one frame directly to the canvas.
     pub fn frame(&mut self, now_ms: f64) -> Result<bool, JsValue> {
         let now = Duration::try_from_secs_f64(now_ms / 1000.0).map_err(js_error)?;
-        let busy = self.pending_gpu.load(Ordering::Acquire);
-        if !busy {
+        let pending_frames = self.gpu_frames.count();
+        let resizing = self.pending_resize.is_some() || self.pending_render_size.is_some();
+        // Drain the queue before reconfiguring the surface or replacing targets.
+        // Otherwise allow two ordered submissions so a delayed completion callback
+        // does not unnecessarily halve the presentation cadence.
+        let busy = self.gpu_frames.is_full() || (resizing && pending_frames > 0);
+        if pending_frames == 0 {
             if let Some((width, height)) = self.pending_resize.take() {
                 self.canvas.set_width(width);
                 self.canvas.set_height(height);
                 self.config.width = width;
                 self.config.height = height;
                 self.surface.configure(&self.device, &self.config);
+            }
+            if let Some((width, height)) = self.pending_render_size.take() {
                 self.depth = depth_view(&self.device, width, height);
+                self.postprocess.resize(&self.device, width, height);
+                self.render_size = (width, height);
+                self.previous_camera = None;
             }
         }
         let requested_limit = self.ui.frame_limit();
@@ -566,7 +691,14 @@ impl Viewer {
         let player_camera = self.ui.player_camera().map_err(js_error)?;
         // Lua may add visual-only camera motion without moving the player collider.
         let eye = player_camera.render_position();
-        let direction = player_camera.direction();
+        let direction = player_camera.render_direction();
+        let camera_up = player_camera.render_up();
+        let up = [
+            camera_up[0] * cos - camera_up[2] * sin,
+            camera_up[1],
+            camera_up[2] * cos + camera_up[0] * sin,
+        ];
+        let lens = self.ui.camera_lens().map_err(js_error)?;
         let target = [
             eye[0] + direction[0] * cos - direction[2] * sin,
             eye[1] + direction[1],
@@ -574,15 +706,15 @@ impl Viewer {
         ];
         let view = View {
             model: self.model,
-            view: camera::look_at(eye, target, [0.0, 1.0, 0.0]),
+            view: camera::look_at(eye, target, up),
             projection: camera::perspective(
                 player_camera.render_fov_degrees().to_radians(),
-                self.config.width as f32 / self.config.height as f32,
+                self.render_size.0 as f32 / self.render_size.1 as f32,
                 0.05,
                 self.far,
             ),
-            width: self.config.width,
-            height: self.config.height,
+            width: self.render_size.0,
+            height: self.render_size.1,
             near: 0.05,
             far: self.far,
         };
@@ -601,7 +733,7 @@ impl Viewer {
             .set_fixed_lod(level_lod.map(|lod| lod as usize))
             .map_err(js_error)?;
         self.stream
-            .set_focal_px(view.projection[5] * self.config.height as f32);
+            .set_focal_px(view.projection[5] * self.render_size.1 as f32);
         self.stream
             .select(local_eye, local_direction, Some(&clip), seconds as f32);
         // Keep menu input responsive even when gameplay has a very low frame cap.
@@ -640,16 +772,55 @@ impl Viewer {
             ..Default::default()
         });
         let mut encoder = self.device.create_command_encoder(&Default::default());
+        let units_per_meter = self.ui.player_rig().map_or(1.0, |rig| rig.units_per_meter);
+        let camera_direction = [0, 1, 2].map(|axis| target[axis] - eye[axis]);
+        let shutter_fraction = self
+            .previous_camera
+            .as_ref()
+            .and_then(|previous| {
+                let delta = now.checked_sub(previous.time)?.as_secs_f32();
+                let displacement = (0..3)
+                    .map(|i| (eye[i] - previous.position[i]).powi(2))
+                    .sum::<f32>()
+                    .sqrt();
+                let direction_dot: f32 = (0..3)
+                    .map(|i| camera_direction[i] * previous.direction[i])
+                    .sum();
+                (lens.motion_blur
+                    && !self.menu_visible
+                    && (0.001..=0.2).contains(&delta)
+                    && displacement <= 20.0 * units_per_meter
+                    && direction_dot > 0.5)
+                    .then_some((lens.shutter_seconds() / delta).clamp(0.0, 1.0))
+            })
+            .unwrap_or(0.0);
+        let previous_clip = self
+            .previous_camera
+            .as_ref()
+            .map_or(&clip, |previous| &previous.clip);
+        self.pool.set_camera_effects(
+            &self.queue,
+            [
+                lens.exposure_multiplier().log2(),
+                lens.focus_distance_m * units_per_meter,
+                lens.blur_scale_pixels(
+                    player_camera.render_fov_degrees(),
+                    self.render_size.1 as f32,
+                ),
+                shutter_fraction,
+            ],
+            previous_clip,
+        );
         self.pool
             .prepare(&self.queue, &mut encoder, &view, &view.model);
         {
             let mut pass = scene::color_pass(
                 &mut encoder,
-                &color,
+                self.postprocess.scene_view(),
                 &self.depth,
                 true,
                 true,
-                "CounterSplat canvas",
+                "CounterSplat HDR scene",
             );
             if let Some((snapshot, sky)) = selected_sky.as_ref().and_then(|snapshot| {
                 self.sky_assets
@@ -661,16 +832,56 @@ impl Viewer {
                     &mut pass,
                     &view.view,
                     &view.projection,
-                    snapshot.skybox.exposure,
+                    snapshot.skybox.exposure * lens.exposure_multiplier(),
                     snapshot.skybox.rotation_degrees,
                 );
             }
             self.pool.draw_color(&mut pass, &self.pipelines);
+            if !self.menu_visible {
+                self.tracers
+                    .draw(&self.queue, &mut pass, &view.view, &view.projection);
+            }
             if !self.menu_visible && self.ui.show_voxels() {
                 self.voxel_debug
                     .draw(&self.queue, &mut pass, &view.view, &view.projection);
             }
         }
+        self.first_person.encode(
+            &self.queue,
+            &mut encoder,
+            self.postprocess.scene_view(),
+            self.render_size,
+            self.first_person_settings,
+        );
+        // The render crate consumes a plain snapshot, never ECS or Lua state.
+        let grade = self
+            .ui
+            .image_correction()
+            .map(|grade| postprocess::Settings {
+                enabled: grade.enabled,
+                filmic: grade.filmic,
+                exposure_ev: grade.exposure_ev,
+                contrast: grade.contrast,
+                saturation: grade.saturation,
+                temperature: grade.temperature,
+                tint: grade.tint,
+                shadows: grade.shadows,
+                highlights: grade.highlights,
+                bloom_intensity: grade.bloom_intensity,
+                bloom_threshold: grade.bloom_threshold,
+                vignette: grade.vignette,
+                grain: grade.grain,
+                sharpness: grade.sharpness,
+            })
+            .unwrap_or_default();
+        self.postprocess.encode_to_viewport(
+            &self.queue,
+            &mut encoder,
+            &color,
+            grade,
+            (self.config.width, self.config.height),
+            self.viewport_scale,
+        );
         let pixels_per_point = (self.config.width as f32 / self.ui_css_width).clamp(0.25, 8.0);
         let ui_target = countersplat_ui_wgpu::UiTarget {
             device: &self.device,
@@ -687,7 +898,10 @@ impl Viewer {
             self.ui.draw(ui_target)
         }
         .map_err(js_error)?;
-        self.pending_gpu.store(true, Ordering::Release);
+        let permit = self
+            .gpu_frames
+            .try_acquire()
+            .ok_or_else(|| js_error("GPU frame limit reached"))?;
         self.queue.submit(
             ui_buffers
                 .into_iter()
@@ -703,14 +917,22 @@ impl Viewer {
         } else {
             self.ui.after_submit();
         }
-        let pending = Arc::clone(&self.pending_gpu);
-        self.queue.on_submitted_work_done(move || {
-            pending.store(false, Ordering::Release);
-        });
+        self.queue.on_submitted_work_done(move || drop(permit));
         self.queue.present(frame);
+        self.previous_camera = Some(PreviousCamera {
+            time: now,
+            clip,
+            position: eye,
+            direction: camera_direction,
+        });
         self.ui.observe_frame(ui_submitted_at).map_err(js_error)?;
         self.submitted_frames = self.submitted_frames.saturating_add(1);
         Ok(true)
+    }
+
+    /// Replace the script-provided projectile visual snapshot; no game rules live here.
+    pub fn set_projectile_traces(&mut self, segments: Vec<f32>) -> Result<(), JsValue> {
+        self.tracers.set(&self.queue, &segments).map_err(js_error)
     }
 
     /// Install a bounded, world-space snapshot of occupied voxel centers for the debug overlay.
@@ -776,12 +998,13 @@ impl Viewer {
         let sky_loaded = skybox.is_some_and(|sky| self.sky_assets.contains_key(&sky.asset));
         let timing = self.ui.frame_measurement();
         let history_seconds = self.ui.history_seconds();
-        serde_json::json!({ "sky_loaded": sky_loaded, "sky_enabled": skybox.is_some_and(|sky| sky.enabled),
+        let mut status = serde_json::json!({ "sky_loaded": sky_loaded, "sky_enabled": skybox.is_some_and(|sky| sky.enabled),
             "sky_exposure": skybox.map(|sky| sky.exposure), "sky_rotation": skybox.map(|sky| sky.rotation_degrees),
             "sky_asset": skybox.map(|sky| sky.asset.as_str()), "ui_history_seconds": history_seconds, "ui_frame_fps": timing.map(|value| value.fps), "ui_frame_ms": timing.map(|value| value.frame_time_ms),
             "ui_animate": ui_animate, "ui_sway": ui_sway, "ticks": self.total_ticks.to_string(), "submitted_frames": self.submitted_frames,
             "resident_splats": stats.resident_splats, "busy_skips": self.busy_skips,
-            "player_camera": self.ui.player_camera().ok(), "player_physics": self.ui.player_physics(), "player_rig": self.ui.player_rig(),
+            "player_camera": self.ui.player_camera().ok(), "camera_lens": self.ui.camera_lens().ok(),
+            "player_physics": self.ui.player_physics(), "player_rig": self.ui.player_rig(),
             "level_lod": self.ui.level_lod().ok().flatten(), "level_asset_count": self.ui.level_file_count(),
             "leaves_per_lod": stats.leaves_per_lod,
             "octree_nodes": stats.octree_nodes, "lod_pending": stats.leaves_pending + stats.leaves_empty,
@@ -793,7 +1016,13 @@ impl Viewer {
             "missed_deadlines": self.missed_deadlines.to_string(), "discarded_ms": self.discarded_time.as_secs_f64() * 1000.0,
             "target_fps": self.frame_limit,
             "presentation": "browser_vsync",
-            "gpu_pending": self.pending_gpu.load(Ordering::Acquire) }).to_string()
+            "gpu_pending": !self.gpu_frames.is_empty(),
+            "gpu_in_flight": self.gpu_frames.count(), "gpu_in_flight_limit": self.gpu_frames.limit() });
+        status["display"] = serde_json::json!({
+            "render": [self.render_size.0, self.render_size.1],
+            "viewport": [self.config.width, self.config.height],
+        });
+        status.to_string()
     }
 }
 
@@ -862,6 +1091,45 @@ impl VoxelCollisionData {
             .move_capsule(position, delta, radius, half_height)
             .map_err(js_error)?
             .to_vec())
+    }
+    /// Sweep a finite world-space segment against the worker-owned level octree.
+    /// An empty array means no hit; otherwise values are fraction, position and normal.
+    pub fn trace_segment(&self, start: Vec<f32>, end: Vec<f32>) -> Result<Vec<f32>, JsValue> {
+        let start = start
+            .try_into()
+            .map_err(|_| js_error("expected a 3D segment start"))?;
+        let end = end
+            .try_into()
+            .map_err(|_| js_error("expected a 3D segment end"))?;
+        Ok(
+            match self.inner.trace_segment(start, end).map_err(js_error)? {
+                Some(hit) => vec![
+                    hit.fraction,
+                    hit.position[0],
+                    hit.position[1],
+                    hit.position[2],
+                    hit.normal[0],
+                    hit.normal[1],
+                    hit.normal[2],
+                ],
+                None => Vec::new(),
+            },
+        )
+    }
+
+    /// Check a capsule volume without moving the player.
+    pub fn capsule_clear(
+        &self,
+        center: Vec<f32>,
+        radius: f32,
+        half_height: f32,
+    ) -> Result<bool, JsValue> {
+        let center: [f32; 3] = center
+            .try_into()
+            .map_err(|_| js_error("expected a 3D capsule center"))?;
+        self.inner
+            .capsule_clear(center, radius, half_height)
+            .map_err(js_error)
     }
     /// Probe voxel ground below a camera without moving the collider.
     pub fn ground_height(

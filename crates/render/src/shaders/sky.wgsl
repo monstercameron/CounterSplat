@@ -1,6 +1,6 @@
 // Environment background: a fullscreen triangle that samples the cubemap along each pixel's view ray.
 // The ray is built from the inverse projection and the view rotation (the view's transpose), so the sky
-// does not move with camera translation. Output is tone mapped; the sRGB target encodes it on write.
+// does not move with camera translation. Display and HDR targets use separate fragment entry points.
 
 struct SkyUniforms {
     inverse_projection: mat4x4f,
@@ -40,9 +40,8 @@ fn tone_map(x: vec3f) -> vec3f {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3f(0.0), vec3f(1.0));
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    let clip = sky.inverse_projection * vec4f(in.ndc, 1.0, 1.0);
+fn sky_radiance(ndc: vec2f) -> vec3f {
+    let clip = sky.inverse_projection * vec4f(ndc, 1.0, 1.0);
     let view_dir = clip.xyz / clip.w;
     // World direction = transpose(view rotation) × view_dir; the columns of `view` give the rows of the transpose.
     let world_dir = vec3f(dot(sky.view[0].xyz, view_dir), dot(sky.view[1].xyz, view_dir), dot(sky.view[2].xyz, view_dir));
@@ -51,6 +50,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
         world_dir.y,
         sky.rotation_sin * world_dir.x + sky.rotation_cos * world_dir.z
     );
-    let radiance = textureSample(environment, environment_sampler, normalize(rotated_dir)).rgb * sky.exposure;
-    return vec4f(tone_map(radiance), 1.0);
+    return textureSample(environment, environment_sampler, normalize(rotated_dir)).rgb * sky.exposure;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4f {
+    return vec4f(tone_map(sky_radiance(in.ndc)), 1.0);
+}
+
+@fragment
+fn fs_linear_hdr(in: VertexOutput) -> @location(0) vec4f {
+    // The half-float target must not overflow to infinity at high exposures.
+    return vec4f(min(sky_radiance(in.ndc), vec3f(65504.0)), 1.0);
 }

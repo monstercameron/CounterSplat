@@ -5,11 +5,14 @@
 
 pub mod camera;
 pub mod env;
+pub mod first_person;
 pub mod metrics;
+pub mod postprocess;
 pub mod presentation;
 pub mod scene;
 pub mod sort;
 pub mod stream;
+pub mod tracer;
 pub mod voxel_debug;
 pub mod worker_decode;
 
@@ -33,7 +36,10 @@ pub fn bind_group_entries(bindings: &[Binding]) -> BTreeMap<u32, Vec<wgpu::BindG
                 binding: b.binding,
                 // Keep the portable 12-uniform per-stage budget: these
                 // uniforms are consumed by one stage each.
-                visibility: if b.name == "sh_zero_reserved" {
+                visibility: if matches!(
+                    b.name.as_str(),
+                    "sh_zero_reserved" | "lens_effects" | "previous_clip_from_model"
+                ) {
                     wgpu::ShaderStages::VERTEX
                 } else {
                     wgpu::ShaderStages::VERTEX_FRAGMENT

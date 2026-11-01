@@ -32,7 +32,7 @@ class FakeGame {
 const game=new FakeGame(), worker=new FakeWorker();
 game.values.player.PhysicsBody.capsule_half_height=0.6;
 const runtime=new VoxelRuntime(game,new URL('http://localhost/assets/levels/1234abcd/'),()=>true,worker);
-const events=[], probes=[]; const lua={drain(name) { return name === 'physics.move' ? events.splice(0) : name === 'physics.ground_request' ? probes.splice(0) : []; }};
+const events=[], probes=[], clearances=[], traces=[]; const lua={drain(name) { return name === 'physics.move' ? events.splice(0) : name === 'physics.ground_request' ? probes.splice(0) : name === 'physics.clearance_request' ? clearances.splice(0) : name === 'physics.trace_request' ? traces.splice(0) : []; }};
 worker.send({type:'ready',resolution:0.05}); runtime.tick(lua,0);
 assert.equal(game.resources['voxel.capture_movement'],true);
 assert.equal(game.events.at(-1).name,'physics.ready');
@@ -49,6 +49,17 @@ worker.send({type:'error',operation:'ground',id:failedGround.id,message:'bad gro
 assert.equal(game.events.at(-2).name,'physics.ground_result');
 assert.equal(game.events.at(-2).value.height,null);
 assert.equal(game.events.at(-1).name,'physics.error');
+// Clearance queries remain script-owned, and failures conservatively report blocked.
+clearances.push({entity:'player',token:'stand-1',center:[0,1,0],radius:0.2,half_height:0.4});
+runtime.tick(lua,3); const clearance=worker.messages.findLast(value=>value.type==='clearance');
+assert.deepEqual(clearance.center,[0,1,0]); assert.equal(clearance.halfHeight,0.4);
+worker.send({type:'clearance',id:clearance.id,clear:true});
+assert.deepEqual(game.events.at(-1).value,{entity:'player',token:'stand-1',clear:true});
+clearances.push({entity:'player',token:'stand-2',center:[0,1,0],radius:0.2,half_height:0.4});
+runtime.tick(lua,4); const failedClearance=worker.messages.findLast(value=>value.type==='clearance');
+worker.send({type:'error',operation:'clearance',id:failedClearance.id,message:'query failed'});
+assert.equal(game.events.at(-2).name,'physics.clearance_result');
+assert.equal(game.events.at(-2).value.clear,false);
 // Two entities have independent collision radii, requests, results and contact state.
 game.values.player.PlayerCamera.position=[1,0,0];
 game.values.player.PhysicsBody.velocity=[1,0,0];
@@ -104,7 +115,25 @@ game.values.level.VoxelCollider.visible=true; runtime.tick(lua,500);
 const debug=worker.messages.findLast(value => value.type === 'debug');
 worker.send({type:'debug',id:debug.id,points:new Float32Array([0,0,0,1,1,1])});
 assert.equal(game.values.level.VoxelColliderState.visible_voxels,2);
-game.values.level.VoxelCollider.enabled=false; runtime.tick(lua,1000);
+// Segment traces return the exact worker result, and each token completes only once.
+traces.push({entity:'player',token:'shot-1',start:[0,0,0],finish:[10,0,0]});
+runtime.tick(lua,700); const ray=worker.messages.findLast(value=>value.type==='trace');
+assert.deepEqual(ray.start,[0,0,0]); assert.deepEqual(ray.end,[10,0,0]);
+worker.send({type:'trace',id:ray.id,hit:[0.2,2,0,0,-1,0,0]});
+assert.deepEqual(game.events.at(-1).value,{entity:'player',token:'shot-1',status:'hit',fraction:0.2,position:[2,0,0],normal:[-1,0,0]});
+const n=game.events.length; worker.send({type:'trace',id:ray.id,hit:[]}); assert.equal(game.events.length,n);
+traces.push({entity:'player',token:'shot-2',start:[0,0,0],finish:[1,0,0]});
+runtime.tick(lua,701); const failedRay=worker.messages.findLast(value=>value.type==='trace');
+worker.send({type:'error',operation:'trace',id:failedRay.id,message:'failed'});
+assert.equal(game.events.at(-1).value.status,'error');
+traces.push({entity:'player',token:'malformed',start:[0,0,0],finish:[1,0,0]});
+runtime.tick(lua,702); const malformed=worker.messages.findLast(value=>value.type==='trace');
+worker.send({type:'trace',id:malformed.id,hit:null});
+assert.equal(game.events.at(-1).value.status,'error');
+game.values.level.VoxelCollider.enabled=false;
+traces.push({entity:'player',token:'shot-3',start:[0,0,0],finish:[1,0,0]});
+runtime.tick(lua,1000);
+assert.equal(game.events.at(-1).value.status,'unavailable');
 assert.equal(game.resources['voxel.capture_movement'],false); assert.deepEqual(game.debug,[]);
 runtime.stop(); assert.equal(worker.terminated,true);
 console.log('Per-entity voxel collision coordination tests passed.');

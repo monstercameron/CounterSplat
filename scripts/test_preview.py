@@ -78,6 +78,44 @@ class PreviewPaths(unittest.TestCase):
             sky.unlink()
             self.assertEqual(declared_scene_resource(root, "assets/images/sky.hdr"), (True, None))
 
+    def test_resource_index_refreshes_after_scene_changes(self):
+        import json
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            scenes = root / "assets" / "scenes"
+            images = root / "assets" / "images"
+            scenes.mkdir(parents=True)
+            images.mkdir()
+            first, second = images / "a.webp", images / "new.webp"
+            first.write_bytes(b"a")
+            second.write_bytes(b"b")
+            path = scenes / "gameplay.json"
+            path.write_text(json.dumps({"resources":{"assets":{"a":{"uri":"../images/a.webp"}}}}), encoding="utf-8")
+            self.assertEqual(declared_scene_resource(root, "assets/images/a.webp"), (True, first))
+            path.write_text(json.dumps({"resources":{"assets":{"b":{"uri":"../images/new.webp"}}}}), encoding="utf-8")
+            self.assertEqual(declared_scene_resource(root, "assets/images/a.webp"), (False, None))
+            self.assertEqual(declared_scene_resource(root, "assets/images/new.webp"), (True, second))
+            path.unlink()
+            self.assertEqual(declared_scene_resource(root, "assets/images/new.webp"), (False, None))
+
+    def test_declared_symlink_must_stay_in_assets(self):
+        import json
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            scenes = root / "assets" / "scenes"
+            images = root / "assets" / "images"
+            scenes.mkdir(parents=True)
+            images.mkdir()
+            secret = root / "secret.txt"
+            secret.write_text("private", encoding="utf-8")
+            link = images / "frame.webp"
+            try:
+                link.symlink_to(secret)
+            except OSError:
+                self.skipTest("symbolic links are unavailable")
+            (scenes / "gameplay.json").write_text(json.dumps({"resources":{"assets":{"x":{"uri":"../images/frame.webp"}}}}), encoding="utf-8")
+            self.assertEqual(declared_scene_resource(root, "assets/images/frame.webp"), (True, None))
+
     def test_playable_scene_discovery_and_scene_path_confinement(self):
         import json
         with tempfile.TemporaryDirectory() as temporary:

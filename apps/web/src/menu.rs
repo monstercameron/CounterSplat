@@ -1,8 +1,8 @@
 //! A separately instantiated ECS menu scene, rendered over the paused game.
-use crate::ui_layout::UiLayout;
 use countersplat_ecs::{Entity, World};
 use countersplat_scene::SceneManifest;
 use countersplat_ui::{InputEvent, Rect, UiElement, UiEventKind};
+use countersplat_ui_ecs::UiLayout;
 use countersplat_ui_wgpu::{UiRenderer, UiTarget};
 
 pub struct MenuUi {

@@ -22,6 +22,7 @@ enum ScriptOperation {
         id: String,
     },
     Entities,
+    Hierarchy,
     Components {
         id: String,
     },
@@ -47,6 +48,10 @@ enum ScriptOperation {
     },
     GetResource {
         name: String,
+    },
+    GetResourceField {
+        name: String,
+        field: String,
     },
     SetResource {
         name: String,
@@ -98,6 +103,7 @@ impl World {
             S::Entities => O::Query {
                 components: Vec::new(),
             },
+            S::Hierarchy => O::Hierarchy,
             S::Components { id } => O::Components {
                 entity: Entity::from_str(&id)?,
             },
@@ -123,6 +129,7 @@ impl World {
                 name,
             },
             S::GetResource { name } => O::ReadResource { name },
+            S::GetResourceField { name, field } => O::ReadResourceField { name, field },
             S::SetResource { name, value } => O::WriteResource { name, value },
             S::RemoveResource { name } => O::RemoveResource { name },
             S::SetParent { child, parent } => O::SetParent {
@@ -199,6 +206,31 @@ mod tests {
         );
         assert_eq!(
             run(&mut world, json!({"op":"get_resource", "name":"missing"}))["found"],
+            false
+        );
+        run(
+            &mut world,
+            json!({"op":"set_resource", "name":"bindings", "value":{"player":id,"optional":null}}),
+        );
+        assert_eq!(
+            run(
+                &mut world,
+                json!({"op":"get_resource_field","name":"bindings","field":"player"})
+            )["value"],
+            id
+        );
+        assert_eq!(
+            run(
+                &mut world,
+                json!({"op":"get_resource_field","name":"bindings","field":"optional"})
+            ),
+            json!({"found":true,"value":null})
+        );
+        assert_eq!(
+            run(
+                &mut world,
+                json!({"op":"get_resource_field","name":"bindings","field":"missing"})
+            )["found"],
             false
         );
         run(

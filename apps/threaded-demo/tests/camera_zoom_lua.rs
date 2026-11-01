@@ -1,6 +1,6 @@
 //! Exercise the real Lua zoom script with the scene's camera and ECS controls.
 use countersplat_ecs::{Entity, World, WorldOperation, WorldOutcome};
-use countersplat_scene::{PlayerCamera, PlayerControls, SceneManifest};
+use countersplat_scene::{CameraLens, CameraZoomLens, PlayerCamera, PlayerControls, SceneManifest};
 use countersplat_scripting_lua::{LuaRuntime, ScriptOptions, WorldBridge};
 use countersplat_ui::{UiElement, UiEvent, UiEventKind};
 use serde_json::json;
@@ -221,4 +221,64 @@ fn zoom_settings_are_exposed_in_the_player_inspector() {
         2
     );
     f.lua.execute("local p=ecs.get_resource('scene.entities').player; assert(not pcall(function() engine.set_export(p,'zoom_factor',11) end))").unwrap();
+}
+
+#[test]
+fn zoom_blends_the_rendered_lens_without_overwriting_either_profile() {
+    let f = Fixture::new(&["camera_zoom.lua"]);
+    {
+        let mut world = f.world.borrow_mut();
+        let standard = world.get_mut::<CameraLens>(f.ids["player"]).unwrap();
+        standard.aperture_f_number = 4.0;
+        standard.iso = 100.0;
+        let zoom = &mut world.get_mut::<CameraZoomLens>(f.ids["player"]).unwrap().0;
+        zoom.aperture_f_number = 8.0;
+        zoom.iso = 400.0;
+        zoom.depth_of_field = true;
+    }
+    f.lua.run_systems(1.0 / 60.0).unwrap();
+    let render = || {
+        f.world
+            .borrow()
+            .get_dynamic_resource("camera.render_lens")
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(render()["aperture_f_number"], 4.0);
+    f.lua
+        .dispatch(
+            "input.mouse_button",
+            &json!({"button":"right","pressed":true,"gameplay":true}),
+        )
+        .unwrap();
+    f.lua.run_systems(0.02).unwrap();
+    let middle = render();
+    assert!(middle["aperture_f_number"].as_f64().unwrap() > 4.0);
+    assert!(middle["aperture_f_number"].as_f64().unwrap() < 8.0);
+    for _ in 0..100 {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert_eq!(render()["aperture_f_number"], 8.0);
+    assert_eq!(render()["iso"], 400.0);
+    assert_eq!(render()["depth_of_field"], true);
+    assert_eq!(
+        f.world
+            .borrow()
+            .get::<CameraLens>(f.ids["player"])
+            .unwrap()
+            .aperture_f_number,
+        4.0
+    );
+    assert_eq!(
+        f.world
+            .borrow()
+            .get::<CameraZoomLens>(f.ids["player"])
+            .unwrap()
+            .0
+            .aperture_f_number,
+        8.0
+    );
+    f.lua.dispatch("input.reset", &json!({})).unwrap();
+    assert_eq!(render()["aperture_f_number"], 4.0);
+    assert_eq!(render()["depth_of_field"], false);
 }

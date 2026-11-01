@@ -525,3 +525,63 @@ fn rapid_lod_changes_finish_the_active_crossfade_before_replacing_it() {
         "the new target follows after the fade"
     );
 }
+
+#[test]
+fn lens_exposure_focus_and_shutter_change_gpu_output() {
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        return;
+    };
+    let pipelines = Pipelines::new(&device, countersplat_render::COLOR_FORMAT).unwrap();
+    let scene = scene::build(&device, &queue, &pipelines, &single_splat(), 0.5).unwrap();
+    let view = View {
+        model: camera::IDENTITY,
+        view: camera::look_at([0.0, 0.0, 3.0], [0.0; 3], [0.0, 1.0, 0.0]),
+        projection: camera::perspective(60f32.to_radians(), 1.0, 0.05, 100.0),
+        width: 128,
+        height: 128,
+        near: 0.05,
+        far: 100.0,
+    };
+    let metrics = |pixels: &[u8]| {
+        let mut sum = 0.0f64;
+        let mut sx = 0.0f64;
+        let mut sy = 0.0f64;
+        let mut x2 = 0.0f64;
+        let mut y2 = 0.0f64;
+        for (index, pixel) in pixels.chunks_exact(4).enumerate() {
+            let weight = f64::from(pixel[0]) + f64::from(pixel[1]) + f64::from(pixel[2]);
+            let x = (index % 128) as f64;
+            let y = (index / 128) as f64;
+            sum += weight;
+            sx += weight * x;
+            sy += weight * y;
+            x2 += weight * x * x;
+            y2 += weight * y * y;
+        }
+        (
+            sum,
+            x2 / sum - (sx / sum).powi(2),
+            y2 / sum - (sy / sum).powi(2),
+        )
+    };
+    let render = || scene.render_rgba(&device, &queue, &pipelines, &view, None);
+    let baseline = metrics(&render());
+    scene.set_camera_effects(&queue, [1.0, 0.0, 0.0, 0.0], &camera::IDENTITY);
+    let brighter = metrics(&render());
+    assert!(
+        brighter.0 > baseline.0 * 1.1,
+        "exposure should brighten the rendered splat: {baseline:?} vs {brighter:?}"
+    );
+    scene.set_camera_effects(&queue, [0.0, 1.0, 20.0, 0.0], &camera::IDENTITY);
+    let defocused = metrics(&render());
+    assert!(
+        defocused.1 > baseline.1 && defocused.2 > baseline.2,
+        "out-of-focus splats should spread in both axes: {baseline:?} vs {defocused:?}"
+    );
+    let previous_view = camera::look_at([-1.0, 0.0, 3.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
+    let previous_clip = camera::mul(&view.projection, &previous_view);
+    scene.set_camera_effects(&queue, [0.0, 0.0, 0.0, 1.0], &previous_clip);
+    let motion = metrics(&render());
+    assert!(motion.1 > baseline.1 && motion.1 > motion.2,
+        "camera translation should spread the splat in the motion direction: {baseline:?} vs {motion:?}");
+}

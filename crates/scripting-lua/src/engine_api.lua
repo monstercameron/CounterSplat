@@ -1,6 +1,15 @@
 -- Script-neutral scene requests travel through the ordinary ECS event queue.
 -- The host validates and carries them out after the current script pass.
-engine = { scene = {}, physics = {} }
+engine = { scene = {}, physics = {}, input = {} }
+-- Treat either physical modifier as the default Shift/Ctrl binding. Explicit
+-- non-modifier rebindings still match exactly one physical key.
+function engine.input.is_down(held, code)
+    if type(held) ~= "table" or type(code) ~= "string" then return false end
+    if held[code] then return true end
+    if code == "ShiftLeft" or code == "ShiftRight" then return held.ShiftLeft == true or held.ShiftRight == true end
+    if code == "ControlLeft" or code == "ControlRight" then return held.ControlLeft == true or held.ControlRight == true end
+    return false
+end
 local function scene_id(id)
     assert(type(id) == "string" and #id > 0 and #id <= 256, "scene ID must be a nonempty string")
     return id
@@ -112,11 +121,37 @@ function engine.physics.probe_ground(entity, position, radius, max_drop, token)
     ecs.emit("physics.ground_request", {entity=entity, position=copy, radius=radius, max_drop=max_drop, token=token})
 end
 
+-- Trace a finite world-space segment on the collision owner. The result arrives
+-- as physics.trace_result with the same entity/token and status hit, miss,
+-- unavailable, or error. No callback crosses threads and Lua owns the response.
+function engine.physics.trace_segment(entity, start, finish, token)
+    assert(type(entity) == "string" and ecs.is_alive(entity), "trace needs a live entity")
+    assert(type(start) == "table" and #start == 3 and type(finish) == "table" and #finish == 3,
+        "trace needs two 3D points")
+    assert(type(token) == "string" and #token > 0 and #token <= 64, "invalid trace token")
+    local a, b = ecs.array(), ecs.array()
+    for i = 1, 3 do
+        assert(finite_number(start[i]) and finite_number(finish[i]), "invalid trace point")
+        a[i], b[i] = start[i], finish[i]
+    end
+    ecs.emit("physics.trace_request", {entity=entity, start=a, finish=b, token=token})
+end
+
+-- Check a capsule on the collision owner; results arrive as physics.clearance_result.
+function engine.physics.probe_capsule(entity, center, radius, half_height, token)
+    assert(type(entity) == "string" and ecs.is_alive(entity), "clearance probe needs a live entity")
+    assert(type(center) == "table" and #center == 3, "clearance probe needs a 3D center")
+    assert(finite_number(radius) and radius >= 0.05 and radius <= 1, "invalid capsule radius")
+    assert(finite_number(half_height) and half_height >= 0 and half_height <= 4, "invalid capsule height")
+    assert(type(token) == "string" and #token > 0 and #token <= 64, "invalid clearance token")
+    local copy = ecs.array()
+    for i = 1, 3 do assert(finite_number(center[i]), "invalid capsule center"); copy[i] = center[i] end
+    ecs.emit("physics.clearance_request", {entity=entity, center=copy, radius=radius, half_height=half_height, token=token})
+end
+
 -- Move a camera or transform and send the movement to the collision owner when
 -- one is ready. Hosts without a collision worker retain direct movement.
-function engine.physics.move(entity, delta)
-    assert(type(delta) == "table" and #delta == 3, "movement needs three components")
-    local name = assert(position_component(entity), "entity needs PlayerCamera or Transform")
+local function move_position(entity, delta, name, body)
     local pose = assert(ecs.get(entity, name))
     local applied = ecs.array()
     for i = 1, 3 do
@@ -129,10 +164,15 @@ function engine.physics.move(entity, delta)
     if applied[1] ~= 0 or applied[2] ~= 0 or applied[3] ~= 0 then
         motion_version[entity] = (motion_version[entity] or 0) + 1
     end
-    local body = ecs.get(entity, "PhysicsBody")
     if body and body.enabled and body.collision_enabled and ecs.get_resource("voxel.capture_movement") then
         ecs.emit("physics.move", {entity=entity, component=name, delta=applied})
     end
+end
+
+function engine.physics.move(entity, delta)
+    assert(type(delta) == "table" and #delta == 3, "movement needs three components")
+    local name = assert(position_component(entity), "entity needs PlayerCamera or Transform")
+    move_position(entity, delta, name, ecs.get(entity, "PhysicsBody"))
 end
 
 -- Run this once per fixed simulation tick. Bodies with disabled physics keep
@@ -142,7 +182,8 @@ function engine.physics.step(dt, skip_entity)
     assert(skip_entity == nil or type(skip_entity) == "string", "invalid skipped entity")
     for _, entity in ipairs(ecs.query({"PhysicsBody"})) do
         local body = ecs.get(entity, "PhysicsBody")
-        if entity ~= skip_entity and body and body.enabled and position_component(entity) then
+        local name = entity ~= skip_entity and body and body.enabled and position_component(entity)
+        if name then
             if body.gravity_enabled then
                 body.velocity[2] = math.max(-200, body.velocity[2] - body.gravity * dt)
                 ecs.set(entity, "PhysicsBody", body)
@@ -150,7 +191,7 @@ function engine.physics.step(dt, skip_entity)
             local delta = ecs.array()
             local moving = false
             for i = 1, 3 do delta[i] = body.velocity[i] * dt; moving = moving or delta[i] ~= 0 end
-            if moving then engine.physics.move(entity, delta) end
+            if moving then move_position(entity, delta, name, body) end
         end
     end
 end

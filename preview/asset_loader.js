@@ -25,8 +25,13 @@ export function localSceneUrl(filename, origin) {
 export function planScripts(scene, base, origin) {
   const scripts = scene.resources?.scripts || {};
   const explicit = scene.resources?.preview?.browser_scripts || [];
-  if (!Array.isArray(explicit) || explicit.some(id => !Object.hasOwn(scripts, id))) throw new Error('Invalid browser script references.');
-  return Object.entries(scripts).flatMap(([id, spec]) => {
+  if (!Array.isArray(explicit) || explicit.some(id => typeof id !== 'string' || !Object.hasOwn(scripts, id)))
+    throw new Error('Invalid browser script references.');
+  // Execute explicitly ordered scene scripts in that order. Autoload and other
+  // preloaded scripts not listed here follow in catalog order; no script runs twice.
+  const ordered = [...new Set([...explicit, ...Object.keys(scripts)])];
+  return ordered.flatMap(id => {
+    const spec = scripts[id];
     const execute = Boolean(spec.autoload) || explicit.includes(id);
     const policy = loadPolicy(spec.load);
     if (execute && policy !== 'preload') throw new Error(`Required script ${id} must be preloaded.`);

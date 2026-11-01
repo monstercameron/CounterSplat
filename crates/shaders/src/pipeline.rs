@@ -63,6 +63,68 @@ pub fn sog_v2_sh_overrides() -> Overrides {
         .replace("uniform means_maxs: vec3f;", "");
     o.insert("gsplatSogVS".into(), sog);
 
+    // Camera effects use two portable vertex uniforms: exposure/focus/shutter and
+    // the previous submitted clip transform. Defaults are zero and leave old hosts unchanged.
+    const STRUCTS: &str = include_str!("../shaders/gsplat/vert/gsplatStructs.wgsl");
+    const CORNER: &str = include_str!("../shaders/gsplat/vert/gsplatCorner.wgsl");
+    let structs = STRUCTS.replace("\r\n", "\n");
+    const CORNER_UV: &str = "    uv: half2,            // corner uv";
+    assert_eq!(
+        structs.matches(CORNER_UV).count(),
+        1,
+        "splat corner layout changed"
+    );
+    o.insert(
+        "gsplatStructsVS".into(),
+        structs.replace(
+            CORNER_UV,
+            "    uv: half2,            // corner uv\n    lensFactor: f32,",
+        ),
+    );
+    let corner = CORNER.replace("\r\n", "\n");
+    const VIEWPORT: &str = "uniform viewport_size: vec4f;";
+    assert_eq!(
+        corner.matches(VIEWPORT).count(),
+        1,
+        "splat lens uniform hook changed"
+    );
+    let corner = corner.replace(VIEWPORT, "uniform lens_effects: vec4f;\nuniform previous_clip_from_model: mat4x4f;\nuniform viewport_size: vec4f;");
+    const DIAGONAL: &str = "    let diagonal1 = cov[0][0] + 0.3;\n    let offDiagonal = cov[0][1];\n    let diagonal2 = cov[1][1] + 0.3;";
+    assert_eq!(
+        corner.matches(DIAGONAL).count(),
+        1,
+        "splat covariance hook changed"
+    );
+    let corner = corner.replace(DIAGONAL, r#"
+    var diagonal1 = cov[0][0] + 0.3;
+    var offDiagonal = cov[0][1];
+    var diagonal2 = cov[1][1] + 0.3;
+    corner.lensFactor = 1.0;
+    if (uniform.lens_effects.z > 0.0 || uniform.lens_effects.w > 0.0) {
+        let originalDet = max(diagonal1 * diagonal2 - offDiagonal * offDiagonal, 0.000001);
+        if (uniform.lens_effects.z > 0.0) {
+            let depth = max(-center.view.z, 0.001);
+            let diameter = min(24.0, uniform.lens_effects.z * abs(1.0 - uniform.lens_effects.y / depth));
+            let variance = diameter * diameter / 16.0;
+            diagonal1 += variance;
+            diagonal2 += variance;
+        }
+        if (uniform.lens_effects.w > 0.0) {
+            let oldClip = uniform.previous_clip_from_model * vec4f(center.modelCenterModified, 1.0);
+            if (oldClip.w > 0.001 && center.proj.w > 0.001) {
+                var motion = (center.proj.xy / center.proj.w - oldClip.xy / oldClip.w) *
+                    (0.5 * uniform.viewport_size.xy * uniform.lens_effects.w);
+                motion *= min(1.0, 32.0 / max(length(motion), 0.001));
+                diagonal1 += motion.x * motion.x / 12.0;
+                offDiagonal += motion.x * motion.y / 12.0;
+                diagonal2 += motion.y * motion.y / 12.0;
+            }
+        }
+        let blurredDet = max(diagonal1 * diagonal2 - offDiagonal * offDiagonal, originalDet);
+        corner.lensFactor = sqrt(clamp(originalDet / blurredDet, 0.0, 1.0));
+    }
+"#);
+    o.insert("gsplatCornerVS".into(), corner);
     o.insert("gsplatSogSHVS".into(), sog_sh_24bit_labels());
     // Streaming fade and optional LOD diagnostics are scene features, not game logic.
     o.insert(
@@ -140,6 +202,25 @@ varying gaussianUV: half2;
     var modelCenter: vec3f = getCenter();
 "#,
     );
+    // Lens blur expands the covariance and preserves its integrated opacity.
+    let vs = vs.replace(
+        "    var corner: SplatCorner;",
+        "    var corner: SplatCorner;\n    corner.lensFactor = 1.0;",
+    );
+    let vs = vs.replace(
+        "    // evaluate spherical harmonics",
+        "    clr.a = clr.a * half(corner.lensFactor);\n\n    // evaluate spherical harmonics",
+    );
+    // SOG color arrives in gamma space. Apply photographic exposure in linear
+    // light, then return to the source representation for the existing output path.
+    let vs = vs.replace("    // user hook operates in f32", r#"
+    #ifndef PREPASS_PASS
+        if (uniform.lens_effects.x != 0.0) {
+            let linearColor = pow(max(vec3f(clr.xyz), vec3f(0.0)), vec3f(2.2)) * exp2(uniform.lens_effects.x);
+            clr = half4(pow(linearColor, vec3f(1.0 / 2.2)), clr.a);
+        }
+    #endif
+    // user hook operates in f32"#);
     const READ_COLOR: &str = "var clr: half4 = half4(getColor());";
     assert!(vs.contains(READ_COLOR), "gsplat color hook changed");
     o.insert("gsplatVS".into(), vs.replace(READ_COLOR, "#ifdef PREPASS_PASS\n var clr: half4 = half4(0.0, 0.0, 0.0, textureLoad(sh0, splat.uv, 0).w);\n#else\n var clr: half4 = half4(getColor());\n#endif"));

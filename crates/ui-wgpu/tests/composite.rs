@@ -68,6 +68,7 @@ fn draws_shapes_and_fonts_over_the_scene_without_clearing_it() {
         id: id.into(),
         rect,
         clip: rect,
+        scroll_parent: None,
         drag_bounds: rect,
         drag_correction: [0.0, 0.0],
         z: 0,

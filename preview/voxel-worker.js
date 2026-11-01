@@ -22,6 +22,12 @@ self.onmessage = async ({data}) => {
       let position = new Float32Array(data.position);
       for (const delta of data.deltas) position = collider.move_capsule(position, new Float32Array(delta), data.radius, data.halfHeight ?? 0);
       self.postMessage({type:'move', id:data.id, position:Array.from(position)});
+    } else if (data.type === 'trace' && collider) {
+      const hit = collider.trace_segment(new Float32Array(data.start), new Float32Array(data.end));
+      self.postMessage({type:'trace', id:data.id, hit:Array.from(hit)});
+    } else if (data.type === 'clearance' && collider) {
+      const clear = collider.capsule_clear(new Float32Array(data.center), data.radius, data.halfHeight);
+      self.postMessage({type:'clearance', id:data.id, clear});
     } else if (data.type === 'ground' && collider) {
       const height = collider.ground_height(new Float32Array(data.position), data.radius, data.maxDrop);
       self.postMessage({type:'ground', id:data.id, height});

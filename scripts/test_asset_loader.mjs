@@ -10,6 +10,12 @@ const scene = {resources:{scripts:{main:{language:'lua',uri:'../scripts/main.lua
   optional:{language:'lua',uri:'../scripts/optional.lua',load:'streamable'}}}};
 assert.deepEqual(planScripts(scene, base, base.origin).map(s => s.id), ['main']);
 assert.throws(() => planScripts({resources:{scripts:{bad:{language:'lua',uri:'x',load:'streamable',autoload:true}}}}, base, base.origin));
+// The scene's explicit order controls execution even when catalog keys differ.
+const orderedScene = {resources:{scripts:{late:{language:'lua',uri:'late.lua',load:'preload'},
+  early:{language:'lua',uri:'early.lua',load:'preload'}, auto:{language:'lua',uri:'auto.lua',load:'preload',autoload:true}},
+  preview:{browser_scripts:['early','late','early']}}};
+assert.deepEqual(planScripts(orderedScene,base,base.origin).filter(item=>item.execute).map(item=>item.id), ['early','late','auto']);
+
 const reports = [];
 const tracker = new LoadingProgress((...args) => reports.push(args));
 tracker.update('Metadata',0.1,0.5,1,2);

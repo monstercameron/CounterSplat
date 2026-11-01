@@ -127,7 +127,9 @@ scene fetching, SOG decoding, and voxel collision use browser workers, and the r
 layer draws controls and a submitted-frame FPS / frame-time counter over the scan. A scene ECS skybox layer draws
 behind the splats; its HDR decode runs on a separate worker. Use the sky panel to change exposure or rotation, or
 drop a local Radiance `.hdr` file onto the canvas to replace the example. A WebGPU-capable
-browser and a local level catalog under `assets/levels` are required. Scan data is distributed separately.
+browser and a local level catalog under `assets/levels` are required. Media, level data, and the catalog
+are Git-ignored and must be supplied locally; see [development splats](assets/levels/README.md) and
+[first-person assets](docs/first-person.md).
 
 ```powershell
 # Once, if the wasm target and matching binding tool are not installed:

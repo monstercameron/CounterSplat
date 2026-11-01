@@ -31,7 +31,8 @@ Scene assets and scripts in `assets/scenes/*.json` declare their loading policy:
 `load` defaults to `preload` for older scene files. Preloaded scene assets and scripts are fetched before gameplay;
 preloaded HDR skies are also decoded and installed. Preloaded source bytes are retained for the gameplay session.
 The browser executes autoload scripts and scripts listed in `resources.preview.browser_scripts`; both must be marked
-`preload`. A streamable optional script is not executed automatically. The current host starts streamable HDR skies
+`preload`. The `browser_scripts` list determines execution order; additional autoload scripts follow in catalog
+order. A streamable optional script is not executed automatically. The current host starts streamable HDR skies
 and splat chunks asynchronously; other asset kinds need their subsystem to implement on-demand loading and decoding.
 
 ## Level resources

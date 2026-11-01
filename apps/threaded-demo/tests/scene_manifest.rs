@@ -52,6 +52,97 @@ fn project_manifest_instantiates_ui_and_drives_lua_on_the_scene_world() {
 }
 
 #[test]
+fn gameplay_scene_authors_ownership_without_moving_ui_panels() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let mut world = World::new();
+    countersplat_ui_ecs::register(&mut world).unwrap();
+    countersplat_scene_ecs::register(&mut world).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world,
+        &manifest,
+        &["ui", "player", "level", "scene"],
+    )
+    .unwrap();
+    for (child, parent) in [
+        ("camera_controller", "player"),
+        ("first_person", "player"),
+        ("skybox", "scene_visuals"),
+        ("image_correction", "scene_visuals"),
+        ("editor_ui", "game_ui"),
+        ("hud_ui", "game_ui"),
+        ("player_ui", "game_ui"),
+        ("scene_ui", "game_ui"),
+        ("ecs_panel", "editor_ui"),
+        ("entity_inspector", "editor_ui"),
+        ("stats_panel", "editor_ui"),
+        ("camera_panel", "player_ui"),
+        ("controls_panel", "player_ui"),
+        ("level_panel", "scene_ui"),
+        ("sky_panel", "scene_ui"),
+        ("image_panel", "scene_ui"),
+        ("scene_panel", "scene_ui"),
+        ("weapon_hud", "hud_ui"),
+        ("weapon_impact_notice", "hud_ui"),
+        ("back_to_levels", "hud_ui"),
+        ("ecs_list", "ecs_panel"),
+        ("camera_fov", "camera_panel"),
+    ] {
+        assert_eq!(
+            world.parent(ids[child]),
+            Some(ids[parent]),
+            "{child} must belong to {parent}"
+        );
+    }
+    for root_id in ["player", "active_level", "scene_visuals", "game_ui"] {
+        assert_eq!(world.parent(ids[root_id]), None);
+    }
+
+    // Non-UI grouping entities organize ownership but do not create a new
+    // coordinate space or change panel visibility.
+    let viewport = countersplat_ui::Rect::new(0.0, 0.0, 1800.0, 1200.0);
+    let frame = countersplat_ui_ecs::extract(&world, viewport).unwrap();
+    for id in [
+        "scene_panel",
+        "stats_panel",
+        "sky_panel",
+        "controls_panel",
+        "level_panel",
+        "ecs_panel",
+        "camera_panel",
+        "image_panel",
+        "back_to_levels",
+        "weapon_hud",
+        "weapon_impact_notice",
+    ] {
+        let element = world.get::<countersplat_ui::UiElement>(ids[id]).unwrap();
+        if !element.visible {
+            continue;
+        }
+        let mut rect = element.rect;
+        if let Some(panel) = &element.collapsible {
+            if panel.collapsed {
+                rect.height = panel.header_height;
+            }
+        }
+        let mut expected = countersplat_ui::place(viewport, rect, element.anchor);
+        expected.x += element.drag_offset[0];
+        expected.y += element.drag_offset[1];
+        let node = frame
+            .nodes
+            .iter()
+            .find(|node| node.id == ids[id].to_string())
+            .expect(id);
+        assert_eq!(
+            node.rect, expected,
+            "{id} should retain its viewport placement"
+        );
+    }
+}
+
+#[test]
 fn selector_manifest_instantiates_clickable_scene_controls() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let manifest = SceneManifest::from_json(

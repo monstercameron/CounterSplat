@@ -8,7 +8,7 @@ export class VoxelRuntime {
     if (!this.level || !this.player) throw new Error('Voxel level or player entity is missing.');
     this.state = 'loading'; this.resolution = null; this.count = 0;
     this.capture = false; this.visible = false; this.bodies = new Map(); this.requests = new Map();
-    this.sequence = 0; this.groundRequests = new Map(); this.debugPending = null; this.debugAt = -Infinity; this.debugPosition = null;
+    this.sequence = 0; this.groundRequests = new Map(); this.clearanceRequests = new Map(); this.traceRequests = new Map(); this.debugPending = null; this.debugAt = -Infinity; this.debugPosition = null;
     this.setState('loading');
     worker.onmessage = ({data}) => this.onMessage(data);
     worker.onerror = event => this.fail(event.message || 'Voxel worker failed.');
@@ -48,18 +48,26 @@ export class VoxelRuntime {
   releaseAll(apply) { for (const [id, entry] of this.bodies) this.release(id, entry, apply); }
   suspend() {
     if (!this.isCurrent()) return;
-    this.setCapture(false); this.releaseAll(false); this.groundRequests.clear();
+    this.setCapture(false); this.releaseAll(false); this.groundRequests.clear(); this.clearanceRequests.clear();
   }
   stop() {
     this.worker.terminate();
-    this.bodies.clear(); this.requests.clear(); this.groundRequests.clear(); this.debugPending = null;
+    this.bodies.clear(); this.requests.clear(); this.groundRequests.clear(); this.clearanceRequests.clear(); this.traceRequests.clear(); this.debugPending = null;
   }
   fail(error) {
     if (!this.isCurrent()) return;
     this.setCapture(false); this.releaseAll(true);
+    for (const request of this.traceRequests.values()) this.traceResult(request, 'error');
+    this.traceRequests.clear();
     this.visible = false; this.game.clear_voxel_debug(); this.count = 0;
     this.setState('error', error);
     console.warn('Voxel collision:', error);
+  }
+  traceResult(request, status, hit = null) {
+    if (!request || !this.alive(request.entity)) return;
+    const value = {entity:request.entity, token:request.token, status};
+    if (hit) { value.fraction=hit[0]; value.position=hit.slice(1,4); value.normal=hit.slice(4,7); }
+    this.call({op:'emit', name:'physics.trace_result', value});
   }
   onMessage(data) {
     if (!this.isCurrent()) return;
@@ -77,6 +85,15 @@ export class VoxelRuntime {
             this.call({op:'emit', name:'physics.ground_result', value:{entity:request.entity, token:request.token, height:null}});
             this.call({op:'emit', name:'physics.error', value:{entity:request.entity, message:String(data.message).slice(0,256)}});
           }
+        } else if (data.operation === 'clearance') {
+          const request = this.clearanceRequests.get(data.id); this.clearanceRequests.delete(data.id);
+          if (request && this.alive(request.entity)) {
+            this.call({op:'emit', name:'physics.clearance_result', value:{entity:request.entity, token:request.token, clear:false}});
+            this.call({op:'emit', name:'physics.error', value:{entity:request.entity, message:String(data.message).slice(0,256)}});
+          }
+        } else if (data.operation === 'trace') {
+          const request = this.traceRequests.get(data.id); this.traceRequests.delete(data.id);
+          this.traceResult(request, 'error');
         } else if (data.operation === 'debug') {
           this.debugPending = null; this.debugAt = performance.now();
           console.warn('Voxel debug view:', data.message);
@@ -89,6 +106,18 @@ export class VoxelRuntime {
               value:{entity:id, message:String(data.message).slice(0,256)}});
           }
         } else this.fail(data.message);
+      } else if (data.type === 'trace') {
+        const request = this.traceRequests.get(data.id); this.traceRequests.delete(data.id);
+        const hit = data.hit;
+        if (!Array.isArray(hit)) this.traceResult(request, 'error');
+        else if (hit.length === 0) this.traceResult(request, 'miss');
+        else if (hit.length === 7 && hit.every(Number.isFinite) && hit[0] >= 0 && hit[0] <= 1)
+          this.traceResult(request, 'hit', hit);
+        else this.traceResult(request, 'error');
+      } else if (data.type === 'clearance') {
+        const request = this.clearanceRequests.get(data.id); this.clearanceRequests.delete(data.id);
+        if (request && this.alive(request.entity))
+          this.call({op:'emit', name:'physics.clearance_result', value:{entity:request.entity, token:request.token, clear:data.clear === true}});
       } else if (data.type === 'ground') {
         const request = this.groundRequests.get(data.id); this.groundRequests.delete(data.id);
         if (request && this.alive(request.entity)) {
@@ -152,6 +181,20 @@ export class VoxelRuntime {
         entry.queue.unshift(...entry.pending.deltas); entry.pending = null;
       }
     }
+    // Each request gets an explicit completion, even if collision is disabled or busy.
+    // The Lua system owns projectile time, responses, and any resulting damage.
+    for (const trace of runtime.drain('physics.trace_request')) {
+      const request = {entity:trace.entity, token:trace.token};
+      if (typeof trace.entity !== 'string' || !this.alive(trace.entity) ||
+          typeof trace.token !== 'string' || trace.token.length < 1 || trace.token.length > 64) continue;
+      const point = value => Array.isArray(value) && value.length === 3 &&
+        value.every(number => Number.isFinite(number) && Math.abs(number) <= 10_000_000);
+      if (!point(trace.start) || !point(trace.finish)) { this.traceResult(request, 'error'); continue; }
+      if (!capture) { this.traceResult(request, 'unavailable'); continue; }
+      if (this.traceRequests.size >= 128) { this.traceResult(request, 'error'); continue; }
+      const id = ++this.sequence; this.traceRequests.set(id, request);
+      this.worker.postMessage({type:'trace', id, start:trace.start, end:trace.finish});
+    }
     // Ground requests are script-authored; the worker only supplies geometry.
     for (const probe of runtime.drain('physics.ground_request')) {
       if (this.state !== 'ready' || this.groundRequests.size >= 16 || typeof probe.entity !== 'string' ||
@@ -161,6 +204,17 @@ export class VoxelRuntime {
           !Number.isFinite(probe.max_drop) || probe.max_drop < 0.05 || probe.max_drop > 16) continue;
       const id = ++this.sequence; this.groundRequests.set(id, {entity:probe.entity, token:probe.token});
       this.worker.postMessage({type:'ground', id, position:probe.position, radius:probe.radius, maxDrop:probe.max_drop});
+    }
+    // The script decides what volume to check and what the result means.
+    for (const probe of runtime.drain('physics.clearance_request')) {
+      if (!capture || this.clearanceRequests.size >= 16 || typeof probe.entity !== 'string' ||
+          !this.alive(probe.entity) || typeof probe.token !== 'string' || probe.token.length < 1 || probe.token.length > 64 ||
+          !Array.isArray(probe.center) || probe.center.length !== 3 ||
+          !probe.center.every(value => Number.isFinite(value) && Math.abs(value) <= 10_000_000) ||
+          !Number.isFinite(probe.radius) || probe.radius < 0.05 || probe.radius > 1 ||
+          !Number.isFinite(probe.half_height) || probe.half_height < 0 || probe.half_height > 4) continue;
+      const id = ++this.sequence; this.clearanceRequests.set(id, {entity:probe.entity, token:probe.token});
+      this.worker.postMessage({type:'clearance', id, center:probe.center, radius:probe.radius, halfHeight:probe.half_height});
     }
     const grouped = new Map();
     for (const move of runtime.drain('physics.move')) {

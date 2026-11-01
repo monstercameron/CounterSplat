@@ -1,6 +1,7 @@
 //! Script-neutral ECS integration for scene layers.
 //!
 //! The ECS owner extracts owned snapshots; GPU resources and asset I/O remain in the host.
+mod image_correction;
 mod level;
 mod loading;
 mod physics;
@@ -39,12 +40,16 @@ impl ComponentAdapter for SkyboxAdapter {
 /// Expose validated `Skybox` reads/writes through the generic ECS and Lua bridge.
 pub fn register(world: &mut World) -> Result<(), String> {
     world.register_component_adapter(SKYBOX_COMPONENT, SkyboxAdapter)?;
+    image_correction::register(world)?;
     player::register(world)?;
     physics::register(world)?;
     level::register(world)?;
     voxel::register(world)?;
     loading::register(world)
 }
+
+/// Select the highest-priority enabled, valid scene color grade.
+pub use image_correction::extract as extract_image_correction;
 
 /// Create a validated skybox entity on the world owner.
 pub fn spawn(world: &mut World, skybox: Skybox) -> Result<Entity, String> {

@@ -346,6 +346,9 @@ fn install_ecs_api(
             _ => Err(unexpected()),
         },
     )?;
+    bind(lua, &api, bridge, "hierarchy", |lua, bridge, ()| {
+        maybe_value(lua, request(bridge, WorldOperation::Hierarchy)?)
+    })?;
     bind(
         lua,
         &api,
@@ -473,6 +476,18 @@ fn install_ecs_api(
         "get_resource",
         |lua, bridge, name: String| {
             maybe_value(lua, request(bridge, WorldOperation::ReadResource { name })?)
+        },
+    )?;
+    bind(
+        lua,
+        &api,
+        bridge,
+        "get_resource_field",
+        |lua, bridge, (name, field): (String, String)| {
+            maybe_value(
+                lua,
+                request(bridge, WorldOperation::ReadResourceField { name, field })?,
+            )
         },
     )?;
     bind(

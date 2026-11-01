@@ -206,7 +206,7 @@ pub fn cubemap_rgba16f(cubemap: &Cubemap) -> Vec<u8> {
     bytes
 }
 
-/// The GPU sky: a fullscreen pass that samples the cubemap along each pixel's view ray and tone maps it.
+/// The GPU sky: samples the cubemap along each pixel's view ray. HDR targets receive linear radiance; display targets use the legacy tone map.
 pub struct Sky {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
@@ -373,6 +373,7 @@ impl Sky {
             ],
         });
 
+        // HDR hosts retain radiance for post-processing; display hosts tone-map directly.
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sky"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sky.wgsl").into()),
@@ -393,7 +394,11 @@ impl Sky {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &module,
-                entry_point: Some("fs_main"),
+                entry_point: Some(if color_format == crate::postprocess::SCENE_FORMAT {
+                    "fs_linear_hdr"
+                } else {
+                    "fs_main"
+                }),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,

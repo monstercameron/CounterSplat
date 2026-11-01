@@ -80,8 +80,15 @@ pub enum WorldOperation {
     Query {
         components: Vec<String>,
     },
+    /// Return only live entity IDs and parents, without copying component or resource data.
+    Hierarchy,
     ReadResource {
         name: String,
+    },
+    /// Read one object field without copying the rest of a large resource.
+    ReadResourceField {
+        name: String,
+        field: String,
     },
     WriteResource {
         name: String,
@@ -204,7 +211,24 @@ impl World {
                 let names = components.iter().map(String::as_str).collect::<Vec<_>>();
                 Ok(Out::Entities(self.query_components(&names)?))
             }
+            Op::Hierarchy => Ok(Out::Value(Some(serde_json::Value::Array(
+                self.entities()
+                    .into_iter()
+                    .map(|id| {
+                        serde_json::json!({
+                            "id": id.to_string(),
+                            "parent": self.parent(id).map(|parent| parent.to_string()),
+                        })
+                    })
+                    .collect(),
+            )))),
             Op::ReadResource { name } => Ok(Out::Value(self.get_dynamic_resource(&name).cloned())),
+            Op::ReadResourceField { name, field } => Ok(Out::Value(
+                self.get_dynamic_resource(&name)
+                    .and_then(serde_json::Value::as_object)
+                    .and_then(|object| object.get(&field))
+                    .cloned(),
+            )),
             Op::WriteResource { name, value } => {
                 self.set_dynamic_resource(&name, value);
                 Ok(Out::Applied)

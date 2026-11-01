@@ -1,15 +1,16 @@
 //! Example ECS-owned in-scene UI. Game behavior is kept in this host, not in the UI crates.
 
-use crate::ui_layout::UiLayout;
 use countersplat_ecs::{Entity, World};
 use countersplat_scene::{
-    LevelAssets, LevelSettings, PhysicsBody, PlayerCamera, PlayerControls, PlayerRig,
-    SceneManifest, Skybox, SkyboxSnapshot, VoxelCollider, VoxelColliderState, VoxelStatus,
+    CameraController, CameraLens, CameraZoomLens, ImageCorrection, LevelAssets, LevelSettings,
+    PhysicsBody, PlayerCamera, PlayerControls, PlayerRig, SceneManifest, Skybox, SkyboxSnapshot,
+    VoxelCollider, VoxelColliderState, VoxelStatus,
 };
 use countersplat_ui::{
     FrameCounter, FrameHistory, FrameMeasurement, FrameMeter, FrameUpdate, InputEvent, Rect,
     UiElement, UiEventKind, Widget,
 };
+use countersplat_ui_ecs::UiLayout;
 use countersplat_ui_ecs::{apply_events, extract, register, update_frame_counters};
 use countersplat_ui_wgpu::{UiRenderer, UiTarget};
 use std::time::Duration;
@@ -153,6 +154,48 @@ impl SceneUi {
         if !world.has::<Skybox>(skybox) {
             return Err("configured skybox entity needs Skybox".into());
         }
+        if let Some(entity) = entities.get("image_correction") {
+            let grade = world
+                .get::<ImageCorrection>(*entity)
+                .ok_or("image_correction entity needs ImageCorrection")?;
+            world.set_dynamic_resource(
+                "image.default_correction",
+                serde_json::to_value(grade).map_err(|error| error.to_string())?,
+            );
+        }
+        if let Some(entity) = entities.get("camera_controller") {
+            let controller = world
+                .get::<CameraController>(*entity)
+                .ok_or("camera_controller entity needs CameraController")?;
+            world.set_dynamic_resource(
+                "camera.default_controller",
+                serde_json::to_value(controller).map_err(|error| error.to_string())?,
+            );
+        }
+        if !world.has::<CameraLens>(player) {
+            world.insert(player, CameraLens::default())?;
+        }
+        let default_lens = serde_json::to_value(
+            world
+                .get::<CameraLens>(player)
+                .expect("inserted camera lens"),
+        )
+        .map_err(|error| error.to_string())?;
+        world.set_dynamic_resource("camera.default_lens", default_lens);
+        if !world.has::<CameraZoomLens>(player) {
+            let standard = world
+                .get::<CameraLens>(player)
+                .expect("inserted camera lens")
+                .clone();
+            world.insert(player, CameraZoomLens(standard))?;
+        }
+        let default_zoom = serde_json::to_value(
+            world
+                .get::<CameraZoomLens>(player)
+                .expect("inserted zoom lens"),
+        )
+        .map_err(|error| error.to_string())?;
+        world.set_dynamic_resource("camera.default_zoom_lens", default_zoom);
         if !world.has::<PlayerRig>(player) {
             world.insert(player, PlayerRig::default())?;
         }
@@ -282,25 +325,15 @@ impl SceneUi {
             .map_or(0, |assets| assets.files.len())
     }
 
-    /// Seed the player pose from the selected level and publish the reset position to Lua.
-    pub fn set_camera_spawn(
-        &mut self,
-        eye: [f32; 3],
-        target: [f32; 3],
-        fov: f32,
-        use_level_camera: bool,
-    ) -> Result<(), String> {
-        let camera = if use_level_camera {
-            PlayerCamera::from_view(eye, target, fov).map_err(str::to_owned)?
-        } else {
-            self.player_camera()?
+    /// Publish a validated level-camera candidate without choosing or changing
+    /// the player pose. Lua owns the spawn choice and reset position.
+    pub fn publish_level_view(&mut self, eye: [f32; 3], target: [f32; 3], fov: f32) {
+        let candidate = match PlayerCamera::from_view(eye, target, fov) {
+            Ok(camera) => serde_json::json!({ "camera": camera }),
+            Err(error) => serde_json::json!({ "error": error }),
         };
-        self.world.insert(self.player, camera.clone())?;
-        self.world.set_dynamic_resource(
-            "player.spawn_camera",
-            serde_json::to_value(camera).map_err(|e| e.to_string())?,
-        );
-        Ok(())
+        self.world
+            .set_dynamic_resource("player.level_view", candidate);
     }
     pub fn player_camera(&self) -> Result<PlayerCamera, String> {
         let camera = self
@@ -309,6 +342,27 @@ impl SceneUi {
             .ok_or("player camera was removed")?;
         camera.validate().map_err(str::to_owned)?;
         Ok(camera.clone())
+    }
+    pub fn camera_lens(&self) -> Result<CameraLens, String> {
+        // Lua owns transitions between profiles. Ignore malformed transient
+        // values and fall back to the validated standard lens.
+        if let Some(value) = self.world.get_dynamic_resource("camera.render_lens") {
+            if let Ok(lens) = serde_json::from_value::<CameraLens>(value.clone()) {
+                if lens.validate().is_ok() {
+                    return Ok(lens);
+                }
+            }
+        }
+        let lens = self
+            .world
+            .get::<CameraLens>(self.player)
+            .cloned()
+            .unwrap_or_default();
+        lens.validate().map_err(str::to_owned)?;
+        Ok(lens)
+    }
+    pub fn image_correction(&self) -> Option<ImageCorrection> {
+        countersplat_scene_ecs::extract_image_correction(&self.world)
     }
     pub fn skybox(&self) -> Option<&Skybox> {
         self.world.get::<Skybox>(self.skybox)
@@ -497,7 +551,10 @@ impl SceneUi {
     }
     fn handle_actions(&mut self, events: Vec<countersplat_ui::UiEvent>) {
         for event in apply_events(&mut self.world, events) {
-            if matches!(event.kind, UiEventKind::MovedBy(_)) {
+            if matches!(
+                event.kind,
+                UiEventKind::MovedBy(_) | UiEventKind::ResizedTo(_)
+            ) {
                 self.layout.changed();
             }
             if event.id == self.sky_visible.to_string() {

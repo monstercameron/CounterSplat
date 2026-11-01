@@ -2,6 +2,24 @@
 -- ordered input events and runs this system at the engine's fixed simulation tick.
 local ids = assert(ecs.get_resource("scene.entities"), "gameplay entities are missing")
 local player = assert(ids.player, "player entity is missing")
+
+-- The host provides a validated level-camera candidate; the player script owns
+-- the spawn policy and reset pose. Other hosts may omit the optional candidate
+-- and provide a spawn directly, or let the authored PlayerCamera be the spawn.
+local preview = ecs.get_resource("preview") or {}
+local spawn_source = type(preview.player_spawn) == "string" and preview.player_spawn or "level"
+assert(spawn_source == "level" or spawn_source == "scene", "preview.player_spawn must be level or scene")
+local level_view = ecs.get_resource("player.level_view")
+if spawn_source == "level" and type(level_view) == "table" then
+    local candidate = level_view.camera
+    assert(type(candidate) == "table" and candidate ~= ecs.null,
+        "invalid level player camera: " .. tostring(level_view.error or "missing camera"))
+    ecs.set(player, "PlayerCamera", candidate)
+    ecs.set_resource("player.spawn_camera", candidate)
+elseif spawn_source == "scene" or not ecs.get_resource("player.spawn_camera") then
+    ecs.set_resource("player.spawn_camera", assert(ecs.get(player, "PlayerCamera")))
+end
+
 local held = {}
 -- The free-fly player can make one ballistic hop at a time. The physics host
 -- still resolves every movement intent against the active level's voxels.
@@ -11,6 +29,7 @@ local sliders = { [ids.controls_speed] = "move_speed", [ids.controls_sprint] = "
 local rig_sliders = { [ids.controls_eye_height] = "eye_height_m", [ids.controls_player_scale] = "units_per_meter" }
 local checks = { [ids.controls_enabled] = "enabled", [ids.controls_mouse] = "mouse_look", [ids.controls_invert] = "invert_y" }
 local keys = { [ids.key_forward] = "forward", [ids.key_backward] = "backward", [ids.key_left] = "left", [ids.key_right] = "right", [ids.key_up] = "up", [ids.key_down] = "down", [ids.key_sprint] = "sprint", [ids.key_jump] = "jump" }
+if ids.key_crouch then keys[ids.key_crouch] = "crouch" end
 
 local function notice(text)
     local element = ecs.get(ids.controls_notice, "UiElement")
@@ -78,6 +97,9 @@ local function apply_rig(preserve_feet)
     if last_rig and last_rig.eye_height_m == rig.eye_height_m and
         last_rig.radius_m == rig.radius_m and last_rig.head_clearance_m == rig.head_clearance_m and
         last_rig.units_per_meter == rig.units_per_meter then return end
+    local posture = ecs.get(player, "PlayerPosture")
+    -- Defer size/scale edits while crouched; standing probes the new dimensions.
+    if last_rig and posture and posture.crouched then return end
     local body = assert(ecs.get(player, "PhysicsBody"), "player physics is missing")
     local old_height = body.radius + (body.capsule_half_height or 0) - body.collision_offset_y
     local new_height = rig.eye_height_m * rig.units_per_meter
@@ -99,7 +121,9 @@ local function apply_rig(preserve_feet)
         ecs.set(player, "PlayerCamera", camera)
         local spawn = ecs.get_resource("player.spawn_camera")
         if spawn then
-            spawn.position[2] = math.max(-10000000, math.min(10000000, spawn.position[2] + height_change))
+            -- Spawn is standing even if a size edit was deferred during crouch.
+            local spawn_change = last_rig and new_height - last_rig.eye_height_m * last_rig.units_per_meter or height_change
+            spawn.position[2] = math.max(-10000000, math.min(10000000, spawn.position[2] + spawn_change))
             ecs.set_resource("player.spawn_camera", spawn)
         end
     end
@@ -243,6 +267,12 @@ ecs.on("input.key", function(event)
     end
 end)
 ecs.on("input.mouse_delta", function(event)
+    -- A scene can install its own camera controller. Older scenes keep this
+    -- direct-look fallback, and disabling the controller restores it.
+    local owner = ecs.get_resource("camera.look_owner")
+    local controller = owner and ecs.is_alive(owner) and ecs.get(owner, "CameraController")
+    local target = controller and ids[controller.target]
+    if controller and controller.enabled and target and ecs.has(target, "PlayerCamera") then return end
     local settings = ecs.get(player, "PlayerControls")
     if not settings or not settings.enabled or not settings.mouse_look then return end
     local camera = ecs.get(player, "PlayerCamera")
@@ -322,8 +352,9 @@ end)
 ecs.system("player.camera", function(dt)
     local settings = ecs.get(player, "PlayerControls")
     if not settings or not settings.enabled then jump = nil; return end
+    if ecs.get_resource("player.stand_probe_pending") == true then return end
     local b = settings.bindings
-    local function down(code) return held[code] and 1 or 0 end
+    local function down(code) return engine.input.is_down(held, code) and 1 or 0 end
     local forward = down(b.forward) - down(b.backward)
     local right = down(b.right) - down(b.left)
     local up = down(b.up) - down(b.down)
@@ -344,7 +375,18 @@ ecs.system("player.camera", function(dt)
     if length == 0 and hop == 0 then return end
     local camera = ecs.get(player, "PlayerCamera")
     local rig = assert(ecs.get(player, "PlayerRig"))
-    local speed = length > 0 and settings.move_speed * rig.units_per_meter * (held[b.sprint] and settings.sprint_multiplier or 1) * dt / length or 0
+    local posture = ecs.get(player, "PlayerPosture")
+    local crouched = posture and (posture.crouched or (posture.amount or 0) > 0.001)
+    local multiplier = engine.input.is_down(held, b.sprint) and settings.sprint_multiplier or 1
+    if crouched then
+        local factor = posture.crouch_speed_multiplier
+        multiplier = type(factor) == "number" and factor == factor and math.max(0.1, math.min(1, factor)) or 0.45
+    end
+    local scale = rig.units_per_meter
+    if posture and posture.crouched and type(posture.active_units_per_meter) == "number" then
+        scale = posture.active_units_per_meter
+    end
+    local speed = length > 0 and settings.move_speed * scale * multiplier * dt / length or 0
     local sine, cosine = math.sin(camera.yaw), math.cos(camera.yaw)
     local delta = ecs.array()
     delta[1] = (forward * sine + right * cosine) * speed

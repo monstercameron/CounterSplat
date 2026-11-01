@@ -166,8 +166,23 @@ fn inspector_edits_independent_bodies_and_lua_exports_drive_real_components() {
         );
         assert!((eye - before_eye - 0.1).abs() < 0.0001);
     }
-    // Select a different entity, attach a body and enable gravity without changing the player.
-    action(ids["inspector_next"], UiEventKind::Clicked);
+    // Select the level through the authored hierarchy, then attach a body.
+    for _ in 0..10 {
+        action(ids["inspector_next"], UiEventKind::Clicked);
+        if world
+            .borrow()
+            .get_dynamic_resource("editor.selected_entity")
+            == Some(&json!(level.to_string()))
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        world
+            .borrow()
+            .get_dynamic_resource("editor.selected_entity"),
+        Some(&json!(level.to_string()))
+    );
     action(ids["inspector_attach"], UiEventKind::Clicked);
     assert!(world.borrow().has::<Transform>(level));
     action(ids["inspector_gravity"], UiEventKind::BoolChanged(true));
@@ -198,7 +213,23 @@ fn inspector_edits_independent_bodies_and_lua_exports_drive_real_components() {
         world.borrow().get::<Transform>(level).unwrap().position,
         before
     );
-    action(ids["inspector_next"], UiEventKind::Clicked);
+    // Find the skybox by identity so adding other scene entities does not change the test.
+    for _ in 0..20 {
+        action(ids["inspector_next"], UiEventKind::Clicked);
+        if world
+            .borrow()
+            .get_dynamic_resource("editor.selected_entity")
+            == Some(&json!(ids["skybox"].to_string()))
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        world
+            .borrow()
+            .get_dynamic_resource("editor.selected_entity"),
+        Some(&json!(ids["skybox"].to_string()))
+    );
     action(ids["inspector_attach"], UiEventKind::Clicked);
     assert!(world.borrow().has::<PhysicsBody>(ids["skybox"]));
     // Invalid settings must never replace the existing body.
@@ -304,4 +335,65 @@ fn lua_owns_collision_contact_and_error_response() {
     .unwrap();
     assert!(!world.borrow().get::<PhysicsBody>(player).unwrap().grounded);
     assert_eq!(world.borrow_mut().drain_events("physics.error").len(), 1);
+}
+
+#[test]
+fn physics_tracks_runtime_changes_to_scene_player_binding() {
+    use countersplat_scene::{VoxelCollider, VoxelColliderState, VoxelStatus};
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &manifest,
+        &["ui", "player", "level"],
+    )
+    .unwrap();
+    let replacement = {
+        let mut w = world.borrow_mut();
+        w.get_mut::<PhysicsBody>(ids["player"])
+            .unwrap()
+            .gravity_enabled = true;
+        let level = w.get_mut::<VoxelCollider>(ids["active_level"]).unwrap();
+        level.enabled = true;
+        level.physics = true;
+        w.get_mut::<VoxelColliderState>(ids["active_level"])
+            .unwrap()
+            .status = VoxelStatus::Loading;
+        let entity = w.spawn();
+        w.insert(entity, PlayerCamera::default()).unwrap();
+        w.insert(
+            entity,
+            PhysicsBody {
+                gravity_enabled: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        entity
+    };
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    lua.execute(&std::fs::read_to_string(root.join("assets/scripts/physics_system.lua")).unwrap())
+        .unwrap();
+    {
+        let mut w = world.borrow_mut();
+        let mut bindings = w.get_dynamic_resource("scene.entities").unwrap().clone();
+        bindings["player"] = json!(replacement.to_string());
+        w.set_dynamic_resource("scene.entities", bindings);
+    }
+    lua.run_systems(0.1).unwrap();
+    let w = world.borrow();
+    assert!(
+        w.get::<PlayerCamera>(ids["player"]).unwrap().position[1] < 0.0,
+        "the old player is no longer the one held for loading"
+    );
+    assert_eq!(
+        w.get::<PlayerCamera>(replacement).unwrap().position[1],
+        0.0,
+        "the new player binding must wait for collision data"
+    );
 }

@@ -13,7 +13,7 @@ separate load pass. The example browser host draws both the scan and UI directly
   context are owned by the renderer; it has no ECS dependency.
 
 Built-in widgets include panels, rectangles, circles, lines, text, buttons, checkboxes, sliders, single-line text
-input, progress bars, and bounded line graphs. Each element has an anchor, local rectangle in logical points, global z value, visibility,
+input, progress bars, bounded line graphs, and vertical scroll areas. Each element has an anchor, local rectangle in logical points, global z value, visibility,
 enabled state, clipping, and style. A UI parent's rectangle establishes the child's coordinate space; right/bottom
 anchor offsets are insets. Layout inherits the parent's visibility, enabled state, and clipping. Elements with the
 same z draw in stable ID order. Provide colors and fonts through `Style`; `Font::Proportional` and `Font::Monospace`
@@ -54,6 +54,70 @@ ecs.set(panel, "UiElement", element)
 -- A clicked header also produces { id = panel, kind = { type = "collapsed_changed", value = true } }
 -- on the ui.action event queue.
 ```
+
+## Scroll areas
+
+A `scroll_area` is a clipped viewport with a vertical scrollbar. The browser
+routes wheel and trackpad input to the nearest visible scroll area under the
+pointer; its scrollbar can also be dragged. Child coordinates are relative to
+the full content, and the renderer moves them by the ECS-owned offset.
+
+```json
+{
+  "rect": { "x": 12, "y": 32, "width": 236, "height": 350 },
+  "widget": { "type": "scroll_area", "offset": 0, "content_height": 900 }
+}
+```
+
+Offsets and content height are logical points. The offset must be between zero
+and `max(0, content_height - rect.height)`. Accepted wheel and scrollbar
+changes update the `UiElement` and emit `ui.action` with
+`{ type = "scroll_changed", value = offset }`. Scripts can change the same
+validated fields through `ecs.get` and `ecs.set`; when shrinking content,
+clamp the offset at the same time. Scroll areas always clip their descendants.
+
+The ECS entity browser reuses a pool of rows positioned in a scroll area and
+grows that pool as the panel expands. Selecting an entity opens its settings
+without resetting the scroll position. A moved
+collapsible panel containing a scroll area is kept fully in view when it fits
+within its parent, so its last rows remain reachable after a resize.
+
+## Resizing and entity ownership
+
+Drag the lower-right grip of **ECS entities** to resize the panel. Its list and
+scrollbar follow the new dimensions; the browser saves the size with its local
+UI layout and **Reset positions** restores the scene default. Existing saved
+layouts containing only positions continue to work.
+
+The + and - controls expand and collapse actual ECS child relationships.
+Select an entity, choose **Set parent**, then select its intended owner in the
+tree. **Cancel** leaves it unchanged; **Make root** clears its parent. The ECS
+rejects cycles, and the panel protects its own editor controls from reparenting.
+Relationships changed in the panel last for the current scene session; edit the
+scene JSON to make them part of the authored scene. UI entity parenting also
+affects UI layout, visibility and clipping.
+
+The gameplay JSON groups the camera controller and first-person weapon under the
+player, skybox and image correction under scene visuals, and UI panels under
+HUD, player, scene, and editor groups. These non-UI grouping entities organize
+ownership without becoming UI coordinate spaces. The level remains its own
+root. Parent links stay within their scene layers so layers can still be loaded
+independently. Set `preview.entity_browser_expanded` to scene entity IDs to
+choose which branches start open. Non-UI parent links do not automatically
+apply transforms; ordinary despawn detaches surviving children, while recursive
+despawn explicitly removes the full subtree.
+
+A panel opts in with `resize` limits in logical points, for example:
+
+```json
+"resize": { "min": [250, 200], "max": [700, 1000] }
+```
+
+The renderer emits `resized_to` with the requested width and height; the
+UI ECS adapter validates and applies it. Scripts receive the same `ui.action`
+event and can resize dependent controls. For hierarchy-aware scripts,
+`ecs.hierarchy()` returns a compact list of `{id, parent}` entries without
+copying component or resource payloads. A root's parent is `ecs.null`.
 
 ## Moving canvas UI
 
@@ -132,6 +196,10 @@ Lua 5.4 for its gameplay and menu worlds; its menu and player scripts use these 
 The gameplay scene, level, player and UI layers share a world and are exposed through that script bridge.
 The **ECS entities** panel lists these live entities; selecting a row opens **Entity settings** on the right.
 The inspector shows component names and edits physics or Lua-exported values; see [entity physics](entity-physics.md).
+
+A slider widget can set `"logarithmic": true` to spread a wide range while preserving its actual numeric value.
+The field defaults to false for older scene files and scripts. The camera panel uses it for values such as focus
+distance and ISO.
 
 ## Frame timing semantics
 

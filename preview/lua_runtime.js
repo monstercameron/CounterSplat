@@ -2,7 +2,8 @@
 // The VM runs only on this browser thread; the ECS world remains owned by the Rust host.
 const BOOTSTRAP = `
 local call = __ecs_call
-__ecs_call = nil
+local profile_now, profile_sample = __profile_now, __profile_sample
+__ecs_call, __profile_now, __profile_sample = nil, nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
     count.n = count.n + 1
@@ -41,6 +42,7 @@ function ecs.spawn() return invoke("spawn") end
 function ecs.despawn(id, recursive) return invoke("despawn", { id = id, recursive = recursive or false }) end
 function ecs.is_alive(id) return invoke("is_alive", { id = id }) end
 function ecs.entities() return invoke("entities") end
+function ecs.hierarchy() return invoke("hierarchy") end
 function ecs.components(id) return invoke("components", { id = id }) end
 function ecs.query(components) return invoke("query", { components = components }) end
 function ecs.get(id, name) return invoke("get", { id = id, name = name }) end
@@ -48,6 +50,7 @@ function ecs.has(id, name) return invoke("has", { id = id, name = name }) end
 function ecs.set(id, name, value) invoke("set", { id = id, name = name, value = value }) end
 function ecs.remove(id, name) return invoke("remove", { id = id, name = name }) end
 function ecs.get_resource(name) return invoke("get_resource", { name = name }) end
+function ecs.get_resource_field(name, field) return invoke("get_resource_field", { name = name, field = field }) end
 function ecs.set_resource(name, value) invoke("set_resource", { name = name, value = value }) end
 function ecs.remove_resource(name) return invoke("remove_resource", { name = name }) end
 function ecs.set_parent(child, parent) invoke("set_parent", { child = child, parent = parent }) end
@@ -74,7 +77,17 @@ end
 function ecs.off(name) handlers[name] = nil end
 function __run_systems(dt)
     local snapshot = { table.unpack(order) }
-    for _, name in ipairs(snapshot) do if systems[name] then systems[name](dt) end end
+    for _, name in ipairs(snapshot) do
+        if systems[name] then
+            if profile_now and profile_sample then
+                local started = profile_now()
+                systems[name](dt)
+                profile_sample(name, profile_now() - started)
+            else
+                systems[name](dt)
+            end
+        end
+    end
 end
 function __dispatch(name, payload)
     local snapshot = { table.unpack(handlers[name] or {}) }
@@ -120,30 +133,50 @@ function encodeResult(value) {
 }
 
 export class LuaScene {
-  static async create(factory, target, layer, engineApi, scripts) {
+  static async create(factory, target, layer, engineApi, scripts, profile = false) {
     const vm = await factory.createEngine({openStandardLibs: true, enableProxy: false,
       injectObjects: true, traceAllocations: true, functionTimeout: 50});
     try {
       vm.global.setMemoryMax(32 * 1024 * 1024);
-      const host = new LuaScene(vm, target, layer);
+      const host = new LuaScene(vm, target, layer, profile);
       vm.global.set('__ecs_call', request => { const result = host.call(request); return {found: result.found, value: encodeResult(result.value)}; });
-      vm.global.setTimeout(Date.now() + 250);
-      try {
-        vm.doStringSync(BOOTSTRAP);
-        vm.doStringSync(engineApi);
-        for (const source of scripts) vm.doStringSync(source);
-      } finally { vm.global.setTimeout(undefined); }
+      if (profile) {
+        vm.global.set('__profile_now', () => performance.now());
+        vm.global.set('__profile_sample', (name, elapsed) => host.recordProfile('systems', name, elapsed));
+      }
+      // Each independently authored script gets its own execution budget.
+      // A single deadline for the entire scene makes an otherwise healthy
+      // script fail just because earlier scripts or a busy GPU took time.
+      const initialize = source => {
+        vm.global.setTimeout(Date.now() + 500);
+        try { vm.doStringSync(source); }
+        finally { vm.global.setTimeout(undefined); }
+      };
+      initialize(BOOTSTRAP);
+      initialize(engineApi);
+      for (const source of scripts) initialize(source);
       host.runSystems = vm.global.get('__run_systems');
       host.dispatchEvent = vm.global.get('__dispatch');
       return host;
     } catch (error) { vm.global.close(); throw error; }
   }
-  constructor(vm, target, layer) { this.vm = vm; this.target = target; this.layer = layer; }
+  constructor(vm, target, layer, profile = false) {
+    this.vm = vm; this.target = target; this.layer = layer;
+    this.profile = profile ? {systems:Object.create(null), operations:Object.create(null)} : null;
+  }
+  recordProfile(group, name, elapsed) {
+    if (!this.profile || !Number.isFinite(elapsed) || elapsed < 0) return;
+    const entry = this.profile[group][name] ||= {count:0, total_ms:0, max_ms:0};
+    entry.count++; entry.total_ms += elapsed; entry.max_ms = Math.max(entry.max_ms, elapsed);
+  }
+  profileReport() { return this.profile; }
   call(request) {
+    const start = this.profile ? performance.now() : 0;
     const op = normalize(request);
     // An empty Lua table is ambiguous; a query explicitly expects a sequence.
     if (op.op === 'query' && !Array.isArray(op.components) && Object.keys(op.components || {}).length === 0) op.components = [];
-    return JSON.parse(this.target.ecs_operation(this.layer, JSON.stringify(op)));
+    try { return JSON.parse(this.target.ecs_operation(this.layer, JSON.stringify(op))); }
+    finally { if (this.profile) this.recordProfile('operations', op.op, performance.now()-start); }
   }
   emit(name, value) { this.call({op: 'emit', name, value}); }
   drain(name) { return this.call({op: 'drain', name}).value; }

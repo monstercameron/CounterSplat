@@ -15,10 +15,14 @@ set_text(ids.level_name, assets.name)
 set_text(ids.level_summary, string.format("%d assets  ·  %d LOD%s", #assets.files, lod_count, lod_count == 1 and "" or "s"))
 set_text(ids.level_hint, lod_count == 1 and "This scan has one LOD" or "0 = finest; higher = coarser")
 
-local function sync_settings()
+local previous_lod, previous_distance, previous_manual, synced = nil, nil, nil, false
+local function sync_settings(force)
     local settings = assert(ecs.get(level, "LevelSettings"), "level settings are missing")
     local automatic = settings.lod == ecs.null
     if not automatic then last_manual = settings.lod end
+    -- Fetch UI components only when their source data changes, or after an action.
+    if not force and synced and previous_lod == settings.lod and
+        previous_distance == settings.draw_distance and previous_manual == last_manual then return end
     local slider = assert(ecs.get(ids.level_lod, "UiElement"))
     local max_lod = math.max(1, lod_count - 1)
     local value = math.max(0, math.min(max_lod, last_manual))
@@ -37,8 +41,9 @@ local function sync_settings()
         checkbox.widget.checked = automatic; checkbox.enabled = enabled
         ecs.set(ids.level_auto, "UiElement", checkbox)
     end
+    previous_lod, previous_distance, previous_manual, synced = settings.lod, settings.draw_distance, last_manual, true
 end
-sync_settings()
+sync_settings(true)
 
 ecs.on("ui.action", function(action)
     local settings = assert(ecs.get(level, "LevelSettings"))
@@ -53,7 +58,7 @@ ecs.on("ui.action", function(action)
         return
     end
     ecs.set(level, "LevelSettings", settings)
-    sync_settings()
+    sync_settings(true)
 end)
 
 -- External scripts can edit the same component; keep the panel in sync with those edits.

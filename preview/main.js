@@ -3,33 +3,47 @@ import init, { Selector, Viewer } from '/pkg/countersplat_web.js';
 import { LuaScene } from '/lua_runtime.js';
 import { VoxelRuntime } from '/pkg/voxel_runtime.js';
 import { MouseCapture } from '/pkg/mouse_capture.js';
-import { GameplayMouseButtons } from '/pkg/mouse_buttons.js';
+import { GameplayMouseButtons, GameplayFireButton } from '/pkg/mouse_buttons.js';
+import { FirstPersonFrames } from '/pkg/first_person_frames.js';
+import { attachDisplayPanel, viewportSize, sceneResolution, MAX_RENDER_DIMENSION } from '/pkg/display_settings.js';
 import { publishPlayerRigData, savePlayerRig } from '/pkg/player_rig.js';
 import { ChunkDecoderPool, chunkDecoderCount } from '/pkg/chunk_decoder_pool.js';
 import { preloadChunks } from '/pkg/chunk_preload.js';
 import { loadMetadataInWorker } from '/pkg/metadata_client.js';
 import { LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl } from '/asset_loader.js';
+import { FrameProfiler } from '/pkg/frame_profile.js';
 
 const canvas = document.getElementById('canvas');
 const status = document.getElementById('status');
 const message = document.getElementById('message');
 const metrics = document.getElementById('metrics');
+// Profiling is opt-in and publishes read-only diagnostics on the existing metrics node.
+const frameProfiler = new URLSearchParams(location.search).has('profile') ? new FrameProfiler() : null;
+let profileState = null, lastProfileReport = 0;
 const arrangeButton = document.getElementById('arrange');
 const resetLayoutButton = document.getElementById('reset-layout');
 const inFlight = new Set();
 const mouseCapture = new MouseCapture(canvas, document);
 let active = null;
+let displayPanel = null;
 let arrangeMode = false;
 let mode = 'boot';
 let generation = 0;
 let lastStatus = 0;
+let aspectOwner = null, publishedAspect = null;
 let stopped = false;
 let selectorBytes, catalogBytes, sceneCatalogBytes, gameplayBytes, menuBytes, catalog, gameplayScene, menuScene;
 let selectorUrl, sceneCatalogUrl, gameplayUrl, defaultGameplayUrl, defaultGameplayBytes, menuUrl, engineApi, gameplayScripts, menuScripts, luaFactory;
 let gameplayLua = null, menuLua = null, lastScriptTime = null;
 const gameplayMouse = new GameplayMouseButtons(pressed => gameplayLua?.emit('input.mouse_button', {button:'right', pressed, gameplay:true}));
+const gameplayFire = new GameplayFireButton(pressed => gameplayLua?.emit('input.mouse_button', {button:'left', pressed, gameplay:true}));
+let firstPersonFrames = null;
 let dragLook = false, lastEscapeTime = -Infinity;
 const playerControlsKey = 'countersplat.player-controls.v1';
+const cameraLensKey = 'countersplat.camera-lens.v1';
+const cameraZoomLensKey = 'countersplat.camera-zoom-lens.v1';
+const cameraControllerKey = 'countersplat.camera-controller.v1';
+const imageCorrectionKey = 'countersplat.image-correction.v1';
 let loadingAbort = null, preloadedSceneAssets = new Map();
 const MAX_PRELOAD_BYTES = 512 * 1024 * 1024;
 let selectedId = '', selectedSceneId = '';
@@ -58,7 +72,7 @@ function saveLayout(target, scene) {
   catch (error) { console.warn('Could not save UI layout:', error); }
 }
 function layoutScene() { return mode === 'menu' ? 'menu' : mode === 'gameplay' ? 'gameplay' : 'selector'; }
-function resetPlayerInput() { gameplayMouse.reset(); if (gameplayLua) gameplayLua.emit('input.reset', {}); }
+function resetPlayerInput() { gameplayMouse.reset(); gameplayFire.reset(); if (gameplayLua) gameplayLua.emit('input.reset', {}); }
 function releaseMouseLook() {
   dragLook = false;
   mouseCapture.release();
@@ -72,12 +86,78 @@ function restorePlayerControls(game) {
     game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.player,name:'PlayerControls',value:JSON.parse(raw)}));
   } catch (error) { console.warn('Could not restore player controls:', error); }
 }
+// Browser persistence is host plumbing; the lens itself remains a normal ECS component.
+function restoreCameraLens(game) {
+  try {
+    const raw = localStorage.getItem(cameraLensKey);
+    if (!raw) return;
+    if (raw.length > 16384) throw new Error('Saved camera settings are too large.');
+    const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
+    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.player,name:'CameraLens',value:JSON.parse(raw)}));
+  } catch (error) { console.warn('Could not restore camera settings:', error); }
+}
+function saveCameraLens(settings) {
+  try { localStorage.setItem(cameraLensKey, JSON.stringify(settings)); }
+  catch (error) { console.warn('Could not save camera settings:', error); }
+}
+function restoreCameraZoomLens(game) {
+  try {
+    const raw = localStorage.getItem(cameraZoomLensKey);
+    if (!raw) return;
+    if (raw.length > 16384) throw new Error('Saved zoom lens settings are too large.');
+    const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
+    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.player,name:'CameraZoomLens',value:JSON.parse(raw)}));
+  } catch (error) { console.warn('Could not restore zoom lens settings:', error); }
+}
+function saveCameraZoomLens(settings) {
+  try { localStorage.setItem(cameraZoomLensKey, JSON.stringify(settings)); }
+  catch (error) { console.warn('Could not save zoom lens settings:', error); }
+}
+// Persist camera tuning without moving behavior out of the Lua/ECS layer.
+function restoreCameraController(game) {
+  try {
+    const raw = localStorage.getItem(cameraControllerKey);
+    if (!raw) return;
+    if (raw.length > 16384) throw new Error('Saved camera controller settings are too large.');
+    const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
+    if (!ids.camera_controller) return;
+    const current = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get',id:ids.camera_controller,name:'CameraController'}))).value;
+    const saved = JSON.parse(raw);
+    if (!current || !saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid saved camera controller.');
+    // Tuning is a preference; the target remains owned by the current scene.
+    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.camera_controller,name:'CameraController',value:{...saved,target:current.target}}));
+  } catch (error) { console.warn('Could not restore camera controller:', error); }
+}
+function saveCameraController(settings) {
+  try { localStorage.setItem(cameraControllerKey, JSON.stringify(settings)); }
+  catch (error) { console.warn('Could not save camera controller:', error); }
+}
+// The browser stores the validated ECS value; the scene JSON remains the reset preset.
+function restoreImageCorrection(game) {
+  try {
+    const raw = localStorage.getItem(imageCorrectionKey);
+    if (!raw) return;
+    if (raw.length > 16384) throw new Error('Saved image settings are too large.');
+    const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
+    if (!ids.image_correction) return;
+    const current = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get',id:ids.image_correction,name:'ImageCorrection'}))).value;
+    const saved = JSON.parse(raw);
+    if (!current || !saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid saved image settings.');
+    // Old saved grades predate new fields such as sharpness. Keep their saved
+    // values and initialize only missing fields from this scene's preset.
+    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.image_correction,name:'ImageCorrection',value:{...current,...saved}}));
+  } catch (error) { console.warn('Could not restore image correction:', error); }
+}
+function saveImageCorrection(settings) {
+  try { localStorage.setItem(imageCorrectionKey, JSON.stringify(settings)); }
+  catch (error) { console.warn('Could not save image correction:', error); }
+}
 function savePlayerControls(settings) {
   try { localStorage.setItem(playerControlsKey, JSON.stringify(settings)); }
   catch (error) { console.warn('Could not save player controls:', error); }
 }
 function dispatchGameplayEvents(runtime) {
-  for (const name of ['input.key', 'input.mouse_delta', 'input.mouse_button', 'input.reset', 'ui.action', 'editor.entity_selected', 'physics.ready', 'physics.ground_result', 'physics.motion_resolved', 'physics.motion_error', 'physics.collision', 'physics.error']) {
+  for (const name of ['input.key', 'input.mouse_delta', 'input.mouse_button', 'input.reset', 'ui.action', 'editor.entity_selected', 'physics.ready', 'physics.ground_result', 'physics.clearance_result', 'physics.trace_result', 'physics.motion_resolved', 'physics.motion_error', 'physics.collision', 'physics.error', 'weapon.trigger', 'weapon.aim', 'weapon.reload', 'weapon.equip', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.posture']) {
     for (const event of runtime.drain(name)) runtime.dispatch(name, event);
   }
 }
@@ -95,7 +175,7 @@ function sceneAsset(scene, base, id) {
 function processSceneRequests(runtime) {
   for (const request of runtime.drain('engine.scene')) {
     if (mode === 'gameplay' && request.action === 'push' && sceneAsset(gameplayScene, gameplayUrl, request.scene) === menuUrl.href) {
-      gameplayMouse.reset();
+      gameplayMouse.reset(); gameplayFire.reset();
       runtime.dispatch('input.reset', {});
       voxelRuntime?.suspend();
       releaseMouseLook();
@@ -284,6 +364,7 @@ function startSkyWorker(game, token, preloaded) {
   }
 }
 function stopWorkers() {
+  firstPersonFrames?.close(); firstPersonFrames = null;
   voxelRuntime?.stop(); voxelRuntime = null;
   if (decoder) decoder.stop();
   if (skyDecoder) skyDecoder.terminate();
@@ -443,9 +524,14 @@ async function launchLevel(id, sceneId = '') {
     for (const sky of skies) pendingGame.install_skybox(sky.id, sky.size, sky.pixels);
     for (const chunk of chunks) pendingGame.insert_decoded_chunk(chunk.index, chunk.metadata, chunk.dimensions, chunk.pixels);
     restorePlayerControls(pendingGame);
+    restoreCameraLens(pendingGame);
+    restoreCameraZoomLens(pendingGame);
+    restoreCameraController(pendingGame);
+    restoreImageCorrection(pendingGame);
     publishPlayerRigData(pendingGame, selected);
     gameplayScripts = scripts.gameplay; menuScripts = scripts.menu; engineApi = scripts.engine;
-    gameplayLua = await LuaScene.create(luaFactory, pendingGame, 'gameplay', engineApi, gameplayScripts);
+    if (frameProfiler) { frameProfiler.reset(); profileState = null; }
+    gameplayLua = await LuaScene.create(luaFactory, pendingGame, 'gameplay', engineApi, gameplayScripts, !!frameProfiler);
     menuLua = await LuaScene.create(luaFactory, pendingGame, 'menu', engineApi, menuScripts);
     if (generation !== token) { closeScripts(); pendingGame.free(); pendingGame = null; return; }
     active = pendingGame;
@@ -457,6 +543,13 @@ async function launchLevel(id, sceneId = '') {
     currentLevel = selected;
     chunkMetas = metas;
     preloadedSceneAssets = sceneAssets;
+    const footage = chosenScene.resources?.assets?.['first-person-footage'];
+    if (footage) {
+      if (footage.kind !== 'first_person_manifest' || loadPolicy(footage.load) !== 'preload') throw new Error('First-person footage manifest must be a preloaded scene asset.');
+      const bytes = sceneAssets.get(new URL(footage.uri, chosenUrl).href);
+      if (!bytes) throw new Error('First-person footage manifest is missing.');
+      firstPersonFrames = new FirstPersonFrames(chosenScene, chosenUrl, parseJson(bytes), sceneAssets, active);
+    }
     inFlight.clear();
     mode = 'gameplay';
     const game = active;
@@ -558,7 +651,11 @@ function attachInput() {
   canvas.addEventListener('blur', () => { resetPlayerInput(); send(scene => { scene.ui_focus(false); scene.ui_pointer_gone(); }); });
   canvas.addEventListener('pointermove', event => {
     const startingRight = event.pointerType === 'mouse' && event.button === 2 && (event.buttons & 2) !== 0;
-    send(scene => gameplayMouse.update(event, startingRight && gameplayPointer(scene, event)));
+    send(scene => {
+      gameplayMouse.update(event, startingRight && gameplayPointer(scene, event));
+      const startingLeft = event.pointerType === 'mouse' && event.button === 0 && (event.buttons & 1) !== 0;
+      gameplayFire.update(event, startingLeft && gameplayPointer(scene, event));
+    });
     if (mode === 'gameplay' && (document.pointerLockElement === canvas || dragLook)) {
       if (Number.isFinite(event.movementX) && Number.isFinite(event.movementY))
         gameplayLua?.emit('input.mouse_delta', {dx:event.movementX, dy:event.movementY});
@@ -571,6 +668,7 @@ function attachInput() {
     event.preventDefault(); canvas.focus({preventScroll:true});
     const [x,y] = point(event);
     const gameplay = gameplayPointer(scene, event);
+    gameplayFire.update(event, gameplay);
     if (gameplayMouse.update(event, gameplay)) {
       if (document.pointerLockElement !== canvas) { canvas.setPointerCapture(event.pointerId); scene.ui_pointer_gone(); }
       return;
@@ -590,6 +688,7 @@ function attachInput() {
     const which = button(event); if (which === undefined) return;
     const zoomWasDown = gameplayMouse.rightDown;
     gameplayMouse.update(event, false);
+    gameplayFire.update(event, false);
     if (zoomWasDown && which === 1) return;
     if (dragLook) { dragLook = false; return; }
     if (document.pointerLockElement === canvas) return;
@@ -605,7 +704,16 @@ function attachInput() {
   }));
   canvas.addEventListener('pointerleave', event => { if (!event.buttons) send(scene => scene.ui_pointer_gone()); });
   canvas.addEventListener('wheel', event => {
-    if (active?.ui_wants_pointer()) { event.preventDefault(); send(scene => scene.ui_scroll(-event.deltaX,-event.deltaY)); }
+    if (!active || document.pointerLockElement === canvas || dragLook) return;
+    const [x,y] = point(event);
+    // Hovering an ECS panel is enough to scroll; egui only reports pointer
+    // capture while a button is held. Line/page wheel units need normalization.
+    const hoveredUi = mode === 'gameplay' && active.ui_hit_test(x,y);
+    if (hoveredUi || active.ui_wants_pointer()) {
+      event.preventDefault();
+      const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.getBoundingClientRect().height : 1;
+      send(scene => { scene.ui_pointer_move(x,y); scene.ui_scroll(-event.deltaX*scale,-event.deltaY*scale); });
+    }
   }, {passive:false});
   canvas.addEventListener('contextmenu', event => { if (mode === 'gameplay' || active?.ui_wants_pointer()) event.preventDefault(); });
   const key = event => {
@@ -631,7 +739,7 @@ function attachInput() {
     const script = mode === 'gameplay' ? gameplayLua : mode === 'menu' ? menuLua : null;
     if (!script || event.isComposing || event.key.length > 128) return;
     const gameplay = mode === 'gameplay' && document.activeElement === canvas && !active.ui_wants_keyboard() &&
-      !arrangeMode && !document.hidden && !event.ctrlKey && !event.metaKey && !event.altKey;
+      !arrangeMode && !document.hidden && !event.metaKey && !event.altKey;
     script.emit('input.key', {key: event.key, code: event.code, pressed: event.type === 'keydown', is_repeat: event.repeat, gameplay});
     if (event.key === 'Escape') { if (event.type === 'keydown') lastEscapeTime = performance.now(); event.preventDefault(); }
     else if (gameplay) event.preventDefault();
@@ -671,15 +779,31 @@ function attachInput() {
 }
 function tick(timestamp) {
   if (stopped) return;
+  const profileStart = frameProfiler ? performance.now() : 0;
+  let renderMs = 0, scriptsMs = 0, submitted = false;
+  const stages = frameProfiler ? {} : null;
   try {
     if (active) {
       const bounds = canvas.getBoundingClientRect();
-      const scale = Math.min(window.devicePixelRatio || 1, 1.5);
-      const width = Math.max(1, Math.min(1280, Math.round(bounds.width * scale)));
-      const height = Math.max(1, Math.min(720, Math.round(width * 9 / 16)));
+      if (bounds.width < 1 || bounds.height < 1) { requestAnimationFrame(tick); return; }
+      const output = viewportSize(bounds.width, bounds.height, window.devicePixelRatio || 1, active.max_texture_dimension());
       active.ui_set_width(bounds.width);
-      active.resize(width,height);
-      active.frame(timestamp);
+      active.resize(output.width,output.height);
+      displayPanel.updateViewport(output);
+      if (mode === 'gameplay' || mode === 'menu') {
+        const render = sceneResolution(displayPanel.preferences, output);
+        active.set_render_resolution(render.width,render.height);
+        active.set_viewport_fill(displayPanel.preferences.scaling === 'fill');
+        // Lua projects the filmed weapon sight through this render aspect.
+        const aspect = render.width / render.height;
+        if (mode === 'gameplay' && (active !== aspectOwner || aspect !== publishedAspect)) {
+          active.ecs_operation('gameplay', JSON.stringify({op:'set_resource',name:'render.scene_aspect',value:aspect}));
+          aspectOwner = active; publishedAspect = aspect;
+        }
+      }
+      const renderStart = frameProfiler ? performance.now() : 0;
+      submitted = active.frame(timestamp);
+      if (frameProfiler) renderMs = performance.now() - renderStart;
       if (active.ui_take_layout_changed()) saveLayout(active, layoutScene());
       if (mode === 'loading' && active.take_cancel_loading()) {
         cancelLoading();
@@ -689,34 +813,73 @@ function tick(timestamp) {
         if (id) void launchLevel(id);
         else if (open) { const request = JSON.parse(open); selectedSceneId = request.scene; void launchLevel(request.level, request.scene); }
       } else if (mode === 'gameplay' || mode === 'menu') {
+        const scriptStart = frameProfiler ? performance.now() : 0;
         const runtime = mode === 'menu' ? menuLua : gameplayLua;
         const dt = lastScriptTime === null ? 0 : Math.max(0, Math.min((timestamp - lastScriptTime) / 1000, 0.25));
         lastScriptTime = timestamp;
         if (mode === 'gameplay') {
+          const dispatchStart = frameProfiler ? performance.now() : 0;
           dispatchGameplayEvents(runtime);
           processSceneRequests(runtime);
+          if (frameProfiler) stages.event_dispatch_ms = performance.now() - dispatchStart;
           if (mode === 'gameplay' && active) {
             const ticks = active.take_script_ticks();
-            for (let i = 0; i < ticks; i++) runtime.run(active.script_tick_seconds());
+            for (let i = 0; i < ticks; i++) {
+              const luaStart = frameProfiler ? performance.now() : 0;
+              runtime.run(active.script_tick_seconds());
+              if (frameProfiler) stages.lua_systems_ms = (stages.lua_systems_ms || 0) + performance.now() - luaStart;
+              const tickEventsStart = frameProfiler ? performance.now() : 0;
+              // Deliver shots between fixed ticks so a burst never waits for the next frame.
+              for (const name of ['weapon.shot', 'weapon.dry_fire', 'projectile.spawned',
+                  'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death'])
+                for (const event of runtime.drain(name)) runtime.dispatch(name, event);
+              if (frameProfiler) stages.tick_events_ms = (stages.tick_events_ms || 0) + performance.now() - tickEventsStart;
+            }
+            const outputStart = frameProfiler ? performance.now() : 0;
             for (const settings of runtime.drain('player.controls_changed')) savePlayerControls(settings);
+            for (const lens of runtime.drain('camera.lens_changed')) saveCameraLens(lens);
+            for (const lens of runtime.drain('camera.zoom_lens_changed')) saveCameraZoomLens(lens);
+            for (const controller of runtime.drain('camera.controller_changed')) saveCameraController(controller);
+            for (const grade of runtime.drain('image.correction_changed')) saveImageCorrection(grade);
+            for (const frame of runtime.drain('first_person.frame')) {
+              firstPersonFrames?.request(frame);
+              metrics.dataset.weapon = JSON.stringify({clip:frame.clip,index:frame.index,
+                motion_x:frame.motion_x,motion_y:frame.motion_y,motion_roll:frame.motion_roll});
+            }
+            firstPersonFrames?.update(timestamp);
+            let traceSnapshot = null;
+            for (const snapshot of runtime.drain('projectile.visuals')) traceSnapshot = snapshot;
+            if (traceSnapshot) {
+              const packed = [];
+              for (const segment of (traceSnapshot.segments || []).slice(0, 256))
+                packed.push(...segment.start, ...segment.finish, segment.alpha);
+              active.set_projectile_traces(new Float32Array(packed));
+            }
             for (const rig of runtime.drain('player.rig_changed')) savePlayerRig(currentLevel, rig);
+            if (frameProfiler) stages.output_ms = performance.now() - outputStart;
+            const voxelStart = frameProfiler ? performance.now() : 0;
             voxelRuntime?.tick(runtime, timestamp);
             processSceneRequests(runtime);
+            if (frameProfiler) stages.voxel_ms = performance.now() - voxelStart;
           }
         } else {
           runtime.run(dt);
           processSceneRequests(runtime);
         }
         if (mode === 'gameplay' && active) {
+          const streamStart = frameProfiler ? performance.now() : 0;
           const game = active, token = generation;
           for (const [index, folder] of JSON.parse(game.requests(decoder?.available ?? 0))) {
             if (!inFlight.has(index)) requestChunk(index, folder, chunkMetas[index], game, token);
           }
+          if (frameProfiler) stages.stream_ms = performance.now() - streamStart;
         }
+        if (frameProfiler) scriptsMs = performance.now() - scriptStart;
       }
       if (timestamp - lastStatus >= 500) {
         if (mode === 'gameplay' && active) {
           const state = JSON.parse(active.status());
+          if (frameProfiler) profileState = state;
           status.textContent = state.resident_splats ? 'Live WebGPU canvas' : 'Streaming scan';
           const timing = state.ui_frame_fps == null ? 'measuring frames' : `${state.ui_frame_fps.toFixed(1)} submitted fps · ${state.ui_frame_ms.toFixed(1)} ms/frame`;
           const sky = state.sky_loaded ? (state.sky_enabled ? 'HDR sky on' : 'HDR sky off') : (skyLoadState === 'error' ? 'HDR sky unavailable' : 'loading HDR sky');
@@ -729,7 +892,18 @@ function tick(timestamp) {
             inFlight:state.lod_chunks_in_flight, fading:state.lod_fading, switches:state.lod_switches,
             fadeCuts:state.fade_cuts, hardSwaps:state.hard_swaps, octreeNodes:state.octree_nodes,
             decoders:decoder ? {total:decoder.size, available:decoder.available} : null});
-          metrics.dataset.player = JSON.stringify({camera:state.player_camera, physics:state.player_physics, rig:state.player_rig});
+          let posture = null;
+          if (voxelRuntime?.player && gameplayScene.component_types?.PlayerPosture) {
+            try { posture = JSON.parse(active.ecs_operation('gameplay', JSON.stringify({op:'get', id:voxelRuntime.player, name:'PlayerPosture'}))).value; }
+            catch (error) { console.debug('Player posture diagnostics:', error); }
+          }
+          metrics.dataset.player = JSON.stringify({camera:state.player_camera, physics:state.player_physics, rig:state.player_rig, posture});
+          metrics.dataset.display = JSON.stringify({...state.display, scaling:displayPanel.preferences.scaling});
+          metrics.dataset.lens = JSON.stringify(state.camera_lens ?? null);
+          // Recent ECS events make projectile timing and collision observable in development.
+          const combatValue = name => JSON.parse(active.ecs_operation('gameplay', JSON.stringify({op:'get_resource', name}))).value ?? null;
+          metrics.dataset.combat = JSON.stringify({shot:combatValue('combat.last_shot'), impact:combatValue('combat.last_impact'),
+            expiration:combatValue('combat.last_expiration')});
           const mouse = document.pointerLockElement === canvas ? 'Mouse locked · ~ releases' :
             mouseCapture.failed ? 'Drag to look' : 'Click scene to lock mouse';
           metrics.textContent = `${currentLevel.name} · ${state.resident_splats.toLocaleString()} splats · ${lod} · ${finest} LOD 0 regions · ${timing} · ${sky} · ${mouse}`;
@@ -743,6 +917,13 @@ function tick(timestamp) {
         }
         if (timestamp >= skyErrorUntil) message.hidden = true;
         lastStatus = timestamp;
+      }
+      if (frameProfiler && mode === 'gameplay') {
+        frameProfiler.record(timestamp, submitted, renderMs, scriptsMs, performance.now() - profileStart, stages);
+        if (timestamp - lastProfileReport >= 500) {
+          metrics.dataset.profile = JSON.stringify(frameProfiler.snapshot(profileState, gameplayLua?.profileReport()));
+          lastProfileReport = timestamp;
+        }
       }
     }
     requestAnimationFrame(tick);
@@ -769,6 +950,9 @@ async function start() {
   luaFactory = new globalThis.wasmoon.LuaFactory('/pkg/wasmoon/glue.wasm');
   await init();
   active = await Selector.create(canvas, selectorBytes, catalogBytes, sceneCatalogBytes, '', '');
+  let displayStorage = null;
+  try { displayStorage = window.localStorage; } catch { /* Persistence is optional. */ }
+  displayPanel = attachDisplayPanel(document, displayStorage, () => active?.max_texture_dimension() ?? MAX_RENDER_DIMENSION);
   restoreLayout(active, 'selector');
   mode = 'selector';
   void populateSelectorPreviews(active);

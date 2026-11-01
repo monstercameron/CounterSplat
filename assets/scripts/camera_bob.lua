@@ -11,8 +11,24 @@ engine.export(player, "bob_vertical", {component="PlayerControls", field="bob_ve
 engine.export(player, "bob_horizontal", {component="PlayerControls", field="bob_horizontal", label="Bob sideways (m)", min=0, max=0.25})
 engine.export(player, "bob_smoothing", {component="PlayerControls", field="bob_smoothing", label="Bob response", min=1, max=30})
 
-local phase, sideways, vertical = 0, 0, 0
+local phase, sideways, vertical, pitch, roll, run_blend = 0, 0, 0, 0, 0, 0
 local since_motion, resolved_distance = 1, 0
+local held, aiming = {}, false
+
+-- The same asymmetric foot-plant curve used by Neural-Sight's running view.
+local function running_step_height(phase_value)
+    local p = (phase_value / math.pi) % 1
+    if p < 0.62 then return -math.cos(math.pi * p / 0.62) end
+    return math.cos(math.pi * (p - 0.62) / 0.38)
+end
+ecs.on("input.key", function(event)
+    if type(event.code) ~= "string" then return end
+    if not event.pressed then held[event.code] = nil
+    elseif event.gameplay and not event.is_repeat then held[event.code] = true end
+end)
+ecs.on("input.mouse_button", function(event)
+    if event.button == "right" and (event.gameplay or not event.pressed) then aiming = event.pressed == true end
+end)
 local previous = assert(ecs.get(player, "PlayerCamera")).position
 
 -- Collision runs asynchronously. Only resolved horizontal travel counts, so
@@ -26,12 +42,14 @@ ecs.on("physics.motion_resolved", function(event)
 end)
 
 local function reset()
-    phase, sideways, vertical = 0, 0, 0
+    phase, sideways, vertical, pitch, roll, run_blend = 0, 0, 0, 0, 0, 0
     since_motion, resolved_distance = 1, 0
+    held, aiming = {}, false
     local camera = ecs.get(player, "PlayerCamera")
     if camera then
         previous = camera.position
         camera.view_offset = {0, 0, 0}
+        camera.view_bob_pitch, camera.view_bob_roll = 0, 0
         ecs.set(player, "PlayerCamera", camera)
     end
 end
@@ -65,24 +83,55 @@ ecs.system("player.camera_bob", function(dt)
 
     local grounded = not captured or not body.gravity_enabled or body.grounded
     local moving = controls.enabled and controls.bob_enabled and grounded
+    local profile = ids.camera_controller and ecs.is_alive(ids.camera_controller) and
+        ecs.get(ids.camera_controller, "CameraController")
+    if profile and (not profile.enabled or ids[profile.target] ~= player) then profile = nil end
+    local posture = ecs.get(player, "PlayerPosture")
+    local crouched = posture and (posture.crouched or (posture.amount or 0) > 0.001)
+    local running = profile and not crouched and engine.input.is_down(held, controls.bindings.sprint)
     since_motion = since_motion + dt
     if moving and distance > 0.00001 then
         since_motion = 0
-        -- A full side-to-side cycle contains two steps; faster travel naturally
-        -- increases cadence without tying it to the render or simulation rate.
-        phase = (phase + math.pi * controls.bob_cadence * distance /
+        -- Two footfalls per sway cycle; the longer run stride follows Neural-Sight.
+        local stride_scale = running and (0.85 / 1.4) or 1
+        phase = (phase + math.pi * controls.bob_cadence * distance * stride_scale /
             (controls.move_speed * rig.units_per_meter)) % (2 * math.pi)
     end
     local active = moving and since_motion < 0.12
-    local target_side = active and math.sin(phase) * controls.bob_horizontal * rig.units_per_meter or 0
-    local target_up = active and math.sin(2 * phase) * controls.bob_vertical * rig.units_per_meter or 0
     local blend = 1 - math.exp(-controls.bob_smoothing * dt)
+    run_blend = run_blend + ((running and 1 or 0) - run_blend) * blend
+    local gain = active and (crouched and 0.45 or 1) or 0
+    if profile then
+        -- Only actual resolved travel drives the camera; aiming damps both
+        -- positional and angular gait while preserving direct mouse aim.
+        local nominal = controls.move_speed * (running and controls.sprint_multiplier or 1) * rig.units_per_meter
+        gain = gain * math.min(1, distance / math.max(0.000001, dt * nominal))
+        if aiming then gain = gain * profile.aim_bob_scale end
+    end
+    local wave = math.sin(2 * phase)
+    if profile then wave = -math.cos(2 * phase) * (1 - run_blend) + running_step_height(phase) * run_blend end
+    local side_wave = math.sin(phase)
+    local target_side = side_wave * controls.bob_horizontal * rig.units_per_meter * gain * (1 + 1.166667 * run_blend)
+    local target_up = wave * controls.bob_vertical * rig.units_per_meter * gain * (1 + 1.5 * run_blend)
+    local angular = profile and profile.gait_rotation_strength or 0
+    local target_pitch = -wave * math.rad(0.10 + 0.22 * run_blend) * gain * angular
+    local target_roll = side_wave * math.rad(0.075 + 0.205 * run_blend) * gain * angular
     sideways = sideways + (target_side - sideways) * blend
     vertical = vertical + (target_up - vertical) * blend
+    pitch = pitch + (target_pitch - pitch) * blend
+    roll = roll + (target_roll - roll) * blend
     if math.abs(sideways) < 0.000001 then sideways = 0 end
     if math.abs(vertical) < 0.000001 then vertical = 0 end
+    if math.abs(pitch) < 0.000001 then pitch = 0 end
+    if math.abs(roll) < 0.000001 then roll = 0 end
 
-    -- Sideways follows the camera's horizontal right vector, independent of pitch.
-    camera.view_offset = {math.cos(camera.yaw) * sideways, vertical, math.sin(camera.yaw) * sideways}
-    ecs.set(player, "PlayerCamera", camera)
+    -- These offsets never feed back into the player position or gameplay aim.
+    local x, z = math.cos(camera.yaw) * sideways, math.sin(camera.yaw) * sideways
+    local offset = camera.view_offset
+    if offset[1] ~= x or offset[2] ~= vertical or offset[3] ~= z or
+        camera.view_bob_pitch ~= pitch or camera.view_bob_roll ~= roll then
+        camera.view_offset = {x, vertical, z}
+        camera.view_bob_pitch, camera.view_bob_roll = pitch, roll
+        ecs.set(player, "PlayerCamera", camera)
+    end
 end)

@@ -412,9 +412,32 @@ fn build_ui(
     images: &std::collections::BTreeMap<String, egui::TextureHandle>,
     arrange_mode: bool,
 ) -> (egui::FullOutput, Vec<UiEvent>) {
+    // Wheel events carry logical point deltas. Resolve them once against the
+    // topmost visible node, then route to its nearest scroll-area ancestor.
+    let wheel_y: f32 = raw
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            egui::Event::MouseWheel { delta, .. } => Some(delta.y),
+            _ => None,
+        })
+        .sum();
     let mut events = Vec::new();
     let output = context.run_ui(raw, |ui| {
         events.clear();
+        let scroll_target = if !arrange_mode && wheel_y != 0.0 {
+            ui.input(|input| input.pointer.hover_pos())
+                .and_then(|position| {
+                    frame
+                        .nodes
+                        .iter()
+                        .rev()
+                        .find(|node| node.clip.valid() && rect(node.clip).contains(position))
+                        .and_then(|node| node.scroll_parent.as_deref())
+                })
+        } else {
+            None
+        };
         for node in &frame.nodes {
             if !node.rect.valid()
                 || !node.clip.valid()
@@ -513,6 +536,147 @@ fn build_ui(
                                 });
                             }
                         }
+                    }
+                    // The grip occupies panel padding rather than overlapping its content.
+                    if let Some(limits) = &node.element.resize {
+                        let collapsed = node
+                            .element
+                            .collapsible
+                            .as_ref()
+                            .is_some_and(|p| p.collapsed);
+                        if !collapsed && !arrange_mode {
+                            let grip = egui::Rect::from_min_max(
+                                area.right_bottom() - Vec2::splat(18.0),
+                                area.right_bottom(),
+                            );
+                            let response = ui
+                                .push_id(&node.id, |ui| {
+                                    ui.set_clip_rect(clip);
+                                    ui.add_enabled_ui(node.enabled, |ui| {
+                                        let id = ui.make_persistent_id("panel-resize");
+                                        ui.interact(grip, id, egui::Sense::drag())
+                                    })
+                                    .inner
+                                })
+                                .inner;
+                            let grip_color = if response.hovered() || response.dragged() {
+                                color(style.accent)
+                            } else {
+                                color(style.border)
+                            };
+                            for inset in [5.0, 9.0, 13.0] {
+                                painter.line_segment(
+                                    [
+                                        Pos2::new(area.right() - inset, area.bottom() - 3.0),
+                                        Pos2::new(area.right() - 3.0, area.bottom() - inset),
+                                    ],
+                                    Stroke::new(1.5, grip_color),
+                                );
+                            }
+                            if response.dragged_by(egui::PointerButton::Primary) {
+                                let delta = if response.drag_started() {
+                                    response
+                                        .total_drag_delta()
+                                        .unwrap_or_else(|| response.drag_delta())
+                                } else {
+                                    response.drag_delta()
+                                };
+                                // Keep the grip reachable within the current viewport.
+                                let max_width = limits.max[0].min(
+                                    (node.drag_bounds.x + node.drag_bounds.width - area.left())
+                                        .max(limits.min[0]),
+                                );
+                                let max_height = limits.max[1].min(
+                                    (node.drag_bounds.y + node.drag_bounds.height - area.top())
+                                        .max(limits.min[1]),
+                                );
+                                let next = [
+                                    (node.element.rect.width + delta.x)
+                                        .clamp(limits.min[0], max_width),
+                                    (node.element.rect.height + delta.y)
+                                        .clamp(limits.min[1], max_height),
+                                ];
+                                if next != [node.element.rect.width, node.element.rect.height] {
+                                    events.push(UiEvent {
+                                        id: node.id.clone(),
+                                        kind: UiEventKind::ResizedTo(next),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                Widget::ScrollArea {
+                    offset,
+                    content_height,
+                } => {
+                    let max_offset = (content_height - area.height()).max(0.0);
+                    let mut next = *offset;
+                    if node.enabled && scroll_target == Some(node.id.as_str()) {
+                        next = (next - wheel_y).clamp(0.0, max_offset);
+                    }
+                    if max_offset > 0.0 && area.width() >= 14.0 && area.height() > 4.0 {
+                        let track = egui::Rect::from_min_max(
+                            Pos2::new(area.right() - 11.0, area.top() + 2.0),
+                            Pos2::new(area.right() - 3.0, area.bottom() - 2.0),
+                        );
+                        let thumb_height = (track.height() * area.height() / content_height)
+                            .clamp(20.0_f32.min(track.height()), track.height());
+                        let travel = (track.height() - thumb_height).max(0.0);
+                        let thumb_top = track.top() + travel * (*offset / max_offset);
+                        let thumb = egui::Rect::from_min_size(
+                            Pos2::new(track.left(), thumb_top),
+                            Vec2::new(track.width(), thumb_height),
+                        );
+                        painter.rect_filled(
+                            track,
+                            4.0,
+                            Color32::from_rgba_unmultiplied(6, 17, 24, 130),
+                        );
+                        let response = ui
+                            .push_id(&node.id, |ui| {
+                                ui.set_clip_rect(clip);
+                                ui.add_enabled_ui(node.enabled && !arrange_mode, |ui| {
+                                    let id = ui.make_persistent_id("scrollbar");
+                                    ui.interact(track, id, egui::Sense::click_and_drag())
+                                })
+                                .inner
+                            })
+                            .inner;
+                        let fill = if response.hovered() || response.dragged() {
+                            color(style.accent)
+                        } else {
+                            color(style.border)
+                        };
+                        painter.rect_filled(thumb, 4.0, fill);
+                        if travel > 0.0 {
+                            if response.dragged_by(egui::PointerButton::Primary) {
+                                let delta = if response.drag_started() {
+                                    response
+                                        .total_drag_delta()
+                                        .unwrap_or_else(|| response.drag_delta())
+                                } else {
+                                    response.drag_delta()
+                                };
+                                next =
+                                    (next + delta.y * max_offset / travel).clamp(0.0, max_offset);
+                            } else if response.clicked() {
+                                if let Some(position) = response.interact_pointer_pos() {
+                                    if !thumb.contains(position) {
+                                        next = ((position.y - track.top() - thumb_height * 0.5)
+                                            / travel
+                                            * max_offset)
+                                            .clamp(0.0, max_offset);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if node.enabled && !arrange_mode && (next - offset).abs() > 0.0001 {
+                        events.push(UiEvent {
+                            id: node.id.clone(),
+                            kind: UiEventKind::ScrollChanged(next),
+                        });
                     }
                 }
                 Widget::Image { source } => {
@@ -642,11 +806,13 @@ fn build_ui(
                                     value,
                                     min,
                                     max,
+                                    logarithmic,
                                 } => {
                                     let mut next = *value;
                                     ui.style_mut().visuals.selection.bg_fill = color(style.accent);
-                                    let slider =
-                                        egui::Slider::new(&mut next, *min..=*max).text(label);
+                                    let slider = egui::Slider::new(&mut next, *min..=*max)
+                                        .logarithmic(*logarithmic)
+                                        .text(label);
                                     ui.put(area, slider)
                                         .changed()
                                         .then_some(UiEventKind::NumberChanged(next))
@@ -716,6 +882,7 @@ mod tests {
                 id: "button".into(),
                 rect,
                 clip: rect,
+                scroll_parent: None,
                 drag_bounds: Rect::new(0.0, 0.0, 400.0, 300.0),
                 drag_correction: [0.0, 0.0],
                 z: 0,
@@ -786,6 +953,7 @@ mod tests {
                 id: "panel".into(),
                 rect: expanded,
                 clip: expanded,
+                scroll_parent: None,
                 drag_bounds: Rect::new(0.0, 0.0, 400.0, 300.0),
                 drag_correction: [0.0, 0.0],
                 z: 0,
@@ -911,6 +1079,7 @@ mod tests {
                 id: "panel".into(),
                 rect: area,
                 clip: area,
+                scroll_parent: None,
                 drag_bounds: Rect::new(0.0, 0.0, 400.0, 300.0),
                 drag_correction: [0.0, 0.0],
                 z: 0,
@@ -954,6 +1123,61 @@ mod tests {
         frame.nodes[0].rect.y += 30.0;
         frame.nodes[0].clip = frame.nodes[0].rect;
         assert!(test_frame(&context, &frame, vec![pointer(end, false)], 0.3, false).is_empty());
+    }
+
+    #[test]
+    fn panel_resize_grip_emits_bounded_dimensions() {
+        use countersplat_ui::{CollapsiblePanel, ResizeLimits};
+        let context = egui::Context::default();
+        let area = Rect::new(10.0, 10.0, 120.0, 100.0);
+        let frame = UiFrame {
+            nodes: vec![ResolvedNode {
+                id: "panel".into(),
+                rect: area,
+                clip: area,
+                scroll_parent: None,
+                drag_bounds: Rect::new(0.0, 0.0, 400.0, 300.0),
+                drag_correction: [0.0, 0.0],
+                z: 0,
+                enabled: true,
+                element: UiElement {
+                    rect: area,
+                    collapsible: Some(CollapsiblePanel {
+                        title: "Entities".into(),
+                        header_height: 30.0,
+                        collapsed: false,
+                    }),
+                    resize: Some(ResizeLimits {
+                        min: [80.0, 70.0],
+                        max: [300.0, 200.0],
+                    }),
+                    ..Default::default()
+                },
+            }],
+        };
+        let start = Pos2::new(125.0, 105.0);
+        let end = Pos2::new(225.0, 165.0);
+        test_frame(&context, &frame, vec![], 0.0, false);
+        test_frame(
+            &context,
+            &frame,
+            vec![egui::Event::PointerMoved(start), pointer(start, true)],
+            0.1,
+            false,
+        );
+        assert_eq!(
+            test_frame(
+                &context,
+                &frame,
+                vec![egui::Event::PointerMoved(end)],
+                0.2,
+                false
+            ),
+            vec![UiEvent {
+                id: "panel".into(),
+                kind: UiEventKind::ResizedTo([220.0, 160.0])
+            }]
+        );
     }
 
     #[test]
@@ -1026,6 +1250,105 @@ mod tests {
                 id: "button".into(),
                 kind: UiEventKind::Clicked
             }]
+        );
+    }
+
+    #[test]
+    fn wheel_over_a_child_and_scrollbar_drag_emit_scroll_offsets() {
+        let area = Rect::new(10.0, 10.0, 120.0, 100.0);
+        let mut child = frame().nodes.remove(0);
+        child.id = "row".into();
+        child.rect = Rect::new(15.0, 15.0, 95.0, 28.0);
+        child.clip = child.rect;
+        child.scroll_parent = Some("scroll".into());
+        child.z = 1;
+        let scroll = ResolvedNode {
+            id: "scroll".into(),
+            rect: area,
+            clip: area,
+            scroll_parent: Some("scroll".into()),
+            drag_bounds: area,
+            drag_correction: [0.0, 0.0],
+            z: 0,
+            enabled: true,
+            element: UiElement {
+                rect: area,
+                draggable: false,
+                widget: Widget::ScrollArea {
+                    offset: 0.0,
+                    content_height: 400.0,
+                },
+                ..Default::default()
+            },
+        };
+        let mut frame = UiFrame {
+            nodes: vec![scroll, child],
+        };
+        let wheel = |delta| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: Vec2::new(0.0, delta),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::default(),
+        };
+        let context = egui::Context::default();
+        test_frame(&context, &frame, vec![], 0.0, false);
+        assert_eq!(
+            test_frame(
+                &context,
+                &frame,
+                vec![
+                    egui::Event::PointerMoved(Pos2::new(35.0, 25.0)),
+                    wheel(-45.0)
+                ],
+                0.1,
+                false
+            ),
+            vec![UiEvent {
+                id: "scroll".into(),
+                kind: UiEventKind::ScrollChanged(45.0)
+            }]
+        );
+        // A higher unrelated UI element must prevent scrolling an obscured list.
+        let mut overlay = frame.nodes[1].clone();
+        overlay.id = "overlay".into();
+        overlay.scroll_parent = None;
+        overlay.z = 2;
+        frame.nodes.push(overlay);
+        assert!(test_frame(&context, &frame, vec![wheel(-45.0)], 0.2, false).is_empty());
+        frame.nodes.pop();
+        assert!(test_frame(
+            &context,
+            &frame,
+            vec![
+                egui::Event::PointerMoved(Pos2::new(250.0, 200.0)),
+                wheel(-45.0)
+            ],
+            0.3,
+            false
+        )
+        .is_empty());
+
+        let context = egui::Context::default();
+        let start = Pos2::new(123.0, 20.0);
+        let end = Pos2::new(123.0, 60.0);
+        test_frame(&context, &frame, vec![], 0.0, false);
+        test_frame(
+            &context,
+            &frame,
+            vec![egui::Event::PointerMoved(start), pointer(start, true)],
+            0.1,
+            false,
+        );
+        let events = test_frame(
+            &context,
+            &frame,
+            vec![egui::Event::PointerMoved(end)],
+            0.2,
+            false,
+        );
+        assert!(
+            matches!(events.as_slice(), [UiEvent { kind: UiEventKind::ScrollChanged(value), .. }] if *value > 0.0)
         );
     }
 }

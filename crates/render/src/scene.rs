@@ -695,6 +695,16 @@ impl GsplatScene {
         }
     }
 
+    /// Set renderer-neutral camera effects. The vector contains exposure EV,
+    /// focus distance in world units, circle-of-confusion scale in pixels, and
+    /// shutter fraction of the previous submitted frame. Zero disables each effect.
+    pub fn set_camera_effects(&self, queue: &wgpu::Queue, effects: [f32; 4], previous_clip: &Mat4) {
+        self.set_uniform(queue, "lens_effects", &f32s(&effects));
+        if effects[3] > 0.0 {
+            self.set_uniform(queue, "previous_clip_from_model", &f32s(previous_clip));
+        }
+    }
+
     pub fn active_slots(&self) -> u32 {
         self.sorter.active_slots()
     }

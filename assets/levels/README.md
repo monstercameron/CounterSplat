@@ -16,7 +16,9 @@ python scripts/download_supersplat.py --verify-only
 python scripts/download_previews.py
 ```
 
-The downloaded scene directories are excluded from version control; this README and the level catalog are tracked. Scene files remain subject to the applicable creator
+The downloaded scene directories and local level catalog are excluded from version control; this README remains tracked.
+Copy an existing local catalog to `assets/levels/catalog.json` or create one using the format in
+[asset loading](../../docs/asset-loading.md) before launching the selector. Scene files remain subject to the applicable creator
 permissions and licenses. The greenhouse page identifies its license as CC BY 4.0; see its `source.json` for credit.
 
 A catalog entry may include `"player_units_per_meter": 1.2` to calibrate the player's initial

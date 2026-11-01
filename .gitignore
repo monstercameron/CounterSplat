@@ -6,9 +6,19 @@
 *.png
 !crates/**/tests/fixtures/*.png
 
-# Keep the catalog and setup notes, but never commit downloaded levels.
+# Local media and level data. Keep only small asset notices and playback metadata.
+/assets/images/*
+!/assets/images/first-person/
+/assets/images/first-person/*
+!/assets/images/first-person/ASSET-NOTICES.md
+!/assets/images/first-person/playback/
+/assets/images/first-person/playback/*
+!/assets/images/first-person/playback/manifest.json
+/assets/sound/*
+!/assets/sound/.gitkeep
+/assets/music/*
+!/assets/music/.gitkeep
 /assets/levels/*
-!/assets/levels/catalog.json
 !/assets/levels/README.md
 *.sog
 *.splat

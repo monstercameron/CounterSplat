@@ -1,5 +1,5 @@
 //! ECS-owned level selection scene for the browser host.
-use crate::{js_error, ui_layout::UiLayout, ui_modifiers};
+use crate::{js_error, ui_modifiers};
 use countersplat_ecs::{Entity, World};
 use countersplat_scene::{
     AssetLoader, AssetLoadingStatus, LevelCatalog, SceneCatalog, SceneManifest,
@@ -8,6 +8,7 @@ use countersplat_ui::{
     Color, InputEvent, PointerButton, Rect, Style, TextAlign, UiElement, UiEvent, UiEventKind,
     Widget,
 };
+use countersplat_ui_ecs::UiLayout;
 use countersplat_ui_ecs::{apply_events, extract, register, spawn, EVENT_CHANNEL};
 use countersplat_ui_wgpu::{UiRenderer, UiTarget};
 use std::{
@@ -362,6 +363,10 @@ impl Selector {
         let limit = self.device.limits().max_texture_dimension_2d;
         let size = (width.clamp(1, limit), height.clamp(1, limit));
         self.pending_resize = (size != (self.config.width, self.config.height)).then_some(size);
+    }
+    /// Maximum supported 2D texture dimension for viewport sizing.
+    pub fn max_texture_dimension(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
     }
     pub fn ui_set_width(&mut self, width: f32) {
         if width.is_finite() && (1.0..=1_000_000.0).contains(&width) {

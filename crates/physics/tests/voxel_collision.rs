@@ -179,3 +179,92 @@ fn upright_capsule_respects_legacy_coordinate_rotation() {
         "legacy capsule must stop at the wall: {hit:?}"
     );
 }
+
+#[test]
+fn capsule_clearance_blocks_a_low_ceiling_and_accepts_touching_floor() {
+    let mut mask = 0u64;
+    for z in 0..4 {
+        for x in 0..4 {
+            mask |= 1 << (x + z * 16);
+            mask |= 1 << (x + 3 * 4 + z * 16);
+        }
+    }
+    let world = capsule_world(mask, "1.1");
+    // Crouched player fits between the floor at y=1 and ceiling at y=3.
+    assert!(world.capsule_clear([1.5, 1.65, 1.5], 0.2, 0.45).unwrap());
+    // The standing top intersects the same ceiling.
+    assert!(!world.capsule_clear([1.5, 2.075, 1.5], 0.2, 0.875).unwrap());
+    // The top-sphere sweep used by the posture script also detects it.
+    assert!(!world.capsule_clear([1.5, 2.525, 1.5], 0.2, 0.625).unwrap());
+    assert!(world
+        .capsule_clear([1.5, 1.65, 1.5], f32::NAN, 0.45)
+        .is_err());
+    let legacy = capsule_world(mask, "1.0");
+    assert!(legacy.capsule_clear([-1.5, -1.65, 1.5], 0.2, 0.45).unwrap());
+    assert!(!legacy
+        .capsule_clear([-1.5, -2.075, 1.5], 0.2, 0.875)
+        .unwrap());
+}
+
+#[test]
+fn segment_tracing_hits_the_first_voxel_without_tunneling() {
+    let world = collider("1.1");
+    let hit = world
+        .trace_segment([-10.0, 1.5, 1.5], [20.0, 1.5, 1.5])
+        .unwrap()
+        .unwrap();
+    assert!((hit.fraction - 0.4).abs() < 0.00001);
+    assert_eq!(hit.position, [2.0, 1.5, 1.5]);
+    assert_eq!(hit.normal, [-1.0, 0.0, 0.0]);
+    let reverse = world
+        .trace_segment([3.9, 1.5, 1.5], [0.0, 1.5, 1.5])
+        .unwrap()
+        .unwrap();
+    assert!((reverse.position[0] - 3.0).abs() < 0.0001);
+    assert_eq!(reverse.normal, [1.0, 0.0, 0.0]);
+    assert!(world
+        .trace_segment([0.1, 5.0, 1.5], [3.9, 5.0, 1.5])
+        .unwrap()
+        .is_none());
+    assert!(world
+        .trace_segment([0.1, 1.5, 1.5], [1.9, 1.5, 1.5])
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        world
+            .trace_segment([2.5, 1.5, 1.5], [2.5, 1.5, 1.5])
+            .unwrap()
+            .unwrap()
+            .fraction,
+        0.0
+    );
+    assert!(world.trace_segment([f32::NAN, 0.0, 0.0], [0.0; 3]).is_err());
+}
+
+#[test]
+fn segment_tracing_respects_negative_boundaries_and_legacy_coordinates() {
+    let world = collider("1.1");
+    assert!(world
+        .trace_segment([2.0, 1.5, 1.5], [1.0, 1.5, 1.5])
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        world
+            .trace_segment([2.0, 1.5, 1.5], [3.0, 1.5, 1.5])
+            .unwrap()
+            .unwrap()
+            .fraction,
+        0.0
+    );
+    let hit = collider("1.0")
+        .trace_segment([0.0, -1.5, 1.5], [-4.0, -1.5, 1.5])
+        .unwrap()
+        .unwrap();
+    assert_eq!(hit.position, [-2.0, -1.5, 1.5]);
+    assert_eq!(hit.normal, [1.0, 0.0, 0.0]);
+    let diagonal = world
+        .trace_segment([0.0, 0.0, 0.0], [4.0, 4.0, 4.0])
+        .unwrap()
+        .unwrap();
+    assert_eq!(diagonal.position, [2.0, 2.0, 2.0]);
+}

@@ -6,7 +6,7 @@ use super::{threaded, Result};
 use countersplat_core::{pacing::FrameLimiter, rate::Rate};
 use countersplat_ecs::{Entity, World};
 use countersplat_render::{
-    camera, env,
+    camera, env, postprocess,
     presentation::{select_mode, Vsync},
     scene::{self, Pipelines, View},
     DEPTH_FORMAT,
@@ -149,6 +149,7 @@ struct State {
     format: wgpu::TextureFormat,
     modes: Vec<wgpu::PresentMode>,
     depth: wgpu::TextureView,
+    postprocess: postprocess::PostProcess,
     gpu: threaded::Gpu,
     level: super::LoadedLevel,
     scene_world: World,
@@ -343,7 +344,9 @@ impl State {
         };
         surface.configure(&device, &config);
         let depth = depth(&device, config.width, config.height);
-        let pipelines = Pipelines::new(&device, format)?;
+        let postprocess =
+            postprocess::PostProcess::new(&device, format, config.width, config.height);
+        let pipelines = Pipelines::new(&device, postprocess::SCENE_FORMAT)?;
         let gpu = threaded::Gpu {
             device,
             queue,
@@ -379,7 +382,7 @@ impl State {
         for (id, cube) in cubes {
             skybox_assets.insert(
                 id,
-                env::Sky::try_new(&gpu.device, &gpu.queue, &cube, format)?,
+                env::Sky::try_new(&gpu.device, &gpu.queue, &cube, postprocess::SCENE_FORMAT)?,
             );
         }
         let mut state = Self {
@@ -389,6 +392,7 @@ impl State {
             format,
             modes: capabilities.present_modes,
             depth,
+            postprocess,
             gpu,
             level,
             scene_world,
@@ -537,6 +541,7 @@ impl State {
                 self.config.width = width;
                 self.config.height = height;
                 self.depth = depth(&self.gpu.device, width, height);
+                self.postprocess.resize(&self.gpu.device, width, height);
                 changed = true;
             }
         }
@@ -586,11 +591,11 @@ impl State {
         {
             let mut pass = scene::color_pass(
                 &mut encoder,
-                &color,
+                self.postprocess.scene_view(),
                 &self.depth,
                 true,
                 true,
-                "CounterSplat native window",
+                "CounterSplat native HDR scene",
             );
             if let Some(snapshot) = countersplat_scene_ecs::extract(&self.scene_world) {
                 if let Some(sky) = self.skybox_assets.get(&snapshot.skybox.asset) {
@@ -606,6 +611,26 @@ impl State {
             }
             self.level.pool.draw_color(&mut pass, &self.gpu.pipelines);
         }
+        let grade = countersplat_scene_ecs::extract_image_correction(&self.scene_world)
+            .map(|grade| postprocess::Settings {
+                enabled: grade.enabled,
+                filmic: grade.filmic,
+                exposure_ev: grade.exposure_ev,
+                contrast: grade.contrast,
+                saturation: grade.saturation,
+                temperature: grade.temperature,
+                tint: grade.tint,
+                shadows: grade.shadows,
+                highlights: grade.highlights,
+                bloom_intensity: grade.bloom_intensity,
+                bloom_threshold: grade.bloom_threshold,
+                vignette: grade.vignette,
+                grain: grade.grain,
+                sharpness: grade.sharpness,
+            })
+            .unwrap_or_default();
+        self.postprocess
+            .encode(&self.gpu.queue, &mut encoder, &color, grade);
         self.pending_gpu.store(true, Ordering::Release);
         self.gpu.queue.submit(Some(encoder.finish()));
         let pending = Arc::clone(&self.pending_gpu);

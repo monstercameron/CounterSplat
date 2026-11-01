@@ -12,6 +12,123 @@ impl WorldBridge for LocalBridge {
         self.0.borrow_mut().apply_operation(op)
     }
 }
+
+// Exercise the browser's resource handoff without placing spawn decisions in
+// the host. The ECS component still validates every script write.
+fn spawn_fixture(
+    source: &str,
+    candidate: Option<serde_json::Value>,
+    supplied_spawn: Option<PlayerCamera>,
+) -> (
+    Rc<RefCell<World>>,
+    LuaRuntime,
+    countersplat_ecs::Entity,
+    PlayerCamera,
+) {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &manifest,
+        &["ui", "player", "level"],
+    )
+    .unwrap();
+    let player = ids["player"];
+    let authored = PlayerCamera::from_view([1.0, 2.0, 3.0], [1.0, 2.0, 2.0], 70.0).unwrap();
+    {
+        let mut w = world.borrow_mut();
+        *w.get_mut::<PlayerCamera>(player).unwrap() = authored.clone();
+        let mut preview = w.get_dynamic_resource("preview").unwrap().clone();
+        preview["player_spawn"] = json!(source);
+        w.set_dynamic_resource("preview", preview);
+        w.set_dynamic_resource("player.default_controls", json!(PlayerControls::default()));
+        if let Some(candidate) = candidate {
+            w.set_dynamic_resource("player.level_view", candidate);
+        }
+        if let Some(spawn) = supplied_spawn {
+            w.set_dynamic_resource("player.spawn_camera", json!(spawn));
+        }
+    }
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    (world, lua, player, authored)
+}
+
+fn load_player_controller(lua: &LuaRuntime) -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    lua.execute(&std::fs::read_to_string(root.join("assets/scripts/player_controls.lua")).unwrap())
+        .map_err(|error| error.to_string())
+}
+
+#[test]
+fn lua_selects_level_or_scene_spawn_and_sets_reset_pose() {
+    let level = PlayerCamera::from_view([4.0, 5.0, 6.0], [4.0, 5.0, 5.0], 75.0).unwrap();
+    for source in ["level", "scene"] {
+        let (world, lua, player, authored) =
+            spawn_fixture(source, Some(json!({"camera": level})), None);
+        load_player_controller(&lua).unwrap();
+        let expected = if source == "level" { &level } else { &authored };
+        let w = world.borrow();
+        assert_eq!(w.get::<PlayerCamera>(player).unwrap(), expected);
+        assert_eq!(
+            w.get_dynamic_resource("player.spawn_camera").unwrap(),
+            &json!(expected)
+        );
+    }
+}
+
+#[test]
+fn lua_validates_only_the_selected_spawn_and_supports_hosts_without_a_level_hint() {
+    let invalid = Some(json!({"error": "bad camera"}));
+    let (world, lua, player, authored) = spawn_fixture("scene", invalid.clone(), None);
+    load_player_controller(&lua).unwrap();
+    assert_eq!(
+        world.borrow().get::<PlayerCamera>(player).unwrap(),
+        &authored
+    );
+    assert_eq!(
+        world
+            .borrow()
+            .get_dynamic_resource("player.spawn_camera")
+            .unwrap(),
+        &json!(authored)
+    );
+
+    let (_, lua, _, _) = spawn_fixture("level", invalid, None);
+    assert!(load_player_controller(&lua)
+        .unwrap_err()
+        .contains("bad camera"));
+    let (_, lua, _, _) = spawn_fixture("unknown", None, None);
+    assert!(load_player_controller(&lua)
+        .unwrap_err()
+        .contains("preview.player_spawn"));
+
+    let (world, lua, _, authored) = spawn_fixture("level", None, None);
+    load_player_controller(&lua).unwrap();
+    assert_eq!(
+        world
+            .borrow()
+            .get_dynamic_resource("player.spawn_camera")
+            .unwrap(),
+        &json!(authored)
+    );
+
+    let supplied = PlayerCamera::default();
+    let (world, lua, _, _) = spawn_fixture("level", None, Some(supplied.clone()));
+    load_player_controller(&lua).unwrap();
+    assert_eq!(
+        world
+            .borrow()
+            .get_dynamic_resource("player.spawn_camera")
+            .unwrap(),
+        &json!(supplied)
+    );
+}
+
 #[test]
 fn lua_player_moves_looks_rebinds_and_resets_through_ecs() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -59,10 +176,18 @@ fn lua_player_moves_looks_rebinds_and_resets_through_ecs() {
         after_move
     );
 
+    let sensitivity = world
+        .borrow()
+        .get::<PlayerControls>(player)
+        .unwrap()
+        .mouse_sensitivity;
     lua.dispatch("input.mouse_delta", &json!({"dx":100.0,"dy":50.0}))
         .unwrap();
     let camera = world.borrow().get::<PlayerCamera>(player).unwrap().clone();
-    assert!((camera.yaw - 0.3).abs() < 0.001 && (camera.pitch + 0.15).abs() < 0.001);
+    assert!(
+        (camera.yaw - 100.0 * sensitivity).abs() < 0.001
+            && (camera.pitch + 50.0 * sensitivity).abs() < 0.001
+    );
     world
         .borrow_mut()
         .get_mut::<countersplat_ui::UiElement>(ids["controls_panel"])

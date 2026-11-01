@@ -7,7 +7,7 @@
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0b0e13; color: #e7edf4; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+    body { margin: 0; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
     header, footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.4rem; }
     header { border-bottom: 1px solid #27313d; } footer { color: #94a4b6; font-size: .8rem; border-top: 1px solid #27313d; }
     h1 { font-size: 1rem; letter-spacing: .06em; margin: 0; }
@@ -17,19 +17,49 @@
     .arrange:hover, .arrange[aria-pressed="true"] { border-color: #e8bc77; color: #fff3dd; background: #5a432b; }
     .arrange:focus-visible { outline: 2px solid #e8bc77; outline-offset: 2px; }
     .status { color: #9ddfc6; font-size: .8rem; } .status::before { content: '●'; margin-right: .45rem; }
-    main { display: grid; place-items: center; padding: 1rem; overflow: hidden; }
-    /* Limit the width by the available height too, so the canvas element and its
-       displayed 16:9 image share the same bounds for pointer input. */
-    canvas { display: block; width: min(100%, 1280px, max(1px, calc(177.77778vh - 16rem))); height: auto; aspect-ratio: 16 / 9; border: 1px solid #27313d; background: #050608; touch-action: none; }
+    main { min-width: 0; min-height: 0; overflow: hidden; }
+    /* The output surface fills the available viewport. The GPU presents the
+       separately sized scene with aspect-preserving fill or fit. */
+    canvas { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; border: 0; background: #050608; touch-action: none; }
     canvas:focus-visible { outline: 2px solid #e8bc77; outline-offset: 3px; }
     #message { color: #b8c6d5; text-align: center; max-width: 50rem; }
-    .canvas { display: grid; place-items: center; width: 100%; height: 100%; }
+    .canvas { display: grid; place-items: center; width: 100%; height: 100%; min-width: 0; min-height: 0; }
     .canvas > * { grid-area: 1 / 1; }
+    .display-menu { position: relative; }
+    .display-menu summary { list-style: none; white-space: nowrap; }
+    .display-menu summary::-webkit-details-marker { display: none; }
+    .display-menu[open] summary { border-color: #e8bc77; color: #fff3dd; }
+    .display-menu__panel { position: absolute; z-index: 100; right: 0; top: calc(100% + .55rem); width: min(330px, calc(100vw - 1.5rem)); padding: 1rem; border: 1px solid #52777b; border-radius: 8px; background: #10232b; box-shadow: 0 12px 36px #0009; }
+    .display-menu__panel label { display: grid; gap: .35rem; color: #bfd6d4; font-size: .78rem; margin-bottom: .8rem; }
+    .display-menu__panel select, .display-menu__panel input { width: 100%; min-width: 0; padding: .48rem; border: 1px solid #44656b; border-radius: 5px; background: #0b1a22; color: #f0f6f4; font: inherit; }
+    .display-menu__panel select:focus-visible, .display-menu__panel input:focus-visible { outline: 2px solid #e8bc77; outline-offset: 2px; }
+    .resolution-fields { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+    .display-feedback { color: #a8c8c4; font-size: .73rem; line-height: 1.4; margin: .6rem 0 0; }
+    .display-hint { color: #92acb0; font-size: .72rem; line-height: 1.4; margin: 0 0 .8rem; }
     [hidden] { display: none !important; }
   </style>
 </head>
 <body>
-  <header><h1>COUNTERSPLAT <span style="color:#8292a3">/ CANVAS</span></h1><div class="header-actions"><button class="arrange" id="reset-layout" type="button" title="Restore this scene’s original UI positions" hidden>Reset positions</button><button class="arrange" id="arrange" type="button" aria-pressed="false" title="Move individual UI elements">Arrange UI</button><span class="status" id="status" aria-live="polite">Starting WebGPU</span></div></header>
+  <header><h1>COUNTERSPLAT <span style="color:#8292a3">/ CANVAS</span></h1><div class="header-actions">
+    <details class="display-menu" id="display-menu">
+      <summary class="arrange">Display · <span id="display-current">1280 × 720</span></summary>
+      <div class="display-menu__panel">
+        <label for="render-preset">Render resolution<select id="render-preset"></select></label>
+        <form id="resolution-form">
+          <div id="custom-resolution" hidden>
+            <div class="resolution-fields">
+              <label for="render-width">Width<input id="render-width" type="number" min="64" max="8192" step="1" required></label>
+              <label for="render-height">Height<input id="render-height" type="number" min="64" max="8192" step="1" required></label>
+            </div>
+            <button class="arrange" type="submit">Apply resolution</button>
+          </div>
+        </form>
+        <label for="viewport-scaling">Viewport scaling<select id="viewport-scaling"><option value="fill">Fill viewport · crop edges</option><option value="fit">Fit entire image · show bars</option></select></label>
+        <p class="display-hint">The scene keeps its aspect ratio. Game controls remain visible across the viewport.</p>
+        <p class="display-feedback" id="display-feedback" role="status" aria-live="polite"></p>
+      </div>
+    </details>
+    <button class="arrange" id="reset-layout" type="button" title="Restore this scene’s original UI positions" hidden>Reset positions</button><button class="arrange" id="arrange" type="button" aria-pressed="false" title="Move individual UI elements">Arrange UI</button><span class="status" id="status" aria-live="polite">Starting WebGPU</span></div></header>
   <main><div class="canvas"><canvas id="canvas" tabindex="0" width="960" height="540" aria-label="Live CounterSplat WebGPU renderer"></canvas><p id="message">Loading the renderer…</p></div></main>
   <footer><span id="metrics">Waiting for engine</span><span>WebGPU canvas · local preview</span></footer>
   <script src="/pkg/wasmoon/index.js"></script>

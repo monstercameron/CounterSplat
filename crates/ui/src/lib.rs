@@ -143,6 +143,12 @@ impl Default for Style {
 pub enum Widget {
     #[default]
     Panel,
+    /// A vertically scrollable, clipped viewport. Child coordinates are
+    /// relative to the content, and the offset is measured in logical points.
+    ScrollArea {
+        offset: f32,
+        content_height: f32,
+    },
     Rectangle,
     /// An image identified by a host-registered resource key, cropped to fill its rectangle.
     Image {
@@ -177,6 +183,9 @@ pub enum Widget {
         value: f32,
         min: f32,
         max: f32,
+        /// Spread wide numeric ranges logarithmically while keeping the value in real units.
+        #[serde(default)]
+        logarithmic: bool,
     },
     TextInput {
         text: String,
@@ -209,6 +218,13 @@ impl Default for CollapsiblePanel {
     }
 }
 
+/// Optional resize bounds in logical points for a panel's bottom-right grip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResizeLimits {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+}
+
 /// One layout element. Child rectangles are relative to their UI parent's rectangle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -226,6 +242,8 @@ pub struct UiElement {
     pub drag_offset: [f32; 2],
     /// Optional, interactive header for `Widget::Panel`; absent panels behave as before.
     pub collapsible: Option<CollapsiblePanel>,
+    /// Enable interactive resizing within these bounds. Children can react to resize events.
+    pub resize: Option<ResizeLimits>,
     pub style: Style,
     pub widget: Widget,
 }
@@ -241,6 +259,7 @@ impl Default for UiElement {
             draggable: true,
             drag_offset: [0.0, 0.0],
             collapsible: None,
+            resize: None,
             style: Style::default(),
             widget: Widget::Panel,
         }
@@ -276,6 +295,26 @@ impl UiElement {
                 || panel.header_height >= self.rect.height
             {
                 return Err("collapsible panel needs a title and a valid header smaller than its expanded height");
+            }
+        }
+        if let Some(limits) = &self.resize {
+            let size = [self.rect.width, self.rect.height];
+            if !matches!(self.widget, Widget::Panel)
+                || (0..2).any(|axis| {
+                    !limits.min[axis].is_finite()
+                        || !limits.max[axis].is_finite()
+                        || limits.min[axis] < 32.0
+                        || limits.max[axis] > 1_000_000.0
+                        || limits.min[axis] > limits.max[axis]
+                        || size[axis] < limits.min[axis]
+                        || size[axis] > limits.max[axis]
+                })
+                || self
+                    .collapsible
+                    .as_ref()
+                    .is_some_and(|panel| limits.min[1] <= panel.header_height)
+            {
+                return Err("UI resize bounds or panel size are invalid");
             }
         }
         let text_valid = |s: &str| s.len() <= 16_384;
@@ -333,6 +372,18 @@ impl UiElement {
             {
                 Err("UI slider range or value is invalid")
             }
+            Widget::ScrollArea {
+                offset,
+                content_height,
+            } if !offset.is_finite()
+                || !content_height.is_finite()
+                || *content_height < 0.0
+                || *content_height > 1_000_000.0
+                || *offset < 0.0
+                || *offset > (*content_height - self.rect.height).max(0.0) =>
+            {
+                Err("UI scroll area has invalid content height or offset")
+            }
             Widget::Progress { value } if !value.is_finite() || !(0.0..=1.0).contains(value) => {
                 Err("UI progress must be between zero and one")
             }
@@ -352,6 +403,8 @@ pub struct ResolvedNode {
     pub id: String,
     pub rect: Rect,
     pub clip: Rect,
+    /// Closest scroll area containing this node, including the area itself.
+    pub scroll_parent: Option<String>,
     /// Visible parent bounds, used to keep dragged elements reachable.
     pub drag_bounds: Rect,
     /// Adjustment from the authored position to the visible position after a resize.
@@ -381,8 +434,12 @@ pub enum UiEventKind {
     CollapsedChanged(bool),
     /// Incremental movement in logical screen points; independent of the element anchor.
     MovedBy([f32; 2]),
+    /// New expanded panel width and height in logical points.
+    ResizedTo([f32; 2]),
     BoolChanged(bool),
     NumberChanged(f32),
+    /// A scroll area's new vertical offset in logical points.
+    ScrollChanged(f32),
     TextChanged(String),
 }
 
@@ -451,6 +508,7 @@ mod tests {
             value: 3.0,
             min: 0.0,
             max: 1.0,
+            logarithmic: false,
         };
         assert!(node.validate().is_err());
     }

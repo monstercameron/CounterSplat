@@ -2,6 +2,9 @@
 //!
 //! A host owns assets separately from scene state. Components reference opaque asset IDs rather
 //! than filesystem paths or GPU objects, so snapshots can cross subsystem and scripting boundaries.
+mod camera;
+mod camera_controller;
+mod image_correction;
 mod level;
 mod levels;
 mod loading;
@@ -10,6 +13,9 @@ mod physics;
 mod player;
 mod scenes;
 mod voxel;
+pub use camera::{CameraLens, CameraZoomLens};
+pub use camera_controller::CameraController;
+pub use image_correction::ImageCorrection;
 pub use level::{LevelAssets, LevelFile, LevelFileKind, LevelSettings};
 pub use levels::{LevelAssetPolicies, LevelCatalog, LevelEntry, LevelFormat};
 pub use loading::{AssetLoader, AssetLoadingStatus};

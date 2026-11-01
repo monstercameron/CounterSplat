@@ -25,3 +25,28 @@ export class GameplayMouseButtons {
     this.rightDown = false;
   }
 }
+
+// Track a gameplay-only left button independently of right-button zoom. A press
+// that begins over UI remains blocked until release, even if dragged into play.
+export class GameplayFireButton {
+  constructor(emit) { this.emit = emit; this.down = false; this.blocked = false; }
+  update(event, allowPress) {
+    if (event.pointerType !== 'mouse') return;
+    const down = (event.buttons & 1) !== 0;
+    if (!down) {
+      const wasDown = this.down; this.down = false; this.blocked = false;
+      if (wasDown) this.emit(false);
+      return;
+    }
+    if (event.type === 'pointerdown' && event.button === 0 && !this.down) this.blocked = false;
+    if (!this.down && !this.blocked && event.button === 0) {
+      if (!allowPress) { this.blocked = true; return; }
+      this.down = true; this.emit(true);
+    }
+  }
+  reset() {
+    this.blocked = this.blocked || this.down;
+    if (this.down) this.emit(false);
+    this.down = false;
+  }
+}
