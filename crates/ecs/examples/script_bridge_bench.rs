@@ -15,12 +15,11 @@ struct Body {
     collision: bool,
 }
 
-fn measure(world: &mut World, request: &str) -> f64 {
+fn measure(world: &mut World, request: &str, iterations: usize) -> f64 {
     for _ in 0..200 {
         black_box(world.apply_script_json(black_box(request)).unwrap());
     }
     let mut samples = Vec::new();
-    let iterations = 12_000;
     for _ in 0..7 {
         let start = Instant::now();
         for _ in 0..iterations {
@@ -90,7 +89,23 @@ fn main() {
     ] {
         println!(
             "{name:>20}: {:.0} ns/op",
-            measure(&mut world, &request.to_string())
+            measure(&mut world, &request.to_string(), 12_000)
+        );
+    }
+    for (size, iterations) in [(200, 1000), (2_000, 100)] {
+        let mut world = World::new();
+        let mut parent = None;
+        for index in 0..size {
+            let entity = world.spawn();
+            if index % 10 == 0 {
+                parent = Some(entity);
+            } else {
+                world.set_parent(entity, parent).unwrap();
+            }
+        }
+        println!(
+            "{size:>4} entity hierarchy: {:.0} ns/op",
+            measure(&mut world, r#"{"op":"hierarchy"}"#, iterations)
         );
     }
 }

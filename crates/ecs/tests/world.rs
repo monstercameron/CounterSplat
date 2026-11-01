@@ -39,6 +39,43 @@ fn entity_handles_are_world_scoped_and_do_not_revive() {
 }
 
 #[test]
+fn streamed_script_hierarchy_matches_owned_world_operation() {
+    let mut world = World::new();
+    let root = world.spawn();
+    let removed = world.spawn();
+    let child = world.spawn();
+    world.set_parent(child, Some(root)).unwrap();
+    assert!(world.despawn(removed));
+    let replacement = world.spawn();
+    world.set_parent(replacement, Some(child)).unwrap();
+    assert_eq!(world.iter_entities().collect::<Vec<_>>(), world.entities());
+
+    let expected = match world.apply_operation(WorldOperation::Hierarchy).unwrap() {
+        WorldOutcome::Value(Some(value)) => value,
+        other => panic!("unexpected hierarchy: {other:?}"),
+    };
+    let hierarchy: Value =
+        serde_json::from_str(&world.apply_script_json(r#"{"op":"hierarchy"}"#).unwrap()).unwrap();
+    assert_eq!(hierarchy, json!({"found":true,"value":expected}));
+    let entities: Value =
+        serde_json::from_str(&world.apply_script_json(r#"{"op":"entities"}"#).unwrap()).unwrap();
+    let ids = world
+        .entities()
+        .into_iter()
+        .map(|entity| entity.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(entities, json!({"found":true,"value":ids}));
+
+    let empty = World::new()
+        .apply_script_json(r#"{"op":"hierarchy"}"#)
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&empty).unwrap(),
+        json!({"found":true,"value":[]})
+    );
+}
+
+#[test]
 fn component_view_borrows_ordered_live_storage() {
     let mut world = World::new();
     assert!(world.component_view::<u32>().is_none());

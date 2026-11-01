@@ -3,7 +3,7 @@
 //! Hosts can use this boundary when the caller cannot exchange Rust values directly. All
 //! operations still execute on the world owner and use the same component adapters as native Lua.
 use crate::{Entity, World, WorldOperation, WorldOutcome};
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeSeq, Deserialize, Serialize, Serializer};
 use serde_json::{json, Value};
 use std::{borrow::Cow, str::FromStr};
 
@@ -21,6 +21,44 @@ fn script_result<T: Serialize>(value: Option<T>) -> Result<String, String> {
         value,
     })
     .map_err(|error| error.to_string())
+}
+
+struct ScriptEntityId(Entity);
+impl Serialize for ScriptEntityId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&self.0)
+    }
+}
+
+struct ScriptEntities<'a>(&'a World);
+impl Serialize for ScriptEntities<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for entity in self.0.iter_entities() {
+            sequence.serialize_element(&ScriptEntityId(entity))?;
+        }
+        sequence.end()
+    }
+}
+
+#[derive(Serialize)]
+struct ScriptHierarchyEntry {
+    id: ScriptEntityId,
+    parent: Option<ScriptEntityId>,
+}
+
+struct ScriptHierarchy<'a>(&'a World);
+impl Serialize for ScriptHierarchy<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for entity in self.0.iter_entities() {
+            sequence.serialize_element(&ScriptHierarchyEntry {
+                id: ScriptEntityId(entity),
+                parent: self.0.parent(entity).map(ScriptEntityId),
+            })?;
+        }
+        sequence.end()
+    }
 }
 
 fn script_component_result(world: &World, entity: Entity, name: &str) -> Result<String, String> {
@@ -155,10 +193,8 @@ impl World {
             S::IsAlive { id } => O::IsAlive {
                 entity: Entity::from_str(&id)?,
             },
-            S::Entities => O::Query {
-                components: Vec::new(),
-            },
-            S::Hierarchy => O::Hierarchy,
+            S::Entities => return script_result(Some(ScriptEntities(self))),
+            S::Hierarchy => return script_result(Some(ScriptHierarchy(self))),
             S::Components { id } => O::Components {
                 entity: Entity::from_str(&id)?,
             },

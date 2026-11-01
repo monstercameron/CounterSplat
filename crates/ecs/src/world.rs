@@ -297,6 +297,11 @@ impl World {
 
     /// Living entities in deterministic slot order.
     pub fn entities(&self) -> Vec<Entity> {
+        self.iter_entities().collect()
+    }
+
+    /// Iterates living entities in deterministic slot order without copying them.
+    pub fn iter_entities(&self) -> impl Iterator<Item = Entity> + '_ {
         self.alive
             .iter()
             .enumerate()
@@ -306,7 +311,6 @@ impl World {
                 index: index as u32,
                 generation: self.generations[index],
             })
-            .collect()
     }
 
     /// Adds or replaces a typed Rust component. Components must be movable to the simulation thread.
