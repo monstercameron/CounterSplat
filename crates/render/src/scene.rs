@@ -25,7 +25,9 @@ mod passes;
 
 #[cfg(test)]
 use data::centres_to_le_bytes;
-use data::{centres_le_bytes, f32s, quad_vertices, u32s, upload_texture, write_slots};
+use data::{
+    centres_le_bytes, f32s, f32s_le_bytes, quad_vertices, u32s, upload_texture, write_slots,
+};
 pub use passes::{color_pass, depth_pass};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc;
@@ -373,7 +375,11 @@ fn assemble(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    queue.write_buffer(&fade, 0, &f32s(&vec![1.0; count.max(1) as usize]));
+    queue.write_buffer(
+        &fade,
+        0,
+        f32s_le_bytes(&vec![1.0; count.max(1) as usize]).as_ref(),
+    );
     let sorter = DepthSorter::new_for_direct_draw(device, queue, count, &centers, &fade);
     buffers.insert("splatFade".into(), fade);
     // Per-slot level of detail (plus one; 0 for splats not from a streamed level) and the LOD tint switch.
@@ -447,7 +453,7 @@ fn assemble(
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    queue.write_buffer(&quad, 0, &f32s(&quad_data));
+    queue.write_buffer(&quad, 0, f32s_le_bytes(&quad_data).as_ref());
     // Reuse the two shared triangle corners: expensive SOG/SH/lighting runs four times per splat, not six.
     let indices: Vec<u16> = (0..INSTANCE_SIZE as u16)
         .flat_map(|slot| [0, 1, 2, 0, 2, 3].map(|i| slot * 4 + i))
@@ -721,9 +727,13 @@ impl GsplatScene {
     /// focus distance in world units, circle-of-confusion scale in pixels, and
     /// shutter fraction of the previous submitted frame. Zero disables each effect.
     pub fn set_camera_effects(&self, queue: &wgpu::Queue, effects: [f32; 4], previous_clip: &Mat4) {
-        self.set_uniform(queue, "lens_effects", &f32s(&effects));
+        self.set_uniform(queue, "lens_effects", f32s_le_bytes(&effects).as_ref());
         if effects[3] > 0.0 {
-            self.set_uniform(queue, "previous_clip_from_model", &f32s(previous_clip));
+            self.set_uniform(
+                queue,
+                "previous_clip_from_model",
+                f32s_le_bytes(previous_clip).as_ref(),
+            );
         }
     }
 
@@ -782,16 +792,24 @@ impl GsplatScene {
         model: &Mat4,
         cutout: Option<&crate::sort::Cutout>,
     ) {
-        self.set_uniform(queue, "matrix_model", &f32s(model));
-        self.set_uniform(queue, "matrix_view", &f32s(&view.view));
-        self.set_uniform(queue, "matrix_projection", &f32s(&view.projection));
+        self.set_uniform(queue, "matrix_model", f32s_le_bytes(model).as_ref());
+        self.set_uniform(queue, "matrix_view", f32s_le_bytes(&view.view).as_ref());
+        self.set_uniform(
+            queue,
+            "matrix_projection",
+            f32s_le_bytes(&view.projection).as_ref(),
+        );
         self.set_uniform(
             queue,
             "camera_params",
-            &f32s(&[1.0 / view.far, view.far, view.near, 0.0]),
+            f32s_le_bytes(&[1.0 / view.far, view.far, view.near, 0.0]).as_ref(),
         );
         let (w, h) = (view.width as f32, view.height as f32);
-        self.set_uniform(queue, "viewport_size", &f32s(&[w, h, 1.0 / w, 1.0 / h]));
+        self.set_uniform(
+            queue,
+            "viewport_size",
+            f32s_le_bytes(&[w, h, 1.0 / w, 1.0 / h]).as_ref(),
+        );
         let view_model = camera::mul(&view.view, model);
         let clip = camera::mul(&view.projection, &view_model);
         self.sorter.encode(
@@ -1299,6 +1317,54 @@ mod tests {
                 samples[0][4], samples[1][4]
             );
         }
+    }
+
+    #[test]
+    fn uniform_float_bytes_preserve_all_bits_and_endianness() {
+        let values = [
+            0.0,
+            -0.0,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::from_bits(0x7fc0_1234),
+            f32::from_bits(1),
+            f32::MIN,
+            f32::MAX,
+        ];
+        let encoded = f32s_le_bytes(&values);
+        assert_eq!(encoded.as_ref(), f32s(&values));
+        assert!(f32s_le_bytes(&[]).is_empty());
+        #[cfg(target_endian = "little")]
+        assert!(matches!(encoded, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_uniform_float_bytes() {
+        use std::{hint::black_box, time::Instant};
+        let matrix = crate::camera::IDENTITY;
+        let cached = f32s(&matrix);
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..11 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let start = Instant::now();
+                for _ in 0..500_000 {
+                    let equal = if mode == 0 {
+                        f32s(black_box(&matrix)).as_slice() == black_box(&cached)
+                    } else {
+                        f32s_le_bytes(black_box(&matrix)).as_ref() == black_box(&cached)
+                    };
+                    assert!(black_box(equal));
+                }
+                samples[mode].push(start.elapsed().as_nanos() as f64 / 500_000.0);
+            }
+        }
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        println!(
+            "matrix uniform bytes: allocated {:.1} ns, borrowed {:.1} ns",
+            samples[0][5], samples[1][5]
+        );
     }
 
     #[test]

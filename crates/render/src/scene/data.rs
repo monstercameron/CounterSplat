@@ -115,6 +115,19 @@ pub(super) fn f32s(values: &[f32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
+/// Borrow the native bytes when they already use the GPU's little-endian
+/// float representation; otherwise retain the explicit portable encoding.
+pub(super) fn f32s_le_bytes(values: &[f32]) -> std::borrow::Cow<'_, [u8]> {
+    #[cfg(target_endian = "little")]
+    {
+        std::borrow::Cow::Borrowed(bytemuck::cast_slice(values))
+    }
+    #[cfg(target_endian = "big")]
+    {
+        std::borrow::Cow::Owned(f32s(values))
+    }
+}
+
 /// The GPU expects little-endian IEEE-754 values. On little-endian hosts, borrowing the existing centres preserves
 /// every bit without two temporary copies. Big-endian targets use the explicit conversion from the original path.
 pub(super) fn centres_le_bytes(centres: &[[f32; 3]]) -> std::borrow::Cow<'_, [u8]> {

@@ -235,3 +235,8 @@ countersplat-render --lib benchmark_direct_depth_keys -- --ignored --nocapture
 --test-threads=1` to compare GPU timestamp measurements of the depth-key
 shader with and without visibility counting. It requires timestamp-query
 support and measures only that shader, not the rest of sorting or rendering.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render --lib benchmark_uniform_float_bytes -- --ignored
+--nocapture --test-threads=1` to compare allocating and borrowing matrix
+uniform bytes. This isolates CPU encoding and excludes GPU work.
