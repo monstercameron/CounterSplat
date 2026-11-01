@@ -870,6 +870,62 @@ fn new_and_old_ranges_crossfade_without_a_brightness_spike() {
 }
 
 #[test]
+fn empty_leaf_placeholders_do_not_exceed_the_selected_detail() {
+    let s = stream(10_000);
+    let lods = &s.meta.leaves[0].lods;
+    assert_eq!(
+        loaded_fallback(lods, 1, |file| file == 0),
+        None,
+        "a fine chunk should not fill the pool when the selected LOD is coarse"
+    );
+    assert_eq!(
+        loaded_fallback(lods, 0, |file| file == 1),
+        Some(1),
+        "a loaded coarser chunk can cover a leaf while its detail loads"
+    );
+    assert_eq!(loaded_fallback(lods, 0, |_| false), None);
+}
+
+#[test]
+fn transitions_wait_for_the_previous_fade_and_retirement_keeps_its_opacity() {
+    let resident = Resident {
+        lod: 0,
+        start: 0,
+        count: 100,
+        palette: None,
+        born: 10.0,
+    };
+    assert!(!resident_is_settled(resident, 10.1, 0.4));
+    assert!(resident_is_settled(resident, 10.5, 0.4));
+    assert!(resident_is_settled(resident, 10.0, 0.0));
+
+    let now = 10.1;
+    let fade = 0.4;
+    let before = (now - resident.born) / fade;
+    let after = 1.0 - (now - retirement_start(resident, now, fade)) / fade;
+    assert!(
+        (before - after).abs() < 1e-5,
+        "retirement must not flash brighter"
+    );
+    assert!((retirement_start(resident, 11.0, fade) - 11.0).abs() < 1e-5);
+}
+
+#[test]
+fn chunk_requests_never_reserve_more_than_idle_decoders() {
+    let mut s = stream(10_000);
+    s.settings.max_in_flight = 4;
+    s.settings.near_lod0_m = 25.0;
+    s.select([0.0; 3], [1.0, 0.0, 0.0], None, 0.0);
+    assert!(s.requests_up_to(0).is_empty());
+    let first = s.requests_up_to(1);
+    assert_eq!(first.len(), 1);
+    let second = s.requests_up_to(1);
+    assert_eq!(second.len(), 1);
+    assert_ne!(first[0].0, second[0].0);
+    assert!(s.requests_up_to(4).is_empty());
+}
+
+#[test]
 fn nearby_visible_regions_request_fine_detail_first_without_overriding_manual_lod() {
     let mut s = stream(10_000);
     s.settings.near_lod0_m = 25.0;

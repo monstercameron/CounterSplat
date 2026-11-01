@@ -17,12 +17,12 @@ In the **Level assets** panel:
   than an exhaustive display of the level.
 - **Level collision** enables collision with occupied voxels for all enabled entity bodies, independently of visibility.
 
-Each entity's `PhysicsBody` independently controls whether its kinematic sphere collides with the level,
-its radius, and its vertical offset from the camera or transform. The player can optionally use gravity and
-jump from the floor; with gravity off it remains free-flying. Movement uses bounded substeps and slides along
+Each entity's `PhysicsBody` independently controls whether its kinematic sphere or upright capsule collides
+with the level, its radius, capsule half-height, and vertical offset from the camera or transform. The player
+uses an upright capsule and gravity by default; with gravity off it remains free-flying. Movement uses bounded substeps and slides along
 obstacles. The browser currently resolves bodies against level voxels, not against each other. Physics becomes
-active once the worker has loaded the level's voxel files. Until then, movement remains unobstructed. A level
-with no voxel metadata remains playable and reports that no collider is available; malformed or missing binary
+active once the worker has loaded the level's voxel files. The grounded player waits during the initial load;
+other entities can move before collision becomes available. A level with no voxel metadata remains playable and reports that no collider is available; malformed or missing binary
 data reports an unavailable collider. The worker limits metadata to 1 MiB and voxel binaries to 128 MiB.
 
 The `active_level` entity in [`gameplay.json`](../assets/scenes/gameplay.json) has the validated `VoxelCollider`

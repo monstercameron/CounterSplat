@@ -152,6 +152,12 @@ fn jump_uses_the_bound_key_and_emits_collision_checked_movement() {
     )
     .unwrap();
     let player = ids["player"];
+    // This test exercises the optional free-fly jump mode.
+    world
+        .borrow_mut()
+        .get_mut::<countersplat_scene::PhysicsBody>(player)
+        .unwrap()
+        .gravity_enabled = false;
     world.borrow_mut().set_dynamic_resource(
         "player.default_controls",
         serde_json::to_value(PlayerControls::default()).unwrap(),
@@ -276,7 +282,7 @@ fn jump_uses_the_bound_key_and_emits_collision_checked_movement() {
 
 #[test]
 fn lua_rig_aligns_spawn_and_keeps_scale_motion_and_collider_consistent() {
-    use countersplat_scene::{PhysicsBody, PlayerRig};
+    use countersplat_scene::{PhysicsBody, PlayerRig, VoxelColliderState, VoxelStatus};
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let manifest =
         SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
@@ -291,6 +297,14 @@ fn lua_rig_aligns_spawn_and_keeps_scale_motion_and_collider_consistent() {
     )
     .unwrap();
     let player = ids["player"];
+    {
+        let mut w = world.borrow_mut();
+        let state = w
+            .get_mut::<VoxelColliderState>(ids["active_level"])
+            .unwrap();
+        state.status = VoxelStatus::Ready;
+        state.resolution = Some(0.05);
+    }
     world.borrow_mut().set_dynamic_resource(
         "player.default_controls",
         serde_json::to_value(PlayerControls::default()).unwrap(),
@@ -381,9 +395,34 @@ fn lua_rig_aligns_spawn_and_keeps_scale_motion_and_collider_consistent() {
         let camera = w.get::<PlayerCamera>(player).unwrap();
         assert!((rig.units_per_meter - 1.5).abs() < 0.0001);
         assert!((body.radius - 0.375).abs() < 0.0001);
-        assert!((body.radius - body.collision_offset_y - 2.55).abs() < 0.0001);
+        assert!((body.capsule_half_height - 1.0125).abs() < 0.0001);
+        assert!(
+            (body.radius + body.capsule_half_height - body.collision_offset_y - 2.55).abs()
+                < 0.0001
+        );
         assert!((camera.position[1] - 1.45).abs() < 0.0001);
         assert!((body.gravity - 27.0).abs() < 0.0001);
+        assert!(
+            (body.collision_offset_y + body.capsule_half_height + body.radius - 0.225).abs()
+                < 0.0001
+        );
+    }
+    // Changing head clearance expands the capsule upward without moving the feet or eyes.
+    lua.execute("local p=ecs.get_resource('scene.entities').player; local r=ecs.get(p,'PlayerRig'); r.head_clearance_m=0.25; ecs.set(p,'PlayerRig',r)").unwrap();
+    lua.run_systems(0.01).unwrap();
+    {
+        let w = world.borrow();
+        let body = w.get::<PhysicsBody>(player).unwrap();
+        let camera = w.get::<PlayerCamera>(player).unwrap();
+        assert!(
+            (body.radius + body.capsule_half_height - body.collision_offset_y - 2.55).abs()
+                < 0.0001
+        );
+        assert!(
+            (body.collision_offset_y + body.capsule_half_height + body.radius - 0.375).abs()
+                < 0.0001
+        );
+        assert!((camera.position[1] - 1.45).abs() < 0.0001);
     }
     lua.dispatch(
         "input.key",
@@ -426,4 +465,105 @@ fn lua_rig_aligns_spawn_and_keeps_scale_motion_and_collider_consistent() {
         .borrow_mut()
         .drain_events("physics.ground_request")
         .is_empty());
+}
+
+#[test]
+fn player_waits_for_ground_before_gravity_and_falls_back_if_collision_is_missing() {
+    use countersplat_scene::{PhysicsBody, VoxelColliderState, VoxelStatus};
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &manifest,
+        &["ui", "player", "level"],
+    )
+    .unwrap();
+    let player = ids["player"];
+    world.borrow_mut().set_dynamic_resource(
+        "player.default_controls",
+        serde_json::to_value(PlayerControls::default()).unwrap(),
+    );
+    world.borrow_mut().set_dynamic_resource(
+        "player.spawn_camera",
+        serde_json::to_value(PlayerCamera::default()).unwrap(),
+    );
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    for name in ["player_controls.lua", "physics_system.lua"] {
+        lua.execute(&std::fs::read_to_string(root.join("assets/scripts").join(name)).unwrap())
+            .unwrap();
+    }
+    lua.dispatch(
+        "input.key",
+        &json!({"code":"KeyW","pressed":true,"is_repeat":false,"gameplay":true}),
+    )
+    .unwrap();
+    for _ in 0..10 {
+        lua.run_systems(0.1).unwrap();
+    }
+    assert_eq!(
+        world.borrow().get::<PlayerCamera>(player).unwrap().position,
+        [0.0; 3]
+    );
+    assert_eq!(
+        world.borrow().get::<PhysicsBody>(player).unwrap().velocity,
+        [0.0; 3]
+    );
+
+    {
+        let mut w = world.borrow_mut();
+        let state = w
+            .get_mut::<VoxelColliderState>(ids["active_level"])
+            .unwrap();
+        state.status = VoxelStatus::Ready;
+        state.resolution = Some(0.05);
+    }
+    lua.dispatch("physics.ready", &json!({"resolution":0.05}))
+        .unwrap();
+    let probe = world
+        .borrow_mut()
+        .drain_events("physics.ground_request")
+        .pop()
+        .unwrap();
+    lua.run_systems(0.1).unwrap();
+    assert_eq!(
+        world.borrow().get::<PlayerCamera>(player).unwrap().position,
+        [0.0; 3],
+        "movement and gravity wait for the asynchronous floor query"
+    );
+    lua.dispatch(
+        "physics.ground_result",
+        &json!({
+            "entity":player.to_string(), "token":probe["token"], "height":-1.7
+        }),
+    )
+    .unwrap();
+    lua.run_systems(0.1).unwrap();
+    assert!(world.borrow().get::<PlayerCamera>(player).unwrap().position[2] < -0.3);
+    assert!(world.borrow().get::<PhysicsBody>(player).unwrap().velocity[1] < 0.0);
+
+    {
+        let mut w = world.borrow_mut();
+        let state = w
+            .get_mut::<VoxelColliderState>(ids["active_level"])
+            .unwrap();
+        state.status = VoxelStatus::Unavailable;
+        state.resolution = None;
+        w.get_mut::<PhysicsBody>(player).unwrap().velocity = [0.0; 3];
+    }
+    let before = world.borrow().get::<PlayerCamera>(player).unwrap().position;
+    lua.run_systems(0.1).unwrap();
+    let after = world.borrow().get::<PlayerCamera>(player).unwrap().position;
+    assert!(
+        after[2] < before[2],
+        "an unavailable collider permits free-fly navigation"
+    );
+    assert_eq!(
+        after[1], before[1],
+        "an unavailable collider must not drop the player"
+    );
 }

@@ -22,6 +22,11 @@ def safe_child(root: Path, relative: str):
     return candidate if candidate.is_relative_to(root) and candidate.is_file() else None
 
 
+def package_resource(root: Path, relative: str):
+    """Serve generated browser bindings only from the ignored artifact directory."""
+    return safe_child(root / ".artifacts" / "web" / "pkg", relative)
+
+
 def level_resource(root: Path, relative: str):
     """Serve the catalog or files within an eight-character scene ID directory."""
     if relative == "catalog.json":
@@ -88,7 +93,7 @@ def main():
                 relative = route.removeprefix("/pkg/")
                 declared, path = declared_scene_resource(ROOT, relative)
                 if not declared:
-                    path = safe_child(PREVIEW / "pkg", relative)
+                    path = package_resource(ROOT, relative)
             elif route.startswith("/level/") and level is not None:
                 path = safe_child(level, route.removeprefix("/level/"))
             else:

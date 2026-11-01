@@ -52,8 +52,8 @@ local function refresh()
         rig and 0.1 * rig.units_per_meter or 0.05, rig and 0.33 * rig.units_per_meter or 1.0)
     slider(ids.inspector_gravity_strength, has_body and body.gravity or 18, has_body)
     slider(ids.inspector_offset, has_body and body.collision_offset_y or 0, has_body,
-        rig and (rig.radius_m - 2.5) * rig.units_per_meter or -8,
-        rig and (rig.radius_m - 0.7) * rig.units_per_meter or 8)
+        rig and (rig.head_clearance_m - 2.5) * 0.5 * rig.units_per_meter or -8,
+        rig and (rig.head_clearance_m - 0.7) * 0.5 * rig.units_per_meter or 8)
     local exports = engine.exports(selected)
     local pages = math.max(1, math.ceil(#exports / page_size))
     page = math.max(1, math.min(page, pages))
@@ -129,11 +129,14 @@ ecs.on("ui.action", function(action)
             if rig and field == "radius" then
                 rig.radius_m = math.max(0.1, math.min(0.33, body.radius / rig.units_per_meter))
                 body.radius = rig.radius_m * rig.units_per_meter
-                body.collision_offset_y = body.radius - rig.eye_height_m * rig.units_per_meter
+                body.capsule_half_height = ((rig.eye_height_m + rig.head_clearance_m) * 0.5 - rig.radius_m) * rig.units_per_meter
+                body.collision_offset_y = (rig.head_clearance_m - rig.eye_height_m) * 0.5 * rig.units_per_meter
             elseif rig and field == "collision_offset_y" then
-                rig.eye_height_m = math.max(0.7, math.min(2.5, (body.radius - body.collision_offset_y) / rig.units_per_meter))
-                body.collision_offset_y = body.radius - rig.eye_height_m * rig.units_per_meter
-                local change = previous_offset - body.collision_offset_y
+                local old_height = body.radius + body.capsule_half_height - previous_offset
+                rig.eye_height_m = math.max(0.7, math.min(2.5, rig.head_clearance_m - 2 * body.collision_offset_y / rig.units_per_meter))
+                body.capsule_half_height = ((rig.eye_height_m + rig.head_clearance_m) * 0.5 - rig.radius_m) * rig.units_per_meter
+                body.collision_offset_y = (rig.head_clearance_m - rig.eye_height_m) * 0.5 * rig.units_per_meter
+                local change = body.radius + body.capsule_half_height - body.collision_offset_y - old_height
                 local camera = ecs.get(selected, "PlayerCamera")
                 camera.position[2] = camera.position[2] + change
                 ecs.set(selected, "PlayerCamera", camera)

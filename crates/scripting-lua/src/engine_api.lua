@@ -137,11 +137,12 @@ end
 
 -- Run this once per fixed simulation tick. Bodies with disabled physics keep
 -- their stored velocity; collisions and gravity can be switched independently.
-function engine.physics.step(dt)
+function engine.physics.step(dt, skip_entity)
     assert(finite_number(dt) and dt >= 0 and dt <= 0.25, "invalid physics tick")
+    assert(skip_entity == nil or type(skip_entity) == "string", "invalid skipped entity")
     for _, entity in ipairs(ecs.query({"PhysicsBody"})) do
         local body = ecs.get(entity, "PhysicsBody")
-        if body and body.enabled and position_component(entity) then
+        if entity ~= skip_entity and body and body.enabled and position_component(entity) then
             if body.gravity_enabled then
                 body.velocity[2] = math.max(-200, body.velocity[2] - body.gravity * dt)
                 ecs.set(entity, "PhysicsBody", body)

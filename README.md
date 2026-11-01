@@ -5,7 +5,7 @@ formats, GPU renderer, streaming, voxel geometry, physics primitives, ECS, and t
 single workspace. Game rules, vehicles, HUDs, and game-specific configuration live outside these libraries.
 
 The current deliverable is an engine foundation with a native inspection tool and a live browser WebGPU canvas.
-The canvas streams a scan and supports a Lua-controlled free-flying player camera; it is not yet a complete interactive game.
+The canvas streams a scan and supports a Lua-controlled player camera with voxel collision; it is not yet a complete interactive game.
 
 ## Workspace
 
@@ -83,9 +83,9 @@ No scan assets are bundled. An example CC0 HDR sky is included separately. Suppl
 ```powershell
 cargo run -p countersplat-viewer -- inspect "path\to\scene.sog"
 cargo run -p countersplat-viewer -- inspect-level "path\to\level"
-cargo run -p countersplat-viewer -- render "path\to\scene.sog" "preview\frame.png"
-cargo run -p countersplat-viewer -- render-level "path\to\level" "preview\frame.png" 300000 z180
-cargo run -p countersplat-viewer -- live-level "path\to\level" "preview\frame.png" 10 300000 z180
+cargo run -p countersplat-viewer -- render "path\to\scene.sog" ".artifacts\frame.png"
+cargo run -p countersplat-viewer -- render-level "path\to\level" ".artifacts\frame.png" 300000 z180
+cargo run -p countersplat-viewer -- live-level "path\to\level" ".artifacts\frame.png" 10 300000 z180
 ```
 
 The optional final `z180` rotates splat data 180 degrees around Z for scans with the source project's y-down
@@ -141,7 +141,7 @@ cargo install wasm-bindgen-cli --version 0.2.127 --locked
 python scripts/preview.py
 ```
 
-Edit the scene JSON files under `assets/scenes` and refresh the browser to apply scene, UI, and resource changes. Open <http://127.0.0.1:18763/>. The generated `preview/pkg` bindings are build artifacts. The page renders through
+Edit the scene JSON files under `assets/scenes` and refresh the browser to apply scene, UI, and resource changes. Open <http://127.0.0.1:18763/>. Cargo outputs are stored in `.artifacts/target` and generated browser bindings in `.artifacts/web/pkg`. Both are ignored by Git. The page renders through
 WebGPU into `<canvas>`; the native PNG commands above remain optional offline exports. See
 [timing](docs/timing.md) for what the displayed submitted-frame rate does and does not measure.
 

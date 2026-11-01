@@ -7,12 +7,11 @@ $version = & $bindgen.Source --version
 if ($LASTEXITCODE -ne 0 -or $version -ne 'wasm-bindgen 0.2.127') {
     throw 'This workspace needs wasm-bindgen-cli 0.2.127. Install it with: cargo install wasm-bindgen-cli --version 0.2.127 --locked'
 }
-& cargo build --locked --release --manifest-path $manifest -p countersplat-web --target wasm32-unknown-unknown
+$cargoTarget = Join-Path $projectRoot '.artifacts/target'
+& cargo build --locked --release --manifest-path $manifest --target-dir $cargoTarget -p countersplat-web --target wasm32-unknown-unknown
 if ($LASTEXITCODE -ne 0) { throw 'WebAssembly build failed.' }
-$metadata = (& cargo metadata --no-deps --format-version 1 --manifest-path $manifest | ConvertFrom-Json)
-if ($LASTEXITCODE -ne 0) { throw 'Could not locate the Cargo target directory.' }
-$wasm = Join-Path $metadata.target_directory 'wasm32-unknown-unknown/release/countersplat_web.wasm'
-$output = Join-Path $projectRoot 'preview/pkg'
+$wasm = Join-Path $cargoTarget 'wasm32-unknown-unknown/release/countersplat_web.wasm'
+$output = Join-Path $projectRoot '.artifacts/web/pkg'
 & $bindgen.Source --target web --out-dir $output --out-name countersplat_web $wasm
 if ($LASTEXITCODE -ne 0) { throw 'Browser binding generation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/skybox-worker.js') -Destination (Join-Path $output 'skybox-worker.js') -Force
@@ -20,6 +19,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/voxel-worker.js') -Desti
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/voxel_runtime.js') -Destination (Join-Path $output 'voxel_runtime.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/mouse_capture.js') -Destination (Join-Path $output 'mouse_capture.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/player_rig.js') -Destination (Join-Path $output 'player_rig.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/chunk_decoder_pool.js') -Destination (Join-Path $output 'chunk_decoder_pool.js') -Force
 $luaOutput = Join-Path $output 'wasmoon'
 New-Item -ItemType Directory -Path $luaOutput -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot 'third_party/wasmoon/index.js') -Destination $luaOutput -Force

@@ -1,17 +1,18 @@
 # Entity physics and Lua tuning
 
 The gameplay scene attaches `PhysicsBody` to the `player` entity alongside `PlayerCamera`, `PlayerControls`, and `PlayerRig`.
-The body is a kinematic sphere, resolved against the selected level's voxel collider on its worker. Open
+The player's body is an upright kinematic capsule, resolved against the selected level's voxel collider on its worker. Open
 **Entity settings** in the canvas to select a live gameplay entity with the arrow buttons, including entities from the scene, level, player and UI layers. **Attach physics** adds a body;
 if the entity has no `PlayerCamera` or `Transform`, it also adds a default `Transform`. Physics, collision, and
-gravity are independent switches, with sliders for sphere radius, vertical collider offset, and gravity strength.
-The player's rig sets its collision sphere below the camera according to eye height and level scale. **Level collision** in the Level assets
+gravity are independent switches, with sliders for collider radius, vertical collider offset, and gravity strength.
+The player's rig positions its capsule around the camera according to eye height and level scale. **Level collision** in the Level assets
 panel is a master switch for collision with the level, separate from each body's switches.
 
-The player starts with physics and level collision enabled and gravity disabled, preserving free-fly navigation.
-Enable gravity to fall onto level voxels and jump from the ground. With gravity off, Space uses the existing
-free-fly jump arc. The player script reads the same ECS component that the panel edits. The collider must be
-loaded and enabled before it can block movement; unavailable collision data leaves movement unobstructed.
+The player starts with physics, level collision and gravity enabled. Lua holds the player until the voxel
+collider and spawn probe are ready, so gravity cannot pull the camera through an unloaded floor. With gravity
+off, Space uses a free-fly jump arc. If the level collider is unavailable, the player keeps free-fly navigation
+and gravity is suspended. The player script reads the same ECS component that the panel edits. Explicitly
+disabling level collision or per-entity collision retains the independent switch behavior.
 
 A scene can configure another body using the same native components:
 
@@ -41,7 +42,6 @@ local player = entities.player
 local body = ecs.get(player, "PhysicsBody")
 body.collision_enabled = true
 body.gravity_enabled = true
-body.radius = 0.3
 ecs.set(player, "PhysicsBody", body)
 engine.physics.move(player, {0, 0, -1})
 
@@ -81,16 +81,18 @@ Numbers require finite minimum and maximum bounds that include the current value
 component or resource, and applies component validation. Export declarations and edits are runtime scene data;
 update scene JSON or script defaults to make them permanent.
 
-The browser currently resolves spherical bodies against the static level voxels. Body-to-body contacts, capsule
-shapes, and full rigid-body forces are not yet connected to this browser host. Its generic `Transform` does not
+The browser currently resolves spheres and upright capsules against static level voxels. Body-to-body contacts,
+rotating shapes, and full rigid-body forces are not yet connected to this browser host. Its generic `Transform` does not
 move level splats or UI elements by itself. Native hosts can integrate their physics owner through the same ECS
 components and movement events; running the Lua API alone does not create a physics worker.
 
 ## Player rig and ground probes
 
-`PlayerRig` stores `eye_height_m`, `radius_m`, `units_per_meter`, and
-`auto_align_spawn`. Lua derives the player body's radius and vertical offset from these values:
-the camera-to-feet distance is `eye_height_m * units_per_meter`. Movement speed, jump speed,
+`PlayerRig` stores `eye_height_m`, `head_clearance_m`, `radius_m`, `units_per_meter`, and
+`auto_align_spawn`. Lua derives the player body's radius, capsule half-segment and vertical offset from
+these values: the camera-to-feet distance is `eye_height_m * units_per_meter`, and the capsule extends
+`head_clearance_m * units_per_meter` above the camera. Other bodies default to spheres because their
+`capsule_half_height` is zero. Movement speed, jump speed,
 and gravity are scaled with the rig. The **Player controls** panel exposes eye height and level
 scale, while **Entity settings** also exposes them as Lua exports. Editing the player's collision
 radius or offset there keeps the rig in sync; other bodies remain independent.
@@ -99,6 +101,8 @@ radius or offset there keeps the rig in sync; other bodies remain independent.
 local player = ecs.get_resource("scene.entities").player
 local rig = ecs.get(player, "PlayerRig")
 rig.eye_height_m = 1.8
+rig.radius_m = 0.3
+rig.head_clearance_m = 0.15
 rig.units_per_meter = 1.2
 ecs.set(player, "PlayerRig", rig)
 ```

@@ -1,0 +1,3 @@
+# Keep all workspace build products out of the source tree.
+[build]
+target-dir = ".artifacts/target"

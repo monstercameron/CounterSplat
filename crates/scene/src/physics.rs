@@ -25,7 +25,7 @@ impl Transform {
     }
 }
 
-/// Kinematic spherical body settings and linear motion, owned by this entity.
+/// Kinematic capsule or sphere settings and linear motion, owned by this entity.
 /// The host resolves movement against available level collision geometry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -33,9 +33,11 @@ pub struct PhysicsBody {
     pub enabled: bool,
     pub collision_enabled: bool,
     pub gravity_enabled: bool,
-    /// Sphere radius in world units.
+    /// Rounded radius in level units.
     pub radius: f32,
-    /// Vertical offset from the entity origin to the collision sphere center.
+    /// Half the length of the upright capsule's center segment. Zero is a sphere.
+    pub capsule_half_height: f32,
+    /// Vertical offset from the entity origin to the collider center.
     pub collision_offset_y: f32,
     /// Downward acceleration in world units per second squared.
     pub gravity: f32,
@@ -51,6 +53,7 @@ impl Default for PhysicsBody {
             collision_enabled: true,
             gravity_enabled: false,
             radius: 0.2,
+            capsule_half_height: 0.0,
             collision_offset_y: 0.0,
             gravity: 18.0,
             velocity: [0.0; 3],
@@ -61,7 +64,11 @@ impl Default for PhysicsBody {
 impl PhysicsBody {
     pub fn validate(&self) -> Result<(), &'static str> {
         if !self.radius.is_finite() || !(0.05..=1.0).contains(&self.radius) {
-            return Err("physics sphere radius must be between 0.05 and 1.0");
+            return Err("physics collider radius must be between 0.05 and 1.0");
+        }
+        if !self.capsule_half_height.is_finite() || !(0.0..=4.0).contains(&self.capsule_half_height)
+        {
+            return Err("physics capsule half-height must be between 0 and 4");
         }
         if !self.collision_offset_y.is_finite() || !(-8.0..=8.0).contains(&self.collision_offset_y)
         {

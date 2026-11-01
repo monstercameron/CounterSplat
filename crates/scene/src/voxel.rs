@@ -8,7 +8,7 @@ pub struct VoxelCollider {
     pub enabled: bool,
     pub visible: bool,
     pub physics: bool,
-    /// Legacy scene field; runtime sphere sizes now come from each entity's PhysicsBody.
+    /// Legacy scene field; runtime collider sizes now come from each entity's PhysicsBody.
     pub player_radius: f32,
 }
 impl Default for VoxelCollider {

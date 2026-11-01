@@ -30,6 +30,7 @@ class FakeGame {
   clear_voxel_debug() { this.debug=[]; }
 }
 const game=new FakeGame(), worker=new FakeWorker();
+game.values.player.PhysicsBody.capsule_half_height=0.6;
 const runtime=new VoxelRuntime(game,new URL('http://localhost/assets/levels/1234abcd/'),()=>true,worker);
 const events=[], probes=[]; const lua={drain(name) { return name === 'physics.move' ? events.splice(0) : name === 'physics.ground_request' ? probes.splice(0) : []; }};
 worker.send({type:'ready',resolution:0.05}); runtime.tick(lua,0);
@@ -42,6 +43,12 @@ worker.send({type:'ground',id:ground.id,height:-1.5});
 assert.equal(game.events.at(-1).name,'physics.ground_result');
 assert.equal(game.events.at(-1).value.height,-1.5);
 assert.deepEqual(game.values.player.PlayerCamera.position,[0,0,0]);
+probes.push({entity:'player',token:'failed-spawn',position:[0,0,0],radius:0.1,max_drop:4});
+runtime.tick(lua,2); const failedGround=worker.messages.findLast(value=>value.type==='ground');
+worker.send({type:'error',operation:'ground',id:failedGround.id,message:'bad ground'});
+assert.equal(game.events.at(-2).name,'physics.ground_result');
+assert.equal(game.events.at(-2).value.height,null);
+assert.equal(game.events.at(-1).name,'physics.error');
 // Two entities have independent collision radii, requests, results and contact state.
 game.values.player.PlayerCamera.position=[1,0,0];
 game.values.player.PhysicsBody.velocity=[1,0,0];
@@ -53,6 +60,7 @@ assert.deepEqual(game.values.player.PlayerCamera.position,[0,0,0]);
 assert.deepEqual(game.values.prop.Transform.position,[10,0,0]);
 const moves=worker.messages.filter(value => value.type === 'move');
 assert.equal(moves.length,2); assert.equal(moves[0].radius,0.2); assert.equal(moves[1].radius,0.4);
+assert.equal(moves[0].halfHeight,0.6); assert.equal(moves[1].halfHeight,0);
 assert.deepEqual(moves[0].position,[0,-1.4,0]);
 worker.send({type:'move',id:moves[1].id,position:[10,-0.25,0]});
 assert.equal(game.values.prop.PhysicsBody.grounded,false);
@@ -70,9 +78,13 @@ const stale=worker.messages.findLast(value=>value.type==='move');
 game.values.player.PhysicsBody.radius=0.3; runtime.tick(lua,48);
 const retry=worker.messages.findLast(value=>value.type==='move');
 assert.notEqual(stale.id,retry.id); assert.equal(retry.radius,0.3);
+game.values.player.PhysicsBody.capsule_half_height=0.75; runtime.tick(lua,49);
+const retall=worker.messages.findLast(value=>value.type==='move');
+assert.notEqual(retall.id,retry.id); assert.equal(retall.halfHeight,0.75);
 worker.send({type:'move',id:stale.id,position:[1.5,-1.4,0]});
+worker.send({type:'move',id:retry.id,position:[1.5,-1.4,0]});
 assert.deepEqual(game.values.player.PlayerCamera.position,[0.5,0,0]);
-worker.send({type:'move',id:retry.id,position:[0.9,-1.4,0]});
+worker.send({type:'move',id:retall.id,position:[0.9,-1.4,0]});
 assert.deepEqual(game.values.player.PlayerCamera.position,[0.9,0,0]);
 // Disabling collision on one entity releases its pending movement without affecting the other.
 game.values.prop.Transform.position=[11,-0.25,0]; events.push({entity:'prop',component:'Transform',delta:[1,0,0]});

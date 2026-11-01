@@ -42,7 +42,7 @@ pub struct StreamSettings {
     /// Keep all nearby regions, but omit far regions beyond the widened view frustum.
     /// Infinity disables this optimization.
     pub offscreen_keep_m: f32,
-    /// Permit cutting an in-progress fade when the pool has no free space.
+    /// Permit cutting fades or hard-swapping visible ranges when the pool has no free space.
     pub allow_fade_cuts: bool,
     /// LODs finer than this keep their spherical harmonics.
     pub sh_lods: usize,

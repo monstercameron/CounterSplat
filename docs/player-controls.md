@@ -1,6 +1,6 @@
 # Player camera and controls
 
-The browser game has a free-flying player camera. Click the canvas to focus it, then use **W/A/S/D** to move,
+The browser game has a grounded first-person player camera when voxel collision is available. Click the canvas to focus it, then use **W/A/S/D** to move,
 **E/Q** to move up/down, **Space** to jump, and **Left Shift** to sprint. In browsers that permit
 pointer lock, clicking the scene captures the mouse for continuous look; press **` / ~** to release it. The Codex
 in-app browser uses drag look when pointer lock is unavailable. **Escape** opens the pause menu. Movement stops on focus loss, pause, or
@@ -32,16 +32,18 @@ tracks key releases, applies UI changes through ECS, and emits `player.controls_
 The navigation script receives the same key and UI events, preserving Escape menu behavior. `ecs.on` events are
 host-dispatched copies; they are distinct from the single-consumer ECS queues.
 
-The player has a `PhysicsBody` component. Physics and collision are on by default, while gravity is off to keep
-free-fly navigation. With gravity off, jump follows a time-based arc; with gravity on, the player falls onto the
-level collider and can jump while grounded. The **Entity settings** panel controls the body's switches, radius,
-collider offset and gravity. See [entity physics](entity-physics.md) and [voxel collision](voxel-collision.md).
-The browser uses a kinematic sphere rather than a full rigid-body character controller. The native window viewer does not yet host this browser UI or player script. A native game host can register the
+The player has a `PhysicsBody` component. Physics, collision and gravity are on by default; the player stands
+on the level voxels and can jump while grounded. With gravity off, Space follows a free-fly jump arc.
+While voxel data and the initial ground probe load, Lua holds the player in place. If the level has no collider,
+gravity is suspended and free-fly navigation remains available. The **Entity settings** panel controls the
+body's switches, radius, collider offset and gravity. See [entity physics](entity-physics.md) and
+[voxel collision](voxel-collision.md). The player uses an upright kinematic capsule rather than a full rigid-body controller. The native window viewer does not yet host this browser UI or player script. A native game host can register the
 same component adapters, instantiate the desired scene layers, dispatch input, and run the Lua system itself.
 
 ## Player height and level scale
 
-**Eye height (m)** defaults to 1.7; the rig's collision radius defaults to 0.25 m.
+**Eye height (m)** defaults to 1.7; the rig's collision radius defaults to 0.25 m. The upright
+capsule extends 0.15 m above the eyes by default, for a total standing collider height of 1.85 m.
 **Scale vs level** controls how many scan units represent one meter, defaulting to 1.0.
 Scans do not necessarily contain a reliable physical scale, so tune this value against familiar
 features in each level. Increasing it makes the player, movement, jumps, and gravity larger in
@@ -55,6 +57,6 @@ floor is found, the collider is unavailable, the player has moved, or the scene 
 `PlayerRig.auto_align_spawn` to false to disable this adjustment. An optional catalog
 `player_units_per_meter` sets a level-specific initial scale; saved per-level settings take precedence.
 
-The Lua player system derives the collision radius and offset from `PlayerRig` and preserves the
-player's foot position when height or scale changes. The eye height and scale are also exported to
-**Entity settings** for tuning through the same ECS fields.
+The Lua player system derives the capsule radius, vertical half-segment and center offset from
+`PlayerRig`, and preserves the player's foot position when height or scale changes. Eye height, scale,
+and head clearance are also exported to **Entity settings** for tuning through the same ECS fields.

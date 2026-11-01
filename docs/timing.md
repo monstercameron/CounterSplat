@@ -63,7 +63,7 @@ native monotonic deadline or real presentation feedback.
 
 ```powershell
 cargo run -p countersplat-threaded-demo -- --realtime 3
-cargo run -p countersplat-viewer -- live-level "path\to\level" "preview\frame.png" 10 300000 z180
+cargo run -p countersplat-viewer -- live-level "path\to\level" ".artifacts\frame.png" 10 300000 z180
 python scripts/preview.py --level "path\to\level"
 ```
 

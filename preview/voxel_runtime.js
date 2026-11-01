@@ -72,7 +72,11 @@ export class VoxelRuntime {
       } else if (data.type === 'error') {
         if (data.operation === 'ground') {
           const request = this.groundRequests.get(data.id); this.groundRequests.delete(data.id);
-          if (request) this.call({op:'emit', name:'physics.error', value:{entity:request.entity, message:String(data.message).slice(0,256)}});
+          if (request) {
+            // A failed query still completes, so Lua can release its spawn hold.
+            this.call({op:'emit', name:'physics.ground_result', value:{entity:request.entity, token:request.token, height:null}});
+            this.call({op:'emit', name:'physics.error', value:{entity:request.entity, message:String(data.message).slice(0,256)}});
+          }
         } else if (data.operation === 'debug') {
           this.debugPending = null; this.debugAt = performance.now();
           console.warn('Voxel debug view:', data.message);
@@ -97,7 +101,8 @@ export class VoxelRuntime {
         if (!entry || entry.pending?.id !== data.id || !this.alive(id)) return;
         const request = entry.pending; entry.pending = null;
         const pose = this.get(id, entry.component), body = this.get(id, 'PhysicsBody');
-        if (this.capture && body?.enabled && body.collision_enabled && body.radius === request.radius && body.collision_offset_y === request.offsetY &&
+        if (this.capture && body?.enabled && body.collision_enabled && body.radius === request.radius &&
+            (body.capsule_half_height ?? 0) === request.halfHeight && body.collision_offset_y === request.offsetY &&
             pose && VoxelRuntime.near(pose.position, request.start)) {
           const position = data.position.slice(); position[1] -= request.offsetY;
           const attempted = VoxelRuntime.total(request.deltas);
@@ -124,10 +129,12 @@ export class VoxelRuntime {
     const start = pose.position;
     const deltas = entry.queue.splice(0, 64);
     const requestId = ++this.sequence;
-    entry.pending = {id:requestId, start, deltas, radius:body.radius, offsetY:body.collision_offset_y};
+    entry.pending = {id:requestId, start, deltas, radius:body.radius,
+      halfHeight:body.capsule_half_height ?? 0, offsetY:body.collision_offset_y};
     this.requests.set(requestId, id);
     const center = start.slice(); center[1] += body.collision_offset_y;
-    this.worker.postMessage({type:'move', id:requestId, position:center, deltas, radius:body.radius});
+    this.worker.postMessage({type:'move', id:requestId, position:center, deltas, radius:body.radius,
+      halfHeight:body.capsule_half_height ?? 0});
   }
   tick(runtime, now) {
     if (!this.isCurrent()) return;
@@ -139,7 +146,8 @@ export class VoxelRuntime {
       if (!this.alive(id)) { this.release(id, entry, false); continue; }
       const body = this.get(id, 'PhysicsBody');
       if (!capture || !body?.enabled || !body.collision_enabled) { this.release(id, entry, true); continue; }
-      if (entry.pending && (body.radius !== entry.pending.radius || body.collision_offset_y !== entry.pending.offsetY)) {
+      if (entry.pending && (body.radius !== entry.pending.radius ||
+          (body.capsule_half_height ?? 0) !== entry.pending.halfHeight || body.collision_offset_y !== entry.pending.offsetY)) {
         this.requests.delete(entry.pending.id);
         entry.queue.unshift(...entry.pending.deltas); entry.pending = null;
       }

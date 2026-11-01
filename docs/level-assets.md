@@ -32,6 +32,16 @@ The browser's default pool holds three million splats and reserves part of it fo
 ranges are compacted incrementally so a centered fine-detail region is not blocked by scattered holes. The footer
 shows how many regions currently have LOD 0 resident. A manual LOD request overrides the automatic preference.
 
+The browser fetches and decodes chunks on a bounded pool of one to four workers, depending on available CPU
+concurrency. It asks the streamer for only as many chunks as workers can start immediately, so a camera movement
+can change the next request's priority. GPU uploads remain budgeted and run only when a frame can be submitted. Empty regions use already-loaded
+coarser placeholders when available, without filling the pool with unrequested fine ranges.
+
+Each visible LOD replacement finishes its fade before the same region changes again. If a region leaves while it
+is still appearing, it fades out from its current opacity. When the pool cannot fit both the old and new visible
+ranges, smooth mode retains the old range until a fade or compaction makes space; detail can remain coarser if
+the configured pool is too small to hold both. This avoids an abrupt visible swap.
+
 Lua uses the same validated ECS adapters as other systems:
 
 ```lua

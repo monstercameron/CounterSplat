@@ -133,11 +133,34 @@ fn inspector_edits_independent_bodies_and_lua_exports_drive_real_components() {
     .unwrap();
     lua.run_systems(0.25).unwrap();
     action(ids["inspector_export_next"], UiEventKind::Clicked);
-    action(ids["inspector_export_3"], UiEventKind::BoolChanged(false));
+    action(ids["inspector_export_4"], UiEventKind::BoolChanged(false));
     assert_eq!(
         world.borrow().get_dynamic_resource("test.tuning").unwrap()["active"],
         false
     );
+    // Editing the player collider keeps the capsule, eye and floor in agreement.
+    let before_eye = world.borrow().get::<PlayerCamera>(player).unwrap().position[1];
+    action(ids["inspector_radius"], UiEventKind::NumberChanged(0.3));
+    {
+        let w = world.borrow();
+        let body = w.get::<PhysicsBody>(player).unwrap();
+        assert!((body.radius - 0.3).abs() < 0.0001);
+        assert!(
+            (body.radius + body.capsule_half_height - body.collision_offset_y - 1.7).abs() < 0.0001
+        );
+    }
+    action(ids["inspector_offset"], UiEventKind::NumberChanged(-0.825));
+    {
+        let w = world.borrow();
+        let body = w.get::<PhysicsBody>(player).unwrap();
+        let rig = w.get::<countersplat_scene::PlayerRig>(player).unwrap();
+        let eye = w.get::<PlayerCamera>(player).unwrap().position[1];
+        assert!((rig.eye_height_m - 1.8).abs() < 0.0001);
+        assert!(
+            (body.radius + body.capsule_half_height - body.collision_offset_y - 1.8).abs() < 0.0001
+        );
+        assert!((eye - before_eye - 0.1).abs() < 0.0001);
+    }
     // Select a different entity, attach a body and enable gravity without changing the player.
     action(ids["inspector_next"], UiEventKind::Clicked);
     action(ids["inspector_attach"], UiEventKind::Clicked);
@@ -151,7 +174,7 @@ fn inspector_edits_independent_bodies_and_lua_exports_drive_real_components() {
             .gravity_enabled
     );
     assert!(
-        !world
+        world
             .borrow()
             .get::<PhysicsBody>(player)
             .unwrap()

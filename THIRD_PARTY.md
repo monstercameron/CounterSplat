@@ -16,7 +16,7 @@ provided scene, whose own license and attribution still apply.
 
 The example `assets/images/environments/kloppenheim_06_puresky_1k.hdr` is **Kloppenheim 06 (Pure Sky)** by Greg Zaal
 and Jarod Guest, provided by [Poly Haven](https://polyhaven.com/a/kloppenheim_06_puresky) under
-[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). The browser build may package a copy under `preview/pkg/assets/images`.
+[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). The browser build may package a copy under `.artifacts/web/pkg/assets/images`.
 
 The UI renderer uses [egui and egui-wgpu 0.37](https://github.com/emilk/egui), licensed under MIT or Apache-2.0. The MIT option is reproduced in
 [third_party/egui/LICENSE-MIT](third_party/egui/LICENSE-MIT). The bundled default font package includes Hack, Ubuntu Light, and egui icon fonts. Their accompanying license and

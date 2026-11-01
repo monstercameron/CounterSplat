@@ -74,6 +74,8 @@ impl PlayerCamera {
 #[serde(default, deny_unknown_fields)]
 pub struct PlayerRig {
     pub eye_height_m: f32,
+    /// Distance from the eyes to the top of the upright collider.
+    pub head_clearance_m: f32,
     pub radius_m: f32,
     pub units_per_meter: f32,
     /// Align imported level-viewer spawns with nearby voxel ground when available.
@@ -83,6 +85,7 @@ impl Default for PlayerRig {
     fn default() -> Self {
         Self {
             eye_height_m: 1.7,
+            head_clearance_m: 0.15,
             radius_m: 0.25,
             units_per_meter: 1.0,
             auto_align_spawn: true,
@@ -93,8 +96,11 @@ impl PlayerRig {
     pub fn validate(&self) -> Result<(), &'static str> {
         if !self.eye_height_m.is_finite()
             || !(0.7..=2.5).contains(&self.eye_height_m)
+            || !self.head_clearance_m.is_finite()
+            || !(0.0..=0.5).contains(&self.head_clearance_m)
             || !self.radius_m.is_finite()
             || !(0.1..=0.33).contains(&self.radius_m)
+            || self.eye_height_m + self.head_clearance_m < 2.0 * self.radius_m
             || !self.units_per_meter.is_finite()
             || !(0.5..=2.5).contains(&self.units_per_meter)
         {
@@ -231,6 +237,14 @@ mod tests {
         rig.eye_height_m = 0.1;
         assert!(rig.validate().is_err());
         rig.eye_height_m = 1.7;
+        let old_saved_profile = serde_json::json!({
+            "eye_height_m": 1.7, "radius_m": 0.25, "units_per_meter": 1.0, "auto_align_spawn": true
+        });
+        let restored: PlayerRig = serde_json::from_value(old_saved_profile).unwrap();
+        assert!((restored.head_clearance_m - 0.15).abs() < 0.0001);
+        rig.head_clearance_m = -0.01;
+        assert!(rig.validate().is_err());
+        rig.head_clearance_m = 0.15;
         rig.units_per_meter = f32::NAN;
         assert!(rig.validate().is_err());
     }

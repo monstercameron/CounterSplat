@@ -64,6 +64,7 @@ engine.export(player, "eye_height", {component="PlayerRig", field="eye_height_m"
 engine.export(player, "level_scale", {component="PlayerRig", field="units_per_meter", label="Scale vs level", min=0.5, max=2.5})
 engine.export(player, "jump_speed", {component="PlayerControls", field="jump_speed", label="Jump speed", min=0.5, max=15})
 engine.export(player, "invert_y", {component="PlayerControls", field="invert_y", label="Invert mouse Y"})
+engine.export(player, "head_clearance", {component="PlayerRig", field="head_clearance_m", label="Head above eyes (m)", min=0, max=0.5})
 local initial = assert(ecs.get(player, "PlayerControls"), "player settings are missing")
 if initial.fov_degrees ~= ecs.null then
     local camera = ecs.get(player, "PlayerCamera"); camera.fov_degrees = initial.fov_degrees; ecs.set(player, "PlayerCamera", camera)
@@ -75,14 +76,17 @@ local last_rig = nil
 local function apply_rig(preserve_feet)
     local rig = assert(ecs.get(player, "PlayerRig"))
     if last_rig and last_rig.eye_height_m == rig.eye_height_m and
-        last_rig.radius_m == rig.radius_m and last_rig.units_per_meter == rig.units_per_meter then return end
+        last_rig.radius_m == rig.radius_m and last_rig.head_clearance_m == rig.head_clearance_m and
+        last_rig.units_per_meter == rig.units_per_meter then return end
     local body = assert(ecs.get(player, "PhysicsBody"), "player physics is missing")
-    local old_height = body.radius - body.collision_offset_y
+    local old_height = body.radius + (body.capsule_half_height or 0) - body.collision_offset_y
     local new_height = rig.eye_height_m * rig.units_per_meter
+    local body_height = rig.eye_height_m + rig.head_clearance_m
     local previous_scale = last_rig and last_rig.units_per_meter or 1
     local ratio = rig.units_per_meter / previous_scale
     body.radius = rig.radius_m * rig.units_per_meter
-    body.collision_offset_y = body.radius - new_height
+    body.capsule_half_height = (body_height * 0.5 - rig.radius_m) * rig.units_per_meter
+    body.collision_offset_y = (body_height * 0.5 - rig.eye_height_m) * rig.units_per_meter
     if ratio ~= 1 then
         body.gravity = math.max(0, math.min(100, body.gravity * ratio))
         for i = 1, 3 do body.velocity[i] = math.max(-200, math.min(200, body.velocity[i] * ratio)) end
@@ -99,7 +103,8 @@ local function apply_rig(preserve_feet)
             ecs.set_resource("player.spawn_camera", spawn)
         end
     end
-    last_rig = {eye_height_m=rig.eye_height_m, radius_m=rig.radius_m, units_per_meter=rig.units_per_meter}
+    last_rig = {eye_height_m=rig.eye_height_m, head_clearance_m=rig.head_clearance_m,
+        radius_m=rig.radius_m, units_per_meter=rig.units_per_meter}
 end
 apply_rig(false)
 sync_controls(initial)
@@ -109,6 +114,35 @@ ecs.system("player.rig", function() apply_rig(true) end)
 -- nearby floor and reject late results after movement or an authored scene pose.
 local pending_ground = nil
 local ground_sequence = 0
+ecs.set_resource("player.spawn_probe_pending", false)
+
+-- Hold a gravity-driven player while the level collider and initial ground
+-- probe are loading. On levels without collision, allow free-fly navigation.
+local function level_collision(body)
+    if not body or not body.enabled or not body.gravity_enabled or not body.collision_enabled then return nil end
+    local level = ids.active_level and ecs.get(ids.active_level, "VoxelCollider")
+    local state = ids.active_level and ecs.get(ids.active_level, "VoxelColliderState")
+    if not level or not level.enabled or not level.physics or not state then return nil end
+    return state.status
+end
+local function waiting_for_ground(body)
+    local status = level_collision(body)
+    return status == "loading" or (status == "ready" and ecs.get_resource("player.spawn_probe_pending") == true)
+end
+local function gravity_active(body)
+    local status = level_collision(body)
+    return body and body.enabled and body.gravity_enabled and
+        status ~= "loading" and status ~= "unavailable" and status ~= "error"
+end
+ecs.system("player.ground_probe_timeout", function(dt)
+    if pending_ground then
+        pending_ground.elapsed = pending_ground.elapsed + math.max(0, dt)
+        if pending_ground.elapsed >= 5 then
+            pending_ground = nil
+            ecs.set_resource("player.spawn_probe_pending", false)
+        end
+    end
+end)
 local function near(a, b)
     for i = 1, 3 do if math.abs(a[i] - b[i]) >= 0.001 then return false end end
     return true
@@ -123,13 +157,15 @@ ecs.on("physics.ready", function()
         preview.player_spawn == "scene" or not near(camera.position, spawn.position) then return end
     ground_sequence = ground_sequence + 1
     local token = "player-spawn-" .. ground_sequence
-    pending_ground = {token=token, position=camera.position, version=engine.physics.motion_version(player)}
+    pending_ground = {token=token, position=camera.position, version=engine.physics.motion_version(player), elapsed=0}
+    ecs.set_resource("player.spawn_probe_pending", true)
     engine.physics.probe_ground(player, camera.position, math.min(1, body.radius * 0.5),
         math.min(8, 4 * rig.units_per_meter), token)
 end)
 ecs.on("physics.ground_result", function(result)
     if not pending_ground or result.entity ~= player or result.token ~= pending_ground.token then return end
     local request = pending_ground; pending_ground = nil
+    ecs.set_resource("player.spawn_probe_pending", false)
     local rig = ecs.get(player, "PlayerRig")
     local camera = ecs.get(player, "PlayerCamera")
     local spawn = ecs.get_resource("player.spawn_camera")
@@ -188,7 +224,8 @@ ecs.on("input.key", function(event)
             local settings = ecs.get(player, "PlayerControls")
             if settings and settings.enabled and event.code == settings.bindings.jump and not jump then
                 local body = ecs.get(player, "PhysicsBody")
-                if body and body.enabled and body.gravity_enabled then
+                if waiting_for_ground(body) then return end
+                if gravity_active(body) then
                     if body.grounded then
                         local rig = assert(ecs.get(player, "PlayerRig"))
                         body.velocity[2] = settings.jump_speed * rig.units_per_meter
@@ -293,7 +330,8 @@ ecs.system("player.camera", function(dt)
     local length = math.sqrt(forward * forward + right * right + up * up)
     local hop = 0
     local body = ecs.get(player, "PhysicsBody")
-    if body and body.enabled and body.gravity_enabled then jump = nil end
+    if waiting_for_ground(body) then jump = nil; return end
+    if gravity_active(body) then jump = nil end
     if jump then
         -- Integrate the arc analytically so its height and duration do not depend on the tick rate.
         local duration = 2 * jump.speed / jump.gravity

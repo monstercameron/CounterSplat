@@ -88,3 +88,94 @@ fn ground_probe_respects_legacy_coordinate_flip() {
         Some(-3.0)
     );
 }
+
+fn capsule_world(mask: u64, version: &str) -> VoxelCollider {
+    let metadata = json!({"version":version,"gridBounds":{"min":[0,0,0],"max":[4,4,4]},
+        "voxelResolution":1.0,"leafSize":4,"treeDepth":0,"nodeCount":1,"leafDataCount":2});
+    let bytes: Vec<u8> = [0u32, mask as u32, (mask >> 32) as u32]
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect();
+    VoxelCollider::from_json_and_bin(metadata.to_string().as_bytes(), &bytes).unwrap()
+}
+
+#[test]
+fn upright_capsule_collides_at_body_height_instead_of_only_at_the_feet() {
+    let mut mask = 0u64;
+    for z in 0..4 {
+        for x in 0..4 {
+            mask |= 1 << (x + z * 16);
+        }
+        mask |= 1 << (2 + 2 * 4 + z * 16); // chest-height wall
+    }
+    let world = capsule_world(mask, "1.1");
+    let start = [1.0, 1.8, 1.5];
+    let delta = [2.0, 0.0, 0.0];
+    let foot_sphere = world.move_sphere(start, delta, 0.2).unwrap();
+    let upright = world.move_capsule(start, delta, 0.2, 0.6).unwrap();
+    assert!(
+        foot_sphere[0] > 2.5,
+        "foot sphere passes under wall: {foot_sphere:?}"
+    );
+    assert!(
+        upright[0] <= 1.801,
+        "upright body must stop at wall: {upright:?}"
+    );
+    assert!(
+        (upright[1] - 1.8).abs() < 0.01,
+        "floor height is preserved: {upright:?}"
+    );
+}
+
+#[test]
+fn upright_capsule_stands_on_the_floor_and_stops_at_the_ceiling() {
+    let mut mask = 0u64;
+    for z in 0..4 {
+        for x in 0..4 {
+            mask |= 1 << (x + z * 16); // floor y=0
+            mask |= 1 << (x + 3 * 4 + z * 16); // ceiling y=3
+        }
+    }
+    let world = capsule_world(mask, "1.1");
+    let landed = world
+        .move_capsule([1.5, 2.3, 1.5], [0.0, -0.8, 0.0], 0.2, 0.6)
+        .unwrap();
+    assert!(
+        (landed[1] - 1.8).abs() < 0.01,
+        "capsule bottom rests at y=1: {landed:?}"
+    );
+    let head_hit = world
+        .move_capsule(landed, [0.0, 1.0, 0.0], 0.2, 0.6)
+        .unwrap();
+    assert!(
+        (head_hit[1] - 2.2).abs() < 0.01,
+        "capsule top stops at y=3: {head_hit:?}"
+    );
+    assert_eq!(
+        world
+            .move_sphere([1.5, 2.0, 1.5], [0.1, -0.2, 0.0], 0.2)
+            .unwrap(),
+        world
+            .move_capsule([1.5, 2.0, 1.5], [0.1, -0.2, 0.0], 0.2, 0.0)
+            .unwrap()
+    );
+    assert!(world
+        .move_capsule([1.0; 3], [0.0, 0.1, 0.0], 0.2, f32::NAN)
+        .is_err());
+}
+
+#[test]
+fn upright_capsule_respects_legacy_coordinate_rotation() {
+    let mut mask = 0u64;
+    for z in 0..4 {
+        mask |= 1 << (2 + 2 * 4 + z * 16);
+    }
+    let world = capsule_world(mask, "1.0");
+    let hit = world
+        .move_capsule([-1.0, -1.8, 1.5], [-2.0, 0.0, 0.0], 0.2, 0.6)
+        .unwrap();
+    assert!(
+        hit[0] >= -1.801,
+        "legacy capsule must stop at the wall: {hit:?}"
+    );
+}

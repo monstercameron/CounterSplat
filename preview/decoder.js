@@ -25,9 +25,10 @@ async function decode({index, folder, metadata, base, single}) {
     const texture = decode_texture(part, stream);
     dimensions[part * 2] = texture.width();
     dimensions[part * 2 + 1] = texture.height();
-    const copy = new Uint8Array(texture.take_pixels());
+    // wasm-bindgen already returns an owned copy; transfer it without copying again.
+    const pixels = texture.take_pixels();
     texture.free();
-    return copy;
+    return pixels;
   });
   self.postMessage({ok: true, index, metadata, dimensions, pixels},
     [metadata.buffer, dimensions.buffer, ...pixels.map(pixel => pixel.buffer)]);

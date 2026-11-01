@@ -617,10 +617,17 @@ impl LevelStream {
     /// Chunk files to fetch now, as (file index, chunk folder), marked as in flight. Nearby visible leaves request
     /// their target directly; other empty leaves ask for their coarsest file first. In-view, nearby work has priority.
     pub fn requests(&mut self) -> Vec<(usize, String)> {
+        self.requests_up_to(usize::MAX)
+    }
+
+    /// Request no more than the host can start immediately. Avoids queuing work
+    /// behind busy decoders, so priorities can follow the latest camera position.
+    pub fn requests_up_to(&mut self, available: usize) -> Vec<(usize, String)> {
         let room = self
             .settings
             .max_in_flight
-            .saturating_sub(self.in_flight.len());
+            .saturating_sub(self.in_flight.len())
+            .min(available);
         if room == 0 || !self.started {
             return Vec::new();
         }
@@ -797,25 +804,32 @@ impl LevelStream {
                 continue;
             };
             let leaf_lods = self.meta.leaves[i].lods.clone();
-            // The wanted range if its chunk is here; an empty leaf takes any loaded range instead, nearest LOD first.
+            // A coarse placeholder may cover an empty leaf while detail loads.
+            // A finer-than-selected placeholder can consume far more than the
+            // planned budget and force abrupt evictions when chunks arrive together.
             let target = if leaf_lods[want].is_some_and(|r| self.chunks.contains_key(&r.file)) {
                 Some(want)
             } else if self.leaves[i].have.is_none() {
-                (0..leaf_lods.len())
-                    .filter(|&l| leaf_lods[l].is_some_and(|r| self.chunks.contains_key(&r.file)))
-                    .min_by_key(|&l| l.abs_diff(want))
+                loaded_fallback(&leaf_lods, want, |file| self.chunks.contains_key(&file))
             } else {
                 None
             };
             let Some(lod) = target else { continue };
             let range = leaf_lods[lod].expect("checked above");
+            // Do not replace a range halfway through its fade-in. Restarting its
+            // fade-out at full opacity produces a visible flash under rapid LOD changes.
+            if self.leaves[i]
+                .have
+                .is_some_and(|resident| !resident_is_settled(resident, now, fade_s))
+            {
+                continue;
+            }
             if range.count > budget && uploaded > 0 {
                 break;
             }
             // A new range normally goes in beside the old one, which fades out, so the leaf never blinks out. Out of
-            // room, the oldest crossfades finish early, one at a time and only as many as it takes (cutting them all
-            // at once would pop many leaves in one frame); then the leaf's old range is released first; if even that
-            // does not make room, the leaf keeps its old LOD.
+            // room, optional fade cuts finish oldest crossfades one at a time. If compaction
+            // cannot make room, visible leaves keep their old LOD in smooth mode.
             let mut start = self.allocate(range.count);
             // With smooth transitions enabled, wait for existing fades to finish rather than
             // cutting hundreds of fading ranges short when the player moves or changes distance.
@@ -845,6 +859,11 @@ impl LevelStream {
                     let Some(old) = self.leaves[i].have else {
                         continue;
                     };
+                    // Never abruptly replace a visible range in smooth mode. Other
+                    // leaves can coarsen and finish fading to make room on a later frame.
+                    if fade_s > 0.0 && !self.settings.allow_fade_cuts && self.leaves[i].visible {
+                        continue;
+                    }
                     self.release(old.start, old.count);
                     match self.allocate(range.count) {
                         Some(start) => {
@@ -960,7 +979,8 @@ impl LevelStream {
     /// A range a leaf no longer shows: it fades out, or goes at once when fading is off.
     fn retire(&mut self, pool: &GsplatScene, queue: &wgpu::Queue, old: Resident) {
         if self.settings.fade_s > 0.0 {
-            self.fading_out.push((old, self.now));
+            self.fading_out
+                .push((old, retirement_start(old, self.now, self.settings.fade_s)));
         } else {
             self.free_resident(pool, queue, old);
         }
@@ -1524,6 +1544,31 @@ impl LevelStream {
             self.chunks.remove(&file);
         }
     }
+}
+
+/// For an empty leaf, only use an available range at or coarser than its
+/// selection. Finer fallbacks can overfill the pool before the target arrives.
+fn loaded_fallback(
+    lods: &[Option<Range>],
+    want: usize,
+    is_loaded: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    (want..lods.len()).find(|&lod| lods[lod].is_some_and(|range| is_loaded(range.file)))
+}
+
+/// A new range must finish appearing before another transition may replace it.
+fn resident_is_settled(resident: Resident, now: f32, fade_s: f32) -> bool {
+    fade_s <= 0.0 || now - resident.born >= fade_s
+}
+
+/// If a newly appearing range leaves the draw region, continue from its actual
+/// opacity instead of jumping to full opacity when retirement begins.
+fn retirement_start(resident: Resident, now: f32, fade_s: f32) -> f32 {
+    if fade_s <= 0.0 {
+        return now;
+    }
+    let visible = ((now - resident.born) / fade_s).clamp(0.0, 1.0);
+    now - (1.0 - visible) * fade_s
 }
 
 /// A leaf comes into view once it is within this many half-screens of the centre, and leaves it only past the wider

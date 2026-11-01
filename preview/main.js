@@ -4,6 +4,7 @@ import { LuaScene } from '/lua_runtime.js';
 import { VoxelRuntime } from '/pkg/voxel_runtime.js';
 import { MouseCapture } from '/pkg/mouse_capture.js';
 import { publishPlayerRigData, savePlayerRig } from '/pkg/player_rig.js';
+import { ChunkDecoderPool, chunkDecoderCount } from '/pkg/chunk_decoder_pool.js';
 import { LoadingProgress, levelPolicies, loadPolicy, planScripts, describeLevelAssets } from '/asset_loader.js';
 
 const canvas = document.getElementById('canvas');
@@ -246,8 +247,13 @@ function retryChunk(index, error, game, token) {
 function requestChunk(index, folder, metadata, game, token) {
   inFlight.add(index);
   if (!metadata) { retryChunk(index, 'metadata is unavailable', game, token); return; }
-  try { decoder.postMessage({index, folder, metadata, base: levelBase.href, single: currentLevel.format === 'single_sog'}); }
-  catch (error) { retryChunk(index, error, game, token); }
+  const accepted = decoder?.submit({index, folder, metadata, base: levelBase.href, single: currentLevel.format === 'single_sog'});
+  if (!accepted) {
+    // The streamer only reserves work for idle workers; release any reservation
+    // if the pool stopped or lost a worker between selection and submission.
+    game.chunk_failed(index);
+    inFlight.delete(index);
+  }
 }
 function showSkyError(error) {
   skyLoadState = 'error';
@@ -296,7 +302,7 @@ function startSkyWorker(game, token, preloaded) {
 }
 function stopWorkers() {
   voxelRuntime?.stop(); voxelRuntime = null;
-  if (decoder) decoder.terminate();
+  if (decoder) decoder.stop();
   if (skyDecoder) skyDecoder.terminate();
   decoder = null;
   skyDecoder = null;
@@ -441,16 +447,23 @@ async function launchLevel(id) {
     inFlight.clear();
     mode = 'gameplay';
     const game = active;
-    decoder = new Worker('/decoder.js', {type: 'module'});
-    decoder.onmessage = ({data}) => {
-      if (generation !== token || active !== game || (mode !== 'gameplay' && mode !== 'menu')) return;
-      if (!data.ok) { retryChunk(data.index, data.error, game, token); return; }
-      try {
-        game.insert_decoded_chunk(data.index, data.metadata, data.dimensions, data.pixels);
-        inFlight.delete(data.index);
-      } catch (error) { retryChunk(data.index, error, game, token); }
-    };
-    decoder.onerror = event => { if (generation === token) showError(new Error(`Asset worker failed: ${event.message}`)); };
+    decoder = new ChunkDecoderPool({
+      size: chunkDecoderCount(navigator.hardwareConcurrency),
+      createWorker: () => new Worker('/decoder.js', {type: 'module'}),
+      onResult: data => {
+        if (generation !== token || active !== game || (mode !== 'gameplay' && mode !== 'menu')) return;
+        try {
+          game.insert_decoded_chunk(data.index, data.metadata, data.dimensions, data.pixels);
+          inFlight.delete(data.index);
+        } catch (error) { retryChunk(data.index, error, game, token); }
+      },
+      onFailure: (index, error) => {
+        if (generation === token && active === game) retryChunk(index, error, game, token);
+      },
+      onFatal: error => {
+        if (generation === token && active === game) showError(new Error(`Asset workers failed: ${error}`));
+      },
+    });
     startSkyWorker(game, token, new Set(skies.map(sky => sky.id)));
     voxelRuntime = new VoxelRuntime(game, levelBase, () => generation === token && active === game);
     status.textContent = 'Streaming scan';
@@ -662,7 +675,7 @@ function tick(timestamp) {
         }
         if (mode === 'gameplay' && active) {
           const game = active, token = generation;
-          for (const [index, folder] of JSON.parse(game.requests())) {
+          for (const [index, folder] of JSON.parse(game.requests(decoder?.available ?? 0))) {
             if (!inFlight.has(index)) requestChunk(index, folder, chunkMetas[index], game, token);
           }
         }
@@ -680,7 +693,8 @@ function tick(timestamp) {
             wanted:state.lod_wanted_splats, activeSlots:state.lod_active_slots, free:state.lod_free_slots,
             largestFree:state.lod_largest_free, pendingDetails:state.lod_pending_details, loaded:state.lod_chunks_loaded,
             inFlight:state.lod_chunks_in_flight, fading:state.lod_fading, switches:state.lod_switches,
-            fadeCuts:state.fade_cuts, hardSwaps:state.hard_swaps, octreeNodes:state.octree_nodes});
+            fadeCuts:state.fade_cuts, hardSwaps:state.hard_swaps, octreeNodes:state.octree_nodes,
+            decoders:decoder ? {total:decoder.size, available:decoder.available} : null});
           metrics.dataset.player = JSON.stringify({camera:state.player_camera, physics:state.player_physics, rig:state.player_rig});
           const mouse = document.pointerLockElement === canvas ? 'Mouse locked · ~ releases' :
             mouseCapture.failed ? 'Drag to look' : 'Click scene to lock mouse';

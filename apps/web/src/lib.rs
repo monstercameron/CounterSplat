@@ -168,14 +168,14 @@ impl Viewer {
                 rear_fraction: 0.3,
                 side_fraction: 0.55,
             },
-            fade_s: 0.8,
+            fade_s: 0.45,
             keep_s: 2.5,
             near_lod0_m: 24.0,
             center_lod0_m: 1000.0,
             offscreen_keep_m: 12.0,
             allow_fade_cuts: false,
-            // The browser has one serial decoder; keep it free to reprioritize as the player moves.
-            max_in_flight: 1,
+            // The host starts at most four decoders and requests only for idle workers.
+            max_in_flight: 4,
             // Keep explicitly preloaded chunks available for the lifetime of this level.
             cache_chunks: if retain_preloaded_chunks {
                 metas.len()
@@ -600,7 +600,6 @@ impl Viewer {
             .set_focal_px(view.projection[5] * self.config.height as f32);
         self.stream
             .select(local_eye, local_direction, Some(&clip), seconds as f32);
-        self.stream.apply(&self.pool, &self.queue);
         // Keep menu input responsive even when gameplay has a very low frame cap.
         if !self.menu_visible && self.frame_limit.is_some() && !plan.frame.due {
             return Ok(false);
@@ -628,6 +627,10 @@ impl Viewer {
                 return Err(js_error("WebGPU canvas validation failed"))
             }
         };
+        // Upload and retire ranges only when this frame can actually be submitted.
+        // Advancing fades while the GPU is still busy can skip visible transition
+        // steps and pile streaming work onto an already overloaded frame.
+        self.stream.apply(&self.pool, &self.queue);
         let color = frame.texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(self.surface_view_format),
             ..Default::default()
@@ -716,9 +719,10 @@ impl Viewer {
         self.voxel_debug.clear();
     }
 
-    /// Chunk folders requested by the streaming system, as JSON `[file, folder]` pairs.
-    pub fn requests(&mut self) -> String {
-        serde_json::to_string(&self.stream.requests()).unwrap_or_else(|_| "[]".into())
+    /// Chunk folders requested for currently idle workers, as JSON `[file, folder]` pairs.
+    pub fn requests(&mut self, available: usize) -> String {
+        serde_json::to_string(&self.stream.requests_up_to(available))
+            .unwrap_or_else(|_| "[]".into())
     }
 
     /// Validate and insert a chunk decoded by the browser's asset worker.
@@ -832,6 +836,26 @@ impl VoxelCollisionData {
         Ok(self
             .inner
             .move_sphere(position, delta, radius)
+            .map_err(js_error)?
+            .to_vec())
+    }
+    /// Move an upright capsule through static voxel geometry.
+    pub fn move_capsule(
+        &self,
+        position: Vec<f32>,
+        delta: Vec<f32>,
+        radius: f32,
+        half_height: f32,
+    ) -> Result<Vec<f32>, JsValue> {
+        let position: [f32; 3] = position
+            .try_into()
+            .map_err(|_| js_error("expected a 3D position"))?;
+        let delta: [f32; 3] = delta
+            .try_into()
+            .map_err(|_| js_error("expected a 3D movement"))?;
+        Ok(self
+            .inner
+            .move_capsule(position, delta, radius, half_height)
             .map_err(js_error)?
             .to_vec())
     }

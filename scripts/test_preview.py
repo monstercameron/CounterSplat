@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Exercise the local canvas server's path confinement."""
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from preview import declared_scene_resource, level_resource, safe_child
+# Importing the preview server should not create bytecode in the source tree.
+sys.dont_write_bytecode = True
+from preview import declared_scene_resource, level_resource, package_resource, safe_child
 
 
 class PreviewPaths(unittest.TestCase):
@@ -22,6 +25,22 @@ class PreviewPaths(unittest.TestCase):
             self.assertIsNone(safe_child(level, "."))
             self.assertIsNone(safe_child(level, "missing.json"))
 
+
+    def test_generated_package_is_served_from_artifacts_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            package = root / ".artifacts" / "web" / "pkg"
+            package.mkdir(parents=True)
+            binding = package / "countersplat_web.js"
+            binding.write_text("export {}", encoding="utf-8")
+            secret = root / ".artifacts" / "web" / "outside.txt"
+            secret.write_text("outside", encoding="utf-8")
+            legacy = root / "preview" / "pkg"
+            legacy.mkdir(parents=True)
+            (legacy / "legacy.js").write_text("old", encoding="utf-8")
+            self.assertEqual(package_resource(root, "countersplat_web.js"), binding)
+            self.assertIsNone(package_resource(root, "../outside.txt"))
+            self.assertIsNone(package_resource(root, "legacy.js"))
 
     def test_local_level_paths_are_confined_to_scene_directories(self):
         with tempfile.TemporaryDirectory() as temporary:

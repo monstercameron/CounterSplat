@@ -1,7 +1,17 @@
 -- Physics is a normal fixed-tick Lua system. ECS components hold the settings;
 -- the host resolves movement against the active level collider when available.
 ecs.system("physics.integrate", function(dt)
-    engine.physics.step(dt)
+    local ids = ecs.get_resource("scene.entities") or {}
+    local player = ids.player
+    local body = player and ecs.get(player, "PhysicsBody")
+    local level = ids.active_level and ecs.get(ids.active_level, "VoxelCollider")
+    local state = ids.active_level and ecs.get(ids.active_level, "VoxelColliderState")
+    local expects_ground = body and body.enabled and body.gravity_enabled and body.collision_enabled and
+        level and level.enabled and level.physics and state
+    local wait = expects_ground and (state.status ~= "ready" or ecs.get_resource("player.spawn_probe_pending") == true)
+    -- A missing collider must not drop the player through an unloaded scan.
+    -- Other entities and intentionally disabled collision keep normal gravity.
+    engine.physics.step(dt, wait and player or nil)
 end)
 
 -- The worker reports resolved displacement; Lua defines how bodies respond.

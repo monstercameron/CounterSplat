@@ -20,7 +20,7 @@ self.onmessage = async ({data}) => {
       self.postMessage({type:'ready', resolution:collider.resolution()});
     } else if (data.type === 'move' && collider) {
       let position = new Float32Array(data.position);
-      for (const delta of data.deltas) position = collider.move_sphere(position, new Float32Array(delta), data.radius);
+      for (const delta of data.deltas) position = collider.move_capsule(position, new Float32Array(delta), data.radius, data.halfHeight ?? 0);
       self.postMessage({type:'move', id:data.id, position:Array.from(position)});
     } else if (data.type === 'ground' && collider) {
       const height = collider.ground_height(new Float32Array(data.position), data.radius, data.maxDrop);

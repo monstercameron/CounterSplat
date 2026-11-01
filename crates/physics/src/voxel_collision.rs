@@ -1,6 +1,6 @@
 //! Runtime collision against PlayCanvas/SplatTransform sparse voxel octrees.
 //!
-//! Sphere-vs-voxel penetration and iterative push-out follow the SuperSplat Viewer
+//! Capsule/sphere-vs-voxel penetration and iterative push-out follow the SuperSplat Viewer
 //! approach (PlayCanvas Ltd., MIT); see THIRD_PARTY.md. No dense grid is allocated.
 use countersplat_assets::svo::{grid_cells, uses_legacy_coordinates, Octree, LEAF_SIZE};
 use std::error::Error;
@@ -45,14 +45,29 @@ impl VoxelCollider {
         delta: [f32; 3],
         radius: f32,
     ) -> Result<[f32; 3], &'static str> {
+        self.move_capsule(start, delta, radius, 0.0)
+    }
+
+    /// Move an upright capsule against the level octree. `half_height` is half
+    /// the length of its vertical center segment, excluding its rounded ends.
+    /// Zero reduces to a sphere. Positions and dimensions use level units.
+    pub fn move_capsule(
+        &self,
+        start: [f32; 3],
+        delta: [f32; 3],
+        radius: f32,
+        half_height: f32,
+    ) -> Result<[f32; 3], &'static str> {
         if !start
             .iter()
             .chain(delta.iter())
             .all(|v| v.is_finite() && v.abs() <= 10_000_000.0)
             || !radius.is_finite()
             || !(0.05..=1.0).contains(&radius)
+            || !half_height.is_finite()
+            || !(0.0..=4.0).contains(&half_height)
         {
-            return Err("invalid voxel body position, movement, or radius");
+            return Err("invalid voxel body position, movement, radius, or capsule height");
         }
         let mut position = self.local(start);
         let delta = self.local(delta);
@@ -70,7 +85,7 @@ impl VoxelCollider {
             for axis in 0..3 {
                 position[axis] += increment[axis];
             }
-            position = self.resolve_sphere(position, radius);
+            position = self.resolve_capsule(position, radius, half_height);
         }
         Ok(self.world(position))
     }
@@ -138,10 +153,10 @@ impl VoxelCollider {
         Ok(Some(hits[hits.len() / 2]))
     }
 
-    fn resolve_sphere(&self, mut center: [f32; 3], radius: f32) -> [f32; 3] {
+    fn resolve_capsule(&self, mut center: [f32; 3], radius: f32, half_height: f32) -> [f32; 3] {
         let mut normals: Vec<[f32; 3]> = Vec::with_capacity(3);
         for _ in 0..MAX_ITERATIONS {
-            let Some(push) = self.deepest_sphere_overlap(center, radius) else {
+            let Some(push) = self.deepest_capsule_overlap(center, radius, half_height) else {
                 break;
             };
             let length = push.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -164,13 +179,20 @@ impl VoxelCollider {
         center
     }
 
-    fn deepest_sphere_overlap(&self, center: [f32; 3], radius: f32) -> Option<[f32; 3]> {
+    fn deepest_capsule_overlap(
+        &self,
+        center: [f32; 3],
+        radius: f32,
+        half_height: f32,
+    ) -> Option<[f32; 3]> {
         let m = &self.tree.meta;
         let dims = grid_cells(m);
-        let lo = [0, 1, 2]
-            .map(|i| (((center[i] - radius - m.grid_min[i]) / m.resolution).floor() as i32).max(0));
+        let extents = [radius, radius + half_height, radius];
+        let lo = [0, 1, 2].map(|i| {
+            (((center[i] - extents[i] - m.grid_min[i]) / m.resolution).floor() as i32).max(0)
+        });
         let hi = [0, 1, 2].map(|i| {
-            (((center[i] + radius - m.grid_min[i]) / m.resolution).floor() as i32)
+            (((center[i] + extents[i] - m.grid_min[i]) / m.resolution).floor() as i32)
                 .min(dims[i] as i32 - 1)
         });
         if (0..3).any(|i| lo[i] > hi[i]) {
@@ -178,6 +200,8 @@ impl VoxelCollider {
         }
         let mut best = EPSILON;
         let mut output = None;
+        let segment_min = center[1] - half_height;
+        let segment_max = center[1] + half_height;
         for z in lo[2]..=hi[2] {
             for y in lo[1]..=hi[1] {
                 for x in lo[0]..=hi[0] {
@@ -187,8 +211,18 @@ impl VoxelCollider {
                     }
                     let min = [0, 1, 2].map(|i| m.grid_min[i] + cell[i] as f32 * m.resolution);
                     let max = min.map(|v| v + m.resolution);
-                    let near = [0, 1, 2].map(|i| center[i].clamp(min[i], max[i]));
-                    let offset = [0, 1, 2].map(|i| center[i] - near[i]);
+                    // Find the closest pair of points on the vertical segment
+                    // and voxel box. Their separation gives the capsule normal.
+                    let segment_y = if segment_max < min[1] {
+                        segment_max
+                    } else if segment_min > max[1] {
+                        segment_min
+                    } else {
+                        center[1].clamp(segment_min.max(min[1]), segment_max.min(max[1]))
+                    };
+                    let point = [center[0], segment_y, center[2]];
+                    let near = [0, 1, 2].map(|i| point[i].clamp(min[i], max[i]));
+                    let offset = [0, 1, 2].map(|i| point[i] - near[i]);
                     let distance_sq = offset.iter().map(|v| v * v).sum::<f32>();
                     if distance_sq >= radius * radius {
                         continue;
@@ -198,13 +232,20 @@ impl VoxelCollider {
                         let penetration = radius - distance;
                         (offset.map(|v| v * penetration / distance), penetration)
                     } else {
+                        // The segment intersects the box. Escape on the shortest
+                        // axis, including the capsule's full vertical extent.
                         let escape = [0, 1, 2].map(|i| {
-                            let negative = center[i] - min[i];
-                            let positive = max[i] - center[i];
-                            if negative < positive {
-                                -(negative + radius)
+                            let (lower, upper) = if i == 1 {
+                                (segment_min, segment_max)
                             } else {
-                                positive + radius
+                                (center[i], center[i])
+                            };
+                            let negative = upper - min[i] + radius;
+                            let positive = max[i] - lower + radius;
+                            if negative < positive {
+                                -negative
+                            } else {
+                                positive
                             }
                         });
                         let axis = (0..3)

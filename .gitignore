@@ -1,4 +1,5 @@
 # Build and generated preview output
+/.artifacts/
 /target/
 /cargo-home/
 /preview/pkg/

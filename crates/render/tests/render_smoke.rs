@@ -319,3 +319,209 @@ fn hdr_sky_composites_behind_the_splats() {
         "splat should remain visible over the sky"
     );
 }
+
+#[test]
+fn smooth_stream_keeps_visible_detail_when_the_pool_cannot_fit_both_lods() {
+    use countersplat_assets::lod::{Leaf, LodMeta, Range};
+    use countersplat_render::stream::{LevelStream, StreamSettings};
+
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        eprintln!("no GPU adapter available; skipping streaming transition test");
+        return;
+    };
+    let make_bundle = |count: u32| {
+        let mut bundle = single_splat();
+        bundle.meta.count = count;
+        for name in ["means_l", "means_u", "quats", "scales", "sh0"] {
+            let texture = bundle.textures.get_mut(name).unwrap();
+            texture.width = count;
+            texture.rgba = texture.rgba.repeat(count as usize);
+        }
+        bundle
+    };
+    let fine = make_bundle(3);
+    let coarse = make_bundle(2);
+    let meta_json = |bundle: &Bundle| {
+        serde_json::to_vec(&serde_json::json!({
+            "version": 2, "count": bundle.meta.count,
+            "means": {"mins": bundle.meta.means_mins, "maxs": bundle.meta.means_maxs},
+            "scales": {"codebook": bundle.meta.scales_codebook},
+            "sh0": {"codebook": bundle.meta.sh0_codebook}
+        }))
+        .unwrap()
+    };
+    let meta = LodMeta {
+        counts: vec![3, 2],
+        filenames: vec!["0/meta.json".into(), "1/meta.json".into()],
+        leaves: vec![Leaf {
+            min: [-1.0; 3],
+            max: [1.0; 3],
+            lods: vec![
+                Some(Range {
+                    file: 0,
+                    offset: 0,
+                    count: 3,
+                }),
+                Some(Range {
+                    file: 1,
+                    offset: 0,
+                    count: 2,
+                }),
+            ],
+        }],
+    };
+    let settings = StreamSettings {
+        capacity: 4,
+        fade_s: 0.25,
+        allow_fade_cuts: false,
+        ..Default::default()
+    };
+    let mut stream = LevelStream::new(
+        meta,
+        &[Some(meta_json(&fine)), Some(meta_json(&coarse))],
+        settings,
+    )
+    .unwrap();
+    let pipelines = Pipelines::new(&device, countersplat_render::COLOR_FORMAT).unwrap();
+    let pool = scene::pool_with_centroid_rows(
+        &device,
+        &queue,
+        &pipelines,
+        stream.shared_meta(),
+        4,
+        0.5,
+        1,
+    )
+    .unwrap();
+    stream.init_pool(&pool, &queue);
+
+    stream.set_fixed_lod(Some(1)).unwrap();
+    stream.select([0.0, 0.0, 3.0], [0.0, 0.0, -1.0], None, 0.0);
+    stream.insert(1, coarse);
+    stream.apply(&pool, &queue);
+    assert_eq!(stream.stats().resident_splats, 2);
+
+    stream.insert(0, fine);
+    stream.set_fixed_lod(Some(0)).unwrap();
+    stream.select([0.0, 0.0, 3.0], [0.0, 0.0, -1.0], None, 1.0);
+    stream.apply(&pool, &queue);
+    let stats = stream.stats();
+    assert_eq!(stats.resident_splats, 2, "keep the existing visible chunk");
+    assert_eq!(
+        stats.leaves_pending, 1,
+        "request remains pending until room exists"
+    );
+    assert_eq!(
+        stats.hard_swaps, 0,
+        "smooth mode must not abruptly replace it"
+    );
+
+    // With fades explicitly disabled, a full pool can swap in one frame.
+    stream.settings.fade_s = 0.0;
+    stream.select([0.0, 0.0, 3.0], [0.0, 0.0, -1.0], None, 2.0);
+    stream.apply(&pool, &queue);
+    assert_eq!(stream.stats().resident_splats, 3);
+    assert_eq!(stream.stats().hard_swaps, 1);
+}
+
+#[test]
+fn rapid_lod_changes_finish_the_active_crossfade_before_replacing_it() {
+    use countersplat_assets::lod::{Leaf, LodMeta, Range};
+    use countersplat_render::stream::{LevelStream, StreamSettings};
+
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        eprintln!("no GPU adapter available; skipping streaming transition test");
+        return;
+    };
+    let sample = single_splat();
+    let metadata = serde_json::to_vec(&serde_json::json!({
+        "version": 2, "count": 1,
+        "means": {"mins": sample.meta.means_mins, "maxs": sample.meta.means_maxs},
+        "scales": {"codebook": sample.meta.scales_codebook},
+        "sh0": {"codebook": sample.meta.sh0_codebook}
+    }))
+    .unwrap();
+    let meta = LodMeta {
+        counts: vec![1, 1, 1],
+        filenames: vec![
+            "0/meta.json".into(),
+            "1/meta.json".into(),
+            "2/meta.json".into(),
+        ],
+        leaves: vec![Leaf {
+            min: [-1.0; 3],
+            max: [1.0; 3],
+            lods: (0..3)
+                .map(|file| {
+                    Some(Range {
+                        file,
+                        offset: 0,
+                        count: 1,
+                    })
+                })
+                .collect(),
+        }],
+    };
+    let settings = StreamSettings {
+        capacity: 8,
+        fade_s: 0.4,
+        allow_fade_cuts: false,
+        ..Default::default()
+    };
+    let mut stream = LevelStream::new(
+        meta,
+        &[
+            Some(metadata.clone()),
+            Some(metadata.clone()),
+            Some(metadata),
+        ],
+        settings,
+    )
+    .unwrap();
+    let pipelines = Pipelines::new(&device, countersplat_render::COLOR_FORMAT).unwrap();
+    let pool = scene::pool_with_centroid_rows(
+        &device,
+        &queue,
+        &pipelines,
+        stream.shared_meta(),
+        8,
+        0.5,
+        1,
+    )
+    .unwrap();
+    stream.init_pool(&pool, &queue);
+    for file in 0..3 {
+        stream.insert(file, single_splat());
+    }
+    let eye = [0.0, 0.0, 3.0];
+    let forward = [0.0, 0.0, -1.0];
+    stream.set_fixed_lod(Some(2)).unwrap();
+    stream.select(eye, forward, None, 0.0);
+    stream.apply(&pool, &queue);
+
+    stream.set_fixed_lod(Some(1)).unwrap();
+    stream.select(eye, forward, None, 1.0);
+    stream.apply(&pool, &queue);
+    assert_eq!(stream.stats().leaves_per_lod[1], 1);
+
+    stream.set_fixed_lod(Some(0)).unwrap();
+    stream.select(eye, forward, None, 1.1);
+    stream.apply(&pool, &queue);
+    let held = stream.stats();
+    assert_eq!(
+        held.leaves_per_lod[1], 1,
+        "the in-progress fade keeps its current LOD"
+    );
+    assert_eq!(held.leaves_pending, 1);
+    let weights: Vec<f32> = stream.fades().iter().map(|fade| fade.2).collect();
+    assert_eq!(weights.len(), 2);
+    assert!((weights.iter().sum::<f32>() - 1.0).abs() < 1e-5);
+
+    stream.select(eye, forward, None, 1.5);
+    stream.apply(&pool, &queue);
+    assert_eq!(
+        stream.stats().leaves_per_lod[0],
+        1,
+        "the new target follows after the fade"
+    );
+}
