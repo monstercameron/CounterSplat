@@ -16,11 +16,12 @@ struct ScriptResult<T> {
 }
 
 fn script_result<T: Serialize>(value: Option<T>) -> Result<String, String> {
-    serde_json::to_string(&ScriptResult {
-        found: value.is_some(),
-        value,
-    })
-    .map_err(|error| error.to_string())
+    // Missing reads and write acknowledgements are common and have a fixed
+    // wire representation. Avoid invoking the JSON serializer for them.
+    if value.is_none() {
+        return Ok(r#"{"found":false,"value":null}"#.to_owned());
+    }
+    serde_json::to_string(&ScriptResult { found: true, value }).map_err(|error| error.to_string())
 }
 
 struct ScriptEntityId(Entity);
@@ -412,6 +413,56 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_script_results_match_serialization_and_keep_present_null_distinct() {
+        let reference = serde_json::to_string(&ScriptResult::<Value> {
+            found: false,
+            value: None,
+        })
+        .unwrap();
+        assert_eq!(script_result::<Value>(None).unwrap(), reference);
+        assert_eq!(
+            script_result(Some(Value::Null)).unwrap(),
+            r#"{"found":true,"value":null}"#
+        );
+        assert_eq!(
+            script_result(Some(false)).unwrap(),
+            r#"{"found":true,"value":false}"#
+        );
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_empty_script_result() {
+        use std::{hint::black_box, time::Instant};
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..11 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let start = Instant::now();
+                for _ in 0..500_000 {
+                    let value = if mode == 0 {
+                        serde_json::to_string(&ScriptResult::<Value> {
+                            found: false,
+                            value: None,
+                        })
+                        .unwrap()
+                    } else {
+                        script_result::<Value>(None).unwrap()
+                    };
+                    black_box(value);
+                }
+                samples[mode].push(start.elapsed().as_nanos() as f64 / 500_000.0);
+            }
+        }
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        println!(
+            "empty JSON response: serialized {:.1} ns, constant {:.1} ns",
+            samples[0][5], samples[1][5]
+        );
+    }
+
     #[test]
     fn request_names_borrow_when_possible_and_support_escaped_text() {
         let request =

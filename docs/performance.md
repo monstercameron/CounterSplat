@@ -245,3 +245,8 @@ Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-render --lib benchmark_compaction_buffer_reuse -- --ignored
 --nocapture --test-threads=1` to compare host-side GPU scratch-buffer creation
 with reuse. It excludes the actual GPU copies and rendering.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-ecs benchmark_empty_script_result -- --ignored --nocapture`
+to compare serialization of empty ECS bridge responses with the fixed wire
+response. This isolates response creation, not the complete bridge or frame.

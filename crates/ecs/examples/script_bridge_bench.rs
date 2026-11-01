@@ -77,6 +77,17 @@ fn main() {
         .set_dynamic(entity, "State", json!({"x":1,"enabled":true}))
         .unwrap();
     world.set_dynamic_resource("state", json!({"x":1,"enabled":true}));
+    let revision = world
+        .read_component_if_changed(entity, "State", None)
+        .unwrap()
+        .unwrap()
+        .revision
+        .unwrap();
+    let unchanged = json!({"op":"get_if_changed", "id":entity.to_string(), "name":"State", "revision":revision}).to_string();
+    println!(
+        "unchanged component read: {:.0} ns/op",
+        measure(&mut world, &unchanged, 50_000)
+    );
     for (name, request) in [
         (
             "is alive",
