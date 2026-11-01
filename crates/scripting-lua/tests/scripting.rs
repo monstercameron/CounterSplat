@@ -190,6 +190,91 @@ fn scripting_worker_operates_on_a_separate_ecs_owner() {
 }
 
 #[test]
+fn system_pass_uses_a_snapshot_while_registrations_change() {
+    let runtime = LuaRuntime::new(NoWorld, ScriptOptions::default()).unwrap();
+    runtime
+        .execute(
+            r#"
+        trace, first = {}, true
+        ecs.system("a", function()
+            trace[#trace + 1] = "a"
+            if first then
+                first = false
+                assert(ecs.remove_system("b"))
+                assert(not ecs.remove_system("missing"))
+                ecs.system("d", function() trace[#trace + 1] = "d" end)
+                ecs.system("c", function() trace[#trace + 1] = "new-c" end)
+            end
+        end)
+        ecs.system("b", function() trace[#trace + 1] = "b" end)
+        ecs.system("c", function() trace[#trace + 1] = "old-c" end)
+    "#,
+        )
+        .unwrap();
+    runtime.run_systems(0.1).unwrap();
+    assert_eq!(runtime.systems(), vec!["a", "c", "d"]);
+    runtime
+        .execute(r#"assert(table.concat(trace, ",") == "a,new-c")"#)
+        .unwrap();
+    runtime.run_systems(0.1).unwrap();
+    runtime
+        .execute(r#"assert(table.concat(trace, ",") == "a,new-c,a,new-c,d")"#)
+        .unwrap();
+}
+
+#[test]
+fn readded_system_runs_at_its_original_snapshot_position() {
+    let runtime = LuaRuntime::new(NoWorld, ScriptOptions::default()).unwrap();
+    runtime
+        .execute(
+            r#"
+        seen, first = "", true
+        ecs.system("before", function()
+            seen = seen .. "a"
+            if first then
+                first = false
+                assert(ecs.remove_system("target"))
+                ecs.system("target", function() seen = seen .. "n" end)
+            end
+        end)
+        ecs.system("target", function() seen = seen .. "o" end)
+        ecs.system("after", function() seen = seen .. "z" end)
+    "#,
+        )
+        .unwrap();
+    runtime.run_systems(0.1).unwrap();
+    runtime.execute(r#"assert(seen == "anz")"#).unwrap();
+    assert_eq!(runtime.systems(), vec!["before", "after", "target"]);
+    runtime.run_systems(0.1).unwrap();
+    runtime.execute(r#"assert(seen == "anzazn")"#).unwrap();
+}
+
+#[test]
+fn failed_system_pass_drops_its_snapshot_and_can_recover() {
+    let runtime = LuaRuntime::new(NoWorld, ScriptOptions::default()).unwrap();
+    runtime
+        .execute(
+            r#"
+        seen = ""
+        ecs.system("fail", function() seen = seen .. "a"; error("expected") end)
+        ecs.system("after", function() seen = seen .. "b" end)
+    "#,
+        )
+        .unwrap();
+    assert!(runtime
+        .run_systems(0.1)
+        .unwrap_err()
+        .to_string()
+        .contains("expected"));
+    runtime
+        .execute(r#"assert(seen == "a"); assert(ecs.remove_system("fail"))"#)
+        .unwrap();
+    runtime.run_systems(0.1).unwrap();
+    runtime.execute(r#"assert(seen == "ab")"#).unwrap();
+    assert_eq!(runtime.systems(), vec!["after"]);
+}
+
+#[test]
 fn lua_errors_and_limits_are_reported_and_reset() {
     let options = ScriptOptions {
         instruction_limit: Some(10_000),

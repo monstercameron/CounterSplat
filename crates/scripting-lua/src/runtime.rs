@@ -16,6 +16,8 @@ const SYSTEMS: &str = "countersplat.lua.systems";
 const HANDLERS: &str = "countersplat.lua.handlers";
 const HOOK_INTERVAL: u32 = 1_000;
 type Bridge = Rc<RefCell<Box<dyn WorldBridge>>>;
+// Readers hold an immutable snapshot; registration copies only while a pass is active.
+type SystemOrder = Rc<RefCell<Rc<Vec<String>>>>;
 
 /// Per-VM execution controls. Set an option to None to remove that limit.
 ///
@@ -48,7 +50,7 @@ impl Default for ScriptOptions {
 /// constructs it there for you. The Lua VM is intentionally not Send.
 pub struct LuaRuntime {
     lua: Lua,
-    system_order: Rc<RefCell<Vec<String>>>,
+    system_order: SystemOrder,
     budget: Option<(Rc<Cell<u64>>, u64)>,
 }
 
@@ -78,7 +80,7 @@ impl LuaRuntime {
         globals.set("loadfile", Value::Nil)?;
         lua.set_named_registry_value(SYSTEMS, lua.create_table()?)?;
         lua.set_named_registry_value(HANDLERS, lua.create_table()?)?;
-        let order = Rc::new(RefCell::new(Vec::new()));
+        let order = Rc::new(RefCell::new(Rc::new(Vec::new())));
         let bridge: Bridge = Rc::new(RefCell::new(Box::new(bridge)));
         install_ecs_api(&lua, &bridge, &order)?;
         lua.load(include_str!("engine_api.lua"))
@@ -123,7 +125,7 @@ impl LuaRuntime {
 
     /// System names in their registration order.
     pub fn systems(&self) -> Vec<String> {
-        self.system_order.borrow().clone()
+        self.system_order.borrow().as_ref().clone()
     }
 
     /// Run one named system. The callback receives delta time in seconds.
@@ -144,10 +146,10 @@ impl LuaRuntime {
     pub fn run_systems(&self, dt: f64) -> mlua::Result<()> {
         validate_dt(dt)?;
         self.reset_budget();
-        let names = self.systems();
+        let names = Rc::clone(&self.system_order.borrow());
         let systems: Table = self.lua.named_registry_value(SYSTEMS)?;
-        for name in names {
-            let callback: Option<Function> = systems.get(name)?;
+        for name in names.iter() {
+            let callback: Option<Function> = systems.get(name.as_str())?;
             if let Some(callback) = callback {
                 callback.call::<()>(dt)?;
             }
@@ -347,11 +349,7 @@ fn entity_strings(entities: Vec<Entity>) -> Vec<String> {
     entities.into_iter().map(|id| id.to_string()).collect()
 }
 
-fn install_ecs_api(
-    lua: &Lua,
-    bridge: &Bridge,
-    order: &Rc<RefCell<Vec<String>>>,
-) -> mlua::Result<()> {
+fn install_ecs_api(lua: &Lua, bridge: &Bridge, order: &SystemOrder) -> mlua::Result<()> {
     let api = lua.create_table()?;
     api.set("null", lua.null())?;
     api.set(
@@ -753,7 +751,7 @@ fn install_ecs_api(
             let systems: Table = lua.named_registry_value(SYSTEMS)?;
             systems.set(name.as_str(), callback)?;
             if !order.contains(&name) {
-                order.push(name);
+                Rc::make_mut(&mut order).push(name);
             }
             Ok(())
         })?,
@@ -768,7 +766,9 @@ fn install_ecs_api(
             let systems: Table = lua.named_registry_value(SYSTEMS)?;
             let existed = order.contains(&name);
             systems.set(name.as_str(), Value::Nil)?;
-            order.retain(|item| item != &name);
+            if existed {
+                Rc::make_mut(&mut order).retain(|item| item != &name);
+            }
             Ok(existed)
         })?,
     )?;
@@ -1011,6 +1011,81 @@ mod scalar_input_tests {
             samples[1].sort_by(f64::total_cmp);
             println!(
                 "{name}: general {:.1} ns, direct {:.1} ns",
+                samples[0][4], samples[1][4]
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod system_schedule_tests {
+    use super::*;
+    use std::{hint::black_box, time::Instant};
+
+    struct Sink;
+    impl WorldBridge for Sink {
+        fn request(&mut self, _: WorldOperation) -> Result<WorldOutcome, String> {
+            Ok(WorldOutcome::Applied)
+        }
+    }
+
+    fn clone_and_run(runtime: &LuaRuntime, dt: f64) -> mlua::Result<()> {
+        validate_dt(dt)?;
+        runtime.reset_budget();
+        let names = runtime.systems();
+        let systems: Table = runtime.lua.named_registry_value(SYSTEMS)?;
+        for name in names {
+            let callback: Option<Function> = systems.get(name)?;
+            if let Some(callback) = callback {
+                callback.call::<()>(dt)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_system_schedule() {
+        for (count, iterations) in [
+            (0, 20_000),
+            (1, 20_000),
+            (16, 5_000),
+            (100, 1_000),
+            (1000, 100),
+        ] {
+            let runtime = LuaRuntime::new(
+                Sink,
+                ScriptOptions {
+                    instruction_limit: None,
+                    ..ScriptOptions::default()
+                },
+            )
+            .unwrap();
+            runtime
+                .execute(&format!(
+                    r#"for i=1,{count} do
+                ecs.system("system_"..i, function(dt) end)
+            end"#
+                ))
+                .unwrap();
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..9 {
+                for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                    let start = Instant::now();
+                    for _ in 0..iterations {
+                        if mode == 0 {
+                            black_box(clone_and_run(&runtime, black_box(1.0 / 60.0)).unwrap());
+                        } else {
+                            black_box(runtime.run_systems(black_box(1.0 / 60.0)).unwrap());
+                        }
+                    }
+                    samples[mode].push(start.elapsed().as_nanos() as f64 / iterations as f64);
+                }
+            }
+            samples[0].sort_by(f64::total_cmp);
+            samples[1].sort_by(f64::total_cmp);
+            println!(
+                "{count} systems: cloned {:.0} ns, shared {:.0} ns",
                 samples[0][4], samples[1][4]
             );
         }

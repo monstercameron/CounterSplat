@@ -283,3 +283,13 @@ the same process. Run `cargo test --locked --release --target-dir .artifacts/tar
 --test-threads=1` to compare the inline ancestor tracker with the original
 hash-set validation for vectors, objects, wide tables, and deep tables. These
 fixtures exclude ECS-owner thread scheduling and rendering.
+
+## Native Lua system scheduling
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-scripting-lua benchmark_system_schedule -- --ignored --nocapture
+--test-threads=1` to compare cloned and shared system-order snapshots in the
+same process. `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-scripting-lua --example system_schedule_bench` measures the full
+native schedule with empty callbacks. Neither benchmark includes gameplay work,
+ECS-owner scheduling, or rendering.
