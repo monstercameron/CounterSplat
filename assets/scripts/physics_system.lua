@@ -1,13 +1,24 @@
 -- Physics is a normal fixed-tick Lua system. ECS components hold the settings;
 -- the host resolves movement against the active level collider when available.
+-- The scene may retarget the active level at runtime, so bind readers to the
+-- current entity rather than assuming the initial scene resource never changes.
+local cached_level, read_level, read_state
+local function level_components(level)
+    if level ~= cached_level then
+        cached_level = level
+        read_level = level and engine.component_reader(level, "VoxelCollider") or nil
+        read_state = level and engine.component_reader(level, "VoxelColliderState") or nil
+    end
+    if not level then return nil, nil end
+    return read_level(), read_state()
+end
 ecs.system("physics.integrate", function(dt)
     -- Read only the bindings needed this tick; the scene can retarget either
     -- entity without copying its entire ID map across the scripting bridge.
     local player = ecs.get_resource_field("scene.entities", "player")
     local level_entity = ecs.get_resource_field("scene.entities", "active_level")
     local body = player and ecs.get(player, "PhysicsBody")
-    local level = level_entity and ecs.get(level_entity, "VoxelCollider")
-    local state = level_entity and ecs.get(level_entity, "VoxelColliderState")
+    local level, state = level_components(level_entity)
     local expects_ground = body and body.enabled and body.gravity_enabled and body.collision_enabled and
         level and level.enabled and level.physics and state
     local wait = ecs.get_resource("player.stand_probe_pending") == true or

@@ -2,6 +2,8 @@
 -- damage, and lifetime. The physics worker only answers finite segment queries.
 local ids = assert(ecs.get_resource('scene.entities'))
 local weapon = assert(ids.first_person)
+local read_level = ids.active_level and engine.component_reader(ids.active_level, 'VoxelCollider')
+local read_level_state = ids.active_level and engine.component_reader(ids.active_level, 'VoxelColliderState')
 local active, trails = {}, {}
 local sequence, had_visuals, notice_time = 0, false, 0
 local MAX_PROJECTILES, MAX_TRAILS = 64, 256
@@ -224,9 +226,13 @@ ecs.system('combat.projectiles',function(dt)
         trails[i].life=trails[i].life-dt
         if trails[i].life<=0 then table.remove(trails,i) end
     end
-    local level=ids.active_level and ecs.get(ids.active_level,'VoxelCollider')
-    local state=ids.active_level and ecs.get(ids.active_level,'VoxelColliderState')
-    local waiting=level and level.enabled and level.physics and state and state.status=='loading'
+    -- Collision settings matter only while a projectile is in flight.
+    local waiting
+    if next(active) then
+        local level=read_level and read_level()
+        local state=read_level_state and read_level_state()
+        waiting=level and level.enabled and level.physics and state and state.status=='loading'
+    end
     for id,p in pairs(active) do
         if not ecs.is_alive(id) then active[id]=nil
         else

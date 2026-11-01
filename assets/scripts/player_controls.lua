@@ -4,6 +4,8 @@ local ids = assert(ecs.get_resource("scene.entities"), "gameplay entities are mi
 local player = assert(ids.player, "player entity is missing")
 local read_controls = engine.component_reader(player, "PlayerControls")
 local read_rig = engine.component_reader(player, "PlayerRig")
+local read_level = ids.active_level and engine.component_reader(ids.active_level, "VoxelCollider")
+local read_level_state = ids.active_level and engine.component_reader(ids.active_level, "VoxelColliderState")
 
 -- The host provides a validated level-camera candidate; the player script owns
 -- the spawn policy and reset pose. Other hosts may omit the optional candidate
@@ -146,8 +148,8 @@ ecs.set_resource("player.spawn_probe_pending", false)
 -- probe are loading. On levels without collision, allow free-fly navigation.
 local function level_collision(body)
     if not body or not body.enabled or not body.gravity_enabled or not body.collision_enabled then return nil end
-    local level = ids.active_level and ecs.get(ids.active_level, "VoxelCollider")
-    local state = ids.active_level and ecs.get(ids.active_level, "VoxelColliderState")
+    local level = read_level and read_level()
+    local state = read_level_state and read_level_state()
     if not level or not level.enabled or not level.physics or not state then return nil end
     return state.status
 end

@@ -164,3 +164,7 @@ first-person Lua/JavaScript transfer fixture. Neither measures GPU frame rate.
 Run `node scripts/benchmark_output_drain.mjs` to compare individual
 output-channel drains with ordered nonempty-channel consumption. The fixture
 measures browser-host JSON and dispatch overhead without Rust or rendering.
+
+Run `node scripts/benchmark_lua_voxel_cache.mjs` to compare repeated
+voxel settings and status transfers with unchanged cached snapshots. This
+fixture measures Lua/JavaScript overhead, without Rust, collision, or rendering.

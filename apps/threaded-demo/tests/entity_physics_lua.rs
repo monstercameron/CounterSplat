@@ -397,3 +397,90 @@ fn physics_tracks_runtime_changes_to_scene_player_binding() {
         "the new player binding must wait for collision data"
     );
 }
+
+#[test]
+fn physics_rebinds_cached_voxel_settings_and_observes_status_updates() {
+    use countersplat_scene::{VoxelCollider, VoxelColliderState, VoxelStatus};
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &manifest,
+        &["ui", "player", "level"],
+    )
+    .unwrap();
+    let player = ids["player"];
+    let replacement = {
+        let mut w = world.borrow_mut();
+        let body = w.get_mut::<PhysicsBody>(player).unwrap();
+        body.enabled = true;
+        body.gravity_enabled = true;
+        body.collision_enabled = true;
+        let level = w.get_mut::<VoxelCollider>(ids["active_level"]).unwrap();
+        level.enabled = true;
+        level.physics = true;
+        w.get_mut::<VoxelColliderState>(ids["active_level"])
+            .unwrap()
+            .status = VoxelStatus::Loading;
+        let replacement = w.spawn();
+        w.insert(
+            replacement,
+            VoxelCollider {
+                enabled: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        w.insert(replacement, VoxelColliderState::default())
+            .unwrap();
+        replacement
+    };
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    lua.execute(&std::fs::read_to_string(root.join("assets/scripts/physics_system.lua")).unwrap())
+        .unwrap();
+    let initial = world.borrow().get::<PlayerCamera>(player).unwrap().position[1];
+    lua.run_systems(0.1).unwrap();
+    assert_eq!(
+        world.borrow().get::<PlayerCamera>(player).unwrap().position[1],
+        initial
+    );
+    {
+        let mut w = world.borrow_mut();
+        let mut ids = w.get_dynamic_resource("scene.entities").unwrap().clone();
+        ids["active_level"] = json!(replacement.to_string());
+        w.set_dynamic_resource("scene.entities", ids);
+    }
+    lua.run_systems(0.1).unwrap();
+    assert!(
+        world.borrow().get::<PlayerCamera>(player).unwrap().position[1] < initial,
+        "a replacement with collision disabled must release the loading hold"
+    );
+    {
+        let mut w = world.borrow_mut();
+        w.get_mut::<PlayerCamera>(player).unwrap().position[1] = initial;
+        w.get_mut::<PhysicsBody>(player).unwrap().velocity = [0.0; 3];
+        w.get_mut::<VoxelCollider>(replacement).unwrap().enabled = true;
+    }
+    lua.run_systems(0.1).unwrap();
+    assert_eq!(
+        world.borrow().get::<PlayerCamera>(player).unwrap().position[1],
+        initial,
+        "enabling a still-loading collider must restore the hold"
+    );
+    {
+        let mut w = world.borrow_mut();
+        let state = w.get_mut::<VoxelColliderState>(replacement).unwrap();
+        state.status = VoxelStatus::Ready;
+        state.resolution = Some(0.05);
+    }
+    lua.run_systems(0.1).unwrap();
+    assert!(
+        world.borrow().get::<PlayerCamera>(player).unwrap().position[1] < initial,
+        "the worker's ready status must release the hold"
+    );
+}

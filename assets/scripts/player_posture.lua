@@ -4,6 +4,8 @@ local ids = assert(ecs.get_resource('scene.entities'))
 local player = assert(ids.player)
 local read_controls = engine.component_reader(player, 'PlayerControls')
 local read_rig = engine.component_reader(player, 'PlayerRig')
+local read_level = ids.active_level and engine.component_reader(ids.active_level, 'VoxelCollider')
+local read_level_state = ids.active_level and engine.component_reader(ids.active_level, 'VoxelColliderState')
 if not ecs.get(player, 'PlayerPosture') then return end
 
 for _, item in ipairs({
@@ -82,8 +84,8 @@ end
 
 local function collision_mode(body)
     if not body or not body.enabled or not body.collision_enabled then return 'free' end
-    local level=ids.active_level and ecs.get(ids.active_level,'VoxelCollider')
-    local state=ids.active_level and ecs.get(ids.active_level,'VoxelColliderState')
+    local level=read_level and read_level()
+    local state=read_level_state and read_level_state()
     if not level or not level.enabled or not level.physics then return 'free' end
     if not state or state.status=='loading' then return 'waiting' end
     if state.status=='unavailable' or state.status=='error' then return 'free' end

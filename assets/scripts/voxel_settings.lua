@@ -1,12 +1,14 @@
 -- Bind the voxel controls to the active level's normal ECS components.
 local ids = assert(ecs.get_resource("scene.entities"))
 local level = assert(ids.active_level)
+local read_settings = engine.component_reader(level, "VoxelCollider")
+local read_state = engine.component_reader(level, "VoxelColliderState")
 local fields = { [ids.voxel_enabled] = "enabled", [ids.voxel_visible] = "visible", [ids.voxel_physics] = "physics" }
 
 local previous = nil
 local function sync(force)
-    local settings = assert(ecs.get(level, "VoxelCollider"))
-    local state = assert(ecs.get(level, "VoxelColliderState"))
+    local settings = assert(read_settings())
+    local state = assert(read_state())
     local visible_voxels = settings.visible and state.visible_voxels or nil
     if not force and previous and previous.enabled == settings.enabled and
         previous.visible == settings.visible and previous.physics == settings.physics and
