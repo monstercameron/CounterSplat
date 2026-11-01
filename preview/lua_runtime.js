@@ -6,7 +6,7 @@ const INSTRUCTION_LIMIT = 10_000_000;
 const HOOK_INTERVAL = 1_000;
 const BOOTSTRAP = `
 local call, call_flat = __ecs_call, __ecs_call_flat
-local call_changed, call_strings, query_one = __ecs_call_changed, __ecs_call_strings, __ecs_query_one
+local call_changed, call_strings, query_one, get_pair = __ecs_call_changed, __ecs_call_strings, __ecs_query_one, __ecs_get_pair
 local set_scalar, set_vector = __ecs_set_scalar, __ecs_set_vector
 local set_pair, set_vector_pair = __ecs_set_pair, __ecs_set_vector_pair
 local type, pairs, ipairs, next_key, raw_get, get_meta = type, pairs, ipairs, next, rawget, getmetatable
@@ -51,7 +51,7 @@ local function bounded(fn, ...)
     end
 end
 __ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings = nil, nil, nil, nil
-__ecs_query_one, __ecs_set_scalar, __ecs_set_vector, __ecs_set_pair, __ecs_set_vector_pair = nil, nil, nil, nil, nil
+__ecs_query_one, __ecs_get_pair, __ecs_set_scalar, __ecs_set_vector, __ecs_set_pair, __ecs_set_vector_pair = nil, nil, nil, nil, nil, nil
 __profile_now, __profile_sample = nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
@@ -142,7 +142,21 @@ function ecs.get_if_changed(id, name, revision)
     end
     return invoke("get_if_changed", {id = id, name = name, revision = revision})
 end
-function ecs.get_many(id, names) return invoke("get_many", { id = id, names = names }) end
+function ecs.get_many(id, names)
+    if type(id) == "string" and type(names) == "table" and get_meta(names) == nil then
+        local first, second = raw_get(names, 1), raw_get(names, 2)
+        if type(first) == "string" and type(second) == "string" then
+            local key1 = next_key(names)
+            local key2 = next_key(names, key1)
+            if ((key1 == 1 and key2 == 2) or (key1 == 2 and key2 == 1)) and next_key(names, key2) == nil then
+                local result = get_pair(id, first, second)
+                if result ~= nil then return decode(result) end
+                return
+            end
+        end
+    end
+    return invoke("get_many", { id = id, names = names })
+end
 function ecs.has(id, name) return invoke_two_strings("has", "id", id, "name", name) end
 function ecs.set(id, name, value) invoke("set", { id = id, name = name, value = value }) end
 local function finite_number(value)
@@ -331,6 +345,10 @@ export class LuaScene {
       });
       vm.global.set('__ecs_query_one', component => {
         const result = host.call({op:'query', components:[component]}, true);
+        return result.found ? encodeResult(result.value) : undefined;
+      });
+      vm.global.set('__ecs_get_pair', (id, first, second) => {
+        const result = host.call({op:'get_many', id, names:[first, second]}, true);
         return result.found ? encodeResult(result.value) : undefined;
       });
       // These callbacks receive only primitive values validated by the private

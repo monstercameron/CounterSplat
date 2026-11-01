@@ -220,3 +220,7 @@ Lua/JavaScript transport and excludes Rust query execution and GPU work.
 Run `node scripts/benchmark_lua_field_writes.mjs` to compare the general
 Lua field encoder with validated scalar, three-number vector, and atomic
 two-field writes. The fixture excludes Rust validation, collision, and rendering.
+
+Run `node scripts/benchmark_lua_get_many.mjs` to compare two-component
+batch reads through the general and scalar-request browser bridges. The
+in-memory fixture excludes Rust component reads and rendering.

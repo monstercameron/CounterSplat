@@ -63,6 +63,8 @@ class WorldFixture {
         break;
       }
       case 'get_many': {
+        if (op.id === 'stale') throw new Error('stale entity');
+        if (op.id === 'no-result') { found = false; break; }
         value = Object.create(null);
         const components = this.components.get(op.id) || new Map();
         for (const name of op.names) if (components.has(name)) value[name] = components.get(name);
@@ -120,7 +122,7 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
-  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil and __ecs_set_scalar == nil and __ecs_set_vector == nil and __ecs_set_pair == nil and __ecs_set_vector_pair == nil)
+  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil and __ecs_get_pair == nil and __ecs_set_scalar == nil and __ecs_set_vector == nil and __ecs_set_pair == nil and __ecs_set_vector_pair == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
@@ -209,6 +211,22 @@ game.vm.doStringSync(`
   pairs = function() return function() return nil end end
   assert(ecs.get('entity', 'Health') == 50)
   pairs = saved_pairs
+  local pair = ecs.get_many('entity', {'Health', 'Nullable'})
+  assert(pair.Health == 50 and pair.Nullable == ecs.null)
+  local pair_array = ecs.array(); pair_array[1], pair_array[2] = 'Health', 'Missing'
+  assert(ecs.get_many('entity', pair_array).Health == 50)
+  assert(ecs.get_many('entity', {'Health', 'Health'}).Health == 50)
+  assert(ecs.get_many('entity', {'__proto__', 'Nullable'}).__proto__ == 'safe')
+  assert(select('#', ecs.get_many('no-result', {'Health', 'Nullable'})) == 0)
+  assert(not pcall(function() ecs.get_many('stale', {'Health', 'Nullable'}) end))
+  local malformed = ecs.array(); malformed[1], malformed[2], malformed.extra = 'Health', 'Nullable', true
+  assert(not pcall(function() ecs.get_many('entity', malformed) end))
+  local pair_proxy = setmetatable({'wrong', 'wrong'}, {
+    __pairs = function() return next, {'Health', 'Nullable'}, nil end
+  })
+  assert(ecs.get_many('entity', pair_proxy).Nullable == ecs.null)
+  local pair_cycle = {}; pair_cycle.self = pair_cycle
+  assert(not pcall(function() ecs.get_many('entity', pair_cycle) end))
   local batch = ecs.get_many('entity', {'Health', 'Nullable', 'Missing', '__proto__'})
   assert(batch.Health == 50 and batch.Nullable == ecs.null and batch.Missing == nil)
   assert(batch.__proto__ == 'safe' and next(ecs.get_many('entity', {})) == nil)
