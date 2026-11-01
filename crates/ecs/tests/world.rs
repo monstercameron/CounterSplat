@@ -408,6 +408,54 @@ fn batched_reads_preserve_missing_null_and_duplicate_semantics() {
 }
 
 #[test]
+fn batched_reads_discard_partial_output_from_an_absent_adapter() {
+    struct Absent;
+    impl ComponentAdapter for Absent {
+        fn read(&self, _: &World, _: Entity) -> Result<Option<Value>, String> {
+            Ok(None)
+        }
+        fn write_json(&self, _: &World, _: Entity, output: &mut Vec<u8>) -> Result<bool, String> {
+            output.extend_from_slice(b"partial");
+            Ok(false)
+        }
+        fn write(&self, _: &mut World, _: Entity, _: Value) -> Result<(), String> {
+            Err("read only".into())
+        }
+        fn remove(&self, _: &mut World, _: Entity) -> Result<Option<Value>, String> {
+            Err("read only".into())
+        }
+        fn contains(&self, _: &World, _: Entity) -> bool {
+            false
+        }
+    }
+    let mut world = World::new();
+    world.register_component_adapter("Absent", Absent).unwrap();
+    let entity = world.spawn();
+    world
+        .set_dynamic(entity, "Present", json!({"value": 42}))
+        .unwrap();
+    for names in [
+        vec!["Absent", "Present"],
+        vec!["Present", "Absent"],
+        vec!["Absent"],
+    ] {
+        let expected = world
+            .read_component_values(
+                entity,
+                &names
+                    .iter()
+                    .map(|name| name.to_string())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        let request = json!({"op":"get_many", "id":entity.to_string(), "names":names});
+        let result: Value =
+            serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+        assert_eq!(result, json!({"found":true, "value":expected}));
+    }
+}
+
+#[test]
 fn component_presence_does_not_copy_or_serialize_values() {
     let mut world = World::new();
     world

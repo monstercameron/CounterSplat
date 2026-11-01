@@ -143,6 +143,16 @@ fn main() {
         "three batched component reads: {:.0} ns",
         measure(&mut world, &batch, 12_000)
     );
+    for (name, names) in [
+        ("large + typed", vec!["Inventory", "Body"]),
+        ("missing + typed", vec!["Missing", "Body", "AlsoMissing"]),
+    ] {
+        let batch = json!({"op":"get_many", "id":entity.to_string(), "names":names}).to_string();
+        println!(
+            "{name:>20} batched: {:.0} ns",
+            measure(&mut world, &batch, 12_000)
+        );
+    }
     for (size, iterations) in [(200, 1000), (2_000, 100)] {
         let mut world = World::new();
         let mut parent = None;

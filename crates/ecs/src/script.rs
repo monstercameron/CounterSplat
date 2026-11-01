@@ -102,18 +102,20 @@ fn script_components_result(
 
     let mut output = Vec::with_capacity(256);
     output.extend_from_slice(br#"{"found":true,"value":{"#);
-    let mut scratch = Vec::with_capacity(128);
     let mut first = true;
     for name in names {
-        scratch.clear();
-        if world.write_component_json(entity, name.as_ref(), &mut scratch)? {
-            if !first {
-                output.push(b',');
-            }
+        // Serialize directly into the response. If absent, remove the key and any
+        // partial bytes an adapter wrote before returning false.
+        let start = output.len();
+        if !first {
+            output.push(b',');
+        }
+        serde_json::to_writer(&mut output, name.as_ref()).map_err(|error| error.to_string())?;
+        output.push(b':');
+        if world.write_component_json(entity, name.as_ref(), &mut output)? {
             first = false;
-            serde_json::to_writer(&mut output, name.as_ref()).map_err(|error| error.to_string())?;
-            output.push(b':');
-            output.extend_from_slice(&scratch);
+        } else {
+            output.truncate(start);
         }
     }
     output.extend_from_slice(b"}}");
