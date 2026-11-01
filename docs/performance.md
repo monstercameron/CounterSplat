@@ -268,3 +268,14 @@ Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-ecs benchmark_change_read -- --ignored --nocapture --test-threads=1`
 to compare the general and direct change-aware read parsers and full Rust
 bridge paths. These measurements exclude Lua and rendering.
+
+
+## Native Lua scalar input
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-scripting-lua --example scalar_input_bench` to measure scalar,
+vector, and object writes through the native Lua API to an in-memory sink. Run
+`cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-scripting-lua benchmark_scalar_input -- --ignored --nocapture
+--test-threads=1` to compare the primitive decoder with the general decoder in
+the same process. These fixtures exclude ECS-owner thread scheduling and rendering.

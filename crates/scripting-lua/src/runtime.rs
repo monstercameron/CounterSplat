@@ -232,6 +232,29 @@ fn maybe_value(lua: &Lua, outcome: WorldOutcome) -> mlua::Result<Value> {
 // script cannot silently corrupt a component or resource. Limit nested tables
 // and detect cycles before recursive deserialization.
 fn json_input(lua: &Lua, value: Value) -> mlua::Result<JsonValue> {
+    // Primitive values cannot contain cycles or exceed the nesting/node limits.
+    // Preserve the general decoder for binary strings and every compound value.
+    match &value {
+        Value::Nil => return Ok(JsonValue::Null),
+        Value::LightUserData(pointer) if pointer.0.is_null() => return Ok(JsonValue::Null),
+        Value::Boolean(value) => return Ok(JsonValue::Bool(*value)),
+        Value::Integer(value) => return Ok(JsonValue::Number((*value).into())),
+        Value::Number(value) => {
+            return serde_json::Number::from_f64(*value)
+                .map(JsonValue::Number)
+                .ok_or_else(|| mlua::Error::runtime("JSON values must use finite numbers"));
+        }
+        Value::String(value) => {
+            if let Ok(text) = value.to_str() {
+                return Ok(JsonValue::String(String::from(&*text)));
+            }
+        }
+        _ => {}
+    }
+    json_input_general(lua, value)
+}
+
+fn json_input_general(lua: &Lua, value: Value) -> mlua::Result<JsonValue> {
     fn validate(
         value: &Value,
         active: &mut HashSet<usize>,
@@ -730,4 +753,100 @@ fn install_ecs_api(
         })?,
     )?;
     lua.globals().set("ecs", api)
+}
+
+#[cfg(test)]
+mod scalar_input_tests {
+    use super::*;
+
+    #[test]
+    fn primitive_inputs_match_the_general_decoder() {
+        let lua = Lua::new();
+        let array = lua.create_sequence_from([1, 2, 3]).unwrap();
+        let cycle = lua.create_table().unwrap();
+        cycle.set("self", cycle.clone()).unwrap();
+        let cases = vec![
+            Value::Nil,
+            lua.null(),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Integer(i64::MIN),
+            Value::Integer(0),
+            Value::Integer(i64::MAX),
+            Value::Number(-0.0),
+            Value::Number(f64::MIN_POSITIVE),
+            Value::Number(f64::MAX),
+            Value::Number(f64::NAN),
+            Value::Number(f64::INFINITY),
+            Value::Number(f64::NEG_INFINITY),
+            Value::String(lua.create_string("").unwrap()),
+            Value::String(lua.create_string("héllo 🌍").unwrap()),
+            Value::String(lua.create_string([0xff, 0x80]).unwrap()),
+            Value::Table(array),
+            Value::Table(cycle),
+            Value::Function(lua.create_function(|_, ()| Ok(())).unwrap()),
+        ];
+        for value in cases {
+            let expected = json_input_general(&lua, value.clone())
+                .map(|v| serde_json::to_string(&v).unwrap())
+                .map_err(|e| e.to_string());
+            let actual = json_input(&lua, value)
+                .map(|v| serde_json::to_string(&v).unwrap())
+                .map_err(|e| e.to_string());
+            assert_eq!(actual, expected);
+        }
+        // Include normal, subnormal, signed, and non-finite bit patterns.
+        let mut bits = 0x86f0_0137_7be2_91adu64;
+        for _ in 0..10_000 {
+            bits = bits.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let value = Value::Number(f64::from_bits(bits));
+            let expected = json_input_general(&lua, value.clone())
+                .map(|v| serde_json::to_string(&v).unwrap())
+                .map_err(|e| e.to_string());
+            let actual = json_input(&lua, value)
+                .map(|v| serde_json::to_string(&v).unwrap())
+                .map_err(|e| e.to_string());
+            assert_eq!(actual, expected, "bits {bits:016x}");
+        }
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_scalar_input() {
+        use std::{hint::black_box, time::Instant};
+        let lua = Lua::new();
+        let values = [
+            ("boolean", Value::Boolean(false)),
+            ("integer", Value::Integer(42)),
+            ("number", Value::Number(1.25)),
+            ("string", Value::String(lua.create_string("value").unwrap())),
+            (
+                "vector",
+                Value::Table(lua.create_sequence_from([1.0, 2.0, 3.0]).unwrap()),
+            ),
+        ];
+        for (name, value) in values {
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..9 {
+                for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                    let start = Instant::now();
+                    for _ in 0..100_000 {
+                        let result = if mode == 0 {
+                            json_input_general(black_box(&lua), black_box(value.clone()))
+                        } else {
+                            json_input(black_box(&lua), black_box(value.clone()))
+                        };
+                        black_box(result.unwrap());
+                    }
+                    samples[mode].push(start.elapsed().as_nanos() as f64 / 100_000.0);
+                }
+            }
+            samples[0].sort_by(f64::total_cmp);
+            samples[1].sort_by(f64::total_cmp);
+            println!(
+                "{name}: general {:.1} ns, direct {:.1} ns",
+                samples[0][4], samples[1][4]
+            );
+        }
+    }
 }
