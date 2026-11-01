@@ -135,7 +135,9 @@ selection for the checked-in 384-leaf level metadata and synthetic 1,024- and
 turns the camera, warms the selector, and reports the median of five samples.
 It excludes network, decoding, uploads, rendering, and GPU time. Compare builds
 under the same conditions; background load and CPU clock changes affect results.
-
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render --lib benchmark_forward_ellipse_query -- --ignored --nocapture
+--test-threads=1` to isolate the original and precomputed footprint calculations.
 
 ## Field-update benchmarks
 

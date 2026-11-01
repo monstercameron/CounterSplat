@@ -1229,7 +1229,8 @@ fn octree_candidates_include_all_intersecting_and_previously_active_regions() {
     for direction in [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]] {
         let eye = [250.0, 0.5, 0.5];
         let mut ids = Vec::new();
-        index.forward_candidates(eye, direction, 60.0, 0.3, 0.55, &mut ids);
+        let query = ForwardEllipseQuery::new(eye, direction, 60.0, 0.3, 0.55, 1.2);
+        index.forward_candidates(&query, &mut ids);
         let candidates: BTreeSet<_> = ids.into_iter().collect();
         assert!(
             candidates.contains(&199),

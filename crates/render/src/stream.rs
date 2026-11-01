@@ -25,9 +25,11 @@ mod spatial;
 mod types;
 mod upload;
 
+#[cfg(test)]
+use selection::forward_ellipse_intersects;
 use selection::{
-    box_in_frustum, coarsest_available, effective_distance, forward_ellipse_intersects,
-    frustum_planes, leaf_count, level_at_values,
+    box_in_frustum, coarsest_available, effective_distance, frustum_planes, leaf_count,
+    level_at_values, ForwardEllipseQuery,
 };
 use spatial::SpatialOctree;
 use types::{hash_allocation_event, hash_resident_layout};
@@ -486,51 +488,55 @@ impl LevelStream {
         let center_planes = (self.settings.center_lod0_m > 0.0)
             .then(|| clip.map(|matrix| frustum_planes(matrix, 0.5)))
             .flatten();
+        let ellipses = match self.settings.draw_region {
+            DrawRegion::ForwardEllipse {
+                rear_fraction,
+                side_fraction,
+            } => Some((
+                ForwardEllipseQuery::new(
+                    eye,
+                    forward,
+                    self.settings.max_distance_m,
+                    rear_fraction,
+                    side_fraction,
+                    1.0,
+                ),
+                ForwardEllipseQuery::new(
+                    eye,
+                    forward,
+                    self.settings.max_distance_m,
+                    rear_fraction,
+                    side_fraction,
+                    1.20,
+                ),
+            )),
+            DrawRegion::Radial => None,
+        };
         let mut budget = i64::from(self.settings.capacity) * SELECT_SHARE / 100;
         self.selection.clear();
         // The octree indexes the level regions; active IDs are also revisited so leaving regions can fade out.
         self.candidates.clear();
-        match self.settings.draw_region {
-            DrawRegion::ForwardEllipse {
-                rear_fraction,
-                side_fraction,
-            } => self.spatial.forward_candidates(
-                eye,
-                forward,
-                self.settings.max_distance_m,
-                rear_fraction,
-                side_fraction,
-                &mut self.candidates,
-            ),
-            DrawRegion::Radial => self.candidates.extend(0..self.leaves.len()),
+        match &ellipses {
+            Some((_, retention)) => self
+                .spatial
+                .forward_candidates(retention, &mut self.candidates),
+            None => self.candidates.extend(0..self.leaves.len()),
         };
         for &i in &self.candidates {
             let state = &mut self.leaves[i];
             let leaf = &self.meta.leaves[i];
             let distance = effective_distance(eye, leaf.min, leaf.max);
             state.distance = distance;
-            let in_region = match self.settings.draw_region {
-                DrawRegion::Radial => distance <= self.settings.max_distance_m,
-                DrawRegion::ForwardEllipse {
-                    rear_fraction,
-                    side_fraction,
-                } => {
+            let in_region = match &ellipses {
+                None => distance <= self.settings.max_distance_m,
+                Some((enter, retention)) => {
                     // A larger leave footprint keeps small movements and turns from churning the edge.
-                    let margin = if state.want.is_some() && self.started {
-                        1.20
+                    let query = if state.want.is_some() && self.started {
+                        retention
                     } else {
-                        1.0
+                        enter
                     };
-                    forward_ellipse_intersects(
-                        eye,
-                        forward,
-                        leaf.min,
-                        leaf.max,
-                        self.settings.max_distance_m,
-                        rear_fraction,
-                        side_fraction,
-                        margin,
-                    )
+                    query.intersects(leaf.min, leaf.max)
                 }
             };
             if in_region {

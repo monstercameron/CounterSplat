@@ -1,6 +1,8 @@
 //! A loose octree over immutable level-region bounds. The per-region streaming state stays in LevelStream;
 //! this index tracks selected region IDs so a region leaving the query can be retained and faded safely.
+#[cfg(test)]
 use super::selection::forward_ellipse_intersects;
+use super::selection::ForwardEllipseQuery;
 use crate::lod::Leaf;
 
 const NODE_CAPACITY: usize = 12;
@@ -82,15 +84,7 @@ impl SpatialOctree {
         index
     }
     /// Candidate regions in the wider retention oval, plus previous active regions needing retirement.
-    pub fn forward_candidates(
-        &mut self,
-        eye: [f32; 3],
-        forward: [f32; 3],
-        reach: f32,
-        rear_fraction: f32,
-        side_fraction: f32,
-        out: &mut Vec<usize>,
-    ) {
+    pub fn forward_candidates(&mut self, query: &ForwardEllipseQuery, out: &mut Vec<usize>) {
         out.clear();
         out.extend_from_slice(&self.active);
         self.stack.clear();
@@ -99,16 +93,7 @@ impl SpatialOctree {
         }
         while let Some(index) = self.stack.pop() {
             let node = &self.nodes[index];
-            if !forward_ellipse_intersects(
-                eye,
-                forward,
-                node.min,
-                node.max,
-                reach,
-                rear_fraction,
-                side_fraction,
-                1.20,
-            ) {
+            if !query.intersects(node.min, node.max) {
                 continue;
             }
             out.extend_from_slice(&node.regions);
@@ -172,7 +157,8 @@ mod tests {
             let direction = [angle.cos(), 0.0, angle.sin()];
             let reach = [0.0, 15.0, 70.0, 300.0][frame % 4];
             let expected = reference(&tree, eye, direction, reach, 0.3, 0.55);
-            tree.forward_candidates(eye, direction, reach, 0.3, 0.55, &mut out);
+            let query = ForwardEllipseQuery::new(eye, direction, reach, 0.3, 0.55, 1.20);
+            tree.forward_candidates(&query, &mut out);
             assert_eq!(out, expected, "frame {frame}");
             // Change which regions must be revisited, including occasional duplicates and no active regions.
             let active = out
