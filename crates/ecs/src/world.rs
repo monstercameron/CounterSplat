@@ -6,6 +6,7 @@ use crate::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     any::{Any, TypeId},
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     marker::PhantomData,
     sync::{
@@ -456,12 +457,28 @@ impl World {
         entity: Entity,
         name: &str,
     ) -> Result<Option<Value>, String> {
+        Ok(self
+            .borrow_component_value(entity, name)?
+            .map(Cow::into_owned))
+    }
+
+    /// Reads a component without cloning dynamic values. Native adapters return
+    /// owned values; dynamic values remain borrowed until this world is released.
+    pub fn borrow_component_value(
+        &self,
+        entity: Entity,
+        name: &str,
+    ) -> Result<Option<Cow<'_, Value>>, String> {
         self.require_alive(entity)?;
         validate_name(name)?;
         if let Some(adapter) = self.adapters.get(name) {
-            adapter.read(self, entity)
+            Ok(adapter.read(self, entity)?.map(Cow::Owned))
         } else {
-            Ok(self.get_dynamic(entity, name).cloned())
+            Ok(self
+                .dynamic_components
+                .get(name)
+                .and_then(|store| store.get(&entity))
+                .map(Cow::Borrowed))
         }
     }
     /// Checks script-visible presence without serializing or cloning the component.

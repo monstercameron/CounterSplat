@@ -147,6 +147,50 @@ impl ComponentAdapter for PresenceOnly {
 }
 
 #[test]
+fn borrowed_component_reads_preserve_adapter_and_json_semantics() {
+    use std::borrow::Cow;
+
+    let mut world = World::new();
+    world
+        .register_serde_component::<Position>("Position")
+        .unwrap();
+    let entity = world.spawn();
+    world.insert(entity, Position { x: 1.0, y: 2.0 }).unwrap();
+    let dynamic = json!({"items": [null, {"name": "one"}], "empty": []});
+    world
+        .set_dynamic(entity, "Inventory", dynamic.clone())
+        .unwrap();
+
+    let borrowed = world
+        .borrow_component_value(entity, "Inventory")
+        .unwrap()
+        .unwrap();
+    assert!(matches!(borrowed, Cow::Borrowed(_)));
+    assert_eq!(*borrowed, dynamic);
+    let native = world
+        .borrow_component_value(entity, "Position")
+        .unwrap()
+        .unwrap();
+    assert!(matches!(native, Cow::Owned(_)));
+    assert_eq!(*native, json!({"x": 1.0, "y": 2.0}));
+    assert!(world
+        .borrow_component_value(entity, "Missing")
+        .unwrap()
+        .is_none());
+
+    let request = json!({"op":"get", "id":entity.to_string(), "name":"Inventory"});
+    let response: Value =
+        serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+    assert_eq!(response, json!({"found":true, "value":dynamic}));
+    let missing = json!({"op":"get", "id":entity.to_string(), "name":"Missing"});
+    let response: Value =
+        serde_json::from_str(&world.apply_script_json(&missing.to_string()).unwrap()).unwrap();
+    assert_eq!(response, json!({"found":false, "value":null}));
+    assert!(world.despawn(entity));
+    assert!(world.borrow_component_value(entity, "Inventory").is_err());
+}
+
+#[test]
 fn component_presence_does_not_copy_or_serialize_values() {
     let mut world = World::new();
     world

@@ -10,9 +10,17 @@ use std::str::FromStr;
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
 #[derive(Serialize)]
-struct ScriptResult {
+struct ScriptResult<T> {
     found: bool,
-    value: Option<Value>,
+    value: Option<T>,
+}
+
+fn script_result<T: Serialize>(value: Option<T>) -> Result<String, String> {
+    serde_json::to_string(&ScriptResult {
+        found: value.is_some(),
+        value,
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[derive(Deserialize)]
@@ -113,10 +121,9 @@ impl World {
                 entity: Entity::from_str(&id)?,
             },
             S::Query { components } => O::Query { components },
-            S::Get { id, name } => O::ReadComponent {
-                entity: Entity::from_str(&id)?,
-                name,
-            },
+            S::Get { id, name } => {
+                return script_result(self.borrow_component_value(Entity::from_str(&id)?, &name)?);
+            }
             S::Has { id, name } => O::HasComponent {
                 entity: Entity::from_str(&id)?,
                 name,
@@ -130,8 +137,14 @@ impl World {
                 entity: Entity::from_str(&id)?,
                 name,
             },
-            S::GetResource { name } => O::ReadResource { name },
-            S::GetResourceField { name, field } => O::ReadResourceField { name, field },
+            S::GetResource { name } => return script_result(self.get_dynamic_resource(&name)),
+            S::GetResourceField { name, field } => {
+                return script_result(
+                    self.get_dynamic_resource(&name)
+                        .and_then(Value::as_object)
+                        .and_then(|object| object.get(&field)),
+                );
+            }
             S::SetResource { name, value } => O::WriteResource { name, value },
             S::RemoveResource { name } => O::RemoveResource { name },
             S::SetParent { child, parent } => O::SetParent {
@@ -171,11 +184,7 @@ impl World {
             })),
             WorldOutcome::Applied => None,
         };
-        serde_json::to_string(&ScriptResult {
-            found: value.is_some(),
-            value,
-        })
-        .map_err(|e| e.to_string())
+        script_result(value)
     }
 }
 
