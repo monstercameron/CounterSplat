@@ -282,3 +282,45 @@ fn zoom_blends_the_rendered_lens_without_overwriting_either_profile() {
     assert_eq!(render()["aperture_f_number"], 4.0);
     assert_eq!(render()["depth_of_field"], false);
 }
+
+#[test]
+fn lens_cache_invalidates_after_removal_and_reinsertion() {
+    let f = Fixture::new(&["camera_zoom.lua"]);
+    let player = f.ids["player"];
+    f.lua.run_systems(1.0 / 60.0).unwrap();
+    assert!(f
+        .world
+        .borrow()
+        .get_dynamic_resource("camera.render_lens")
+        .is_some());
+    f.world
+        .borrow_mut()
+        .write_component_field(player, "CameraLens", "aperture_f_number", json!(6.0))
+        .unwrap();
+    f.lua.run_systems(1.0 / 60.0).unwrap();
+    assert_eq!(
+        f.world
+            .borrow()
+            .get_dynamic_resource("camera.render_lens")
+            .unwrap()["aperture_f_number"],
+        6.0
+    );
+    let original = f.world.borrow_mut().remove::<CameraLens>(player).unwrap();
+    f.lua.run_systems(1.0 / 60.0).unwrap();
+    assert!(f
+        .world
+        .borrow()
+        .get_dynamic_resource("camera.render_lens")
+        .is_none());
+    let mut replacement = original;
+    replacement.aperture_f_number = 11.0;
+    f.world.borrow_mut().insert(player, replacement).unwrap();
+    f.lua.run_systems(1.0 / 60.0).unwrap();
+    assert_eq!(
+        f.world
+            .borrow()
+            .get_dynamic_resource("camera.render_lens")
+            .unwrap()["aperture_f_number"],
+        11.0
+    );
+}

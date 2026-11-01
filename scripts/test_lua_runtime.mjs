@@ -16,7 +16,7 @@ const [engineApi, gameplay, menu] = await Promise.all([
 
 // A minimal transport fixture; Rust integration tests separately exercise the real ECS adapter.
 class WorldFixture {
-  constructor(ids) { this.resources = new Map([['scene.entities', ids]]); this.events = new Map(); this.components = new Map(); }
+  constructor(ids) { this.resources = new Map([['scene.entities', ids]]); this.events = new Map(); this.components = new Map(); this.revision = 0; }
   ecs_operation(_layer, encoded) {
     const op = JSON.parse(encoded);
     let value, found = true;
@@ -35,6 +35,7 @@ class WorldFixture {
             op.fields === null || typeof op.fields !== 'object' || Array.isArray(op.fields))
           throw new Error('component and fields must be objects');
         Object.assign(component, op.fields);
+        this.revision++;
         found = false;
         break;
       }
@@ -43,11 +44,19 @@ class WorldFixture {
         if (component === null || typeof component !== 'object' || Array.isArray(component))
           throw new Error('component is missing or not an object');
         component[op.field] = op.value;
+        this.revision++;
         found = false;
         break;
       }
       case 'has': value = (this.components.get(op.id) || new Map()).has(op.name); break;
       case 'is_alive': value = this.components.has(op.id); break;
+      case 'get_if_changed': {
+        const components = this.components.get(op.id) || new Map();
+        const revision = `${op.id}|${op.name}|${this.revision}`;
+        if (op.revision === revision) { found = false; break; }
+        value = {revision, present:components.has(op.name), value:components.get(op.name) ?? null};
+        break;
+      }
       case 'get_many': {
         value = Object.create(null);
         const components = this.components.get(op.id) || new Map();
@@ -120,6 +129,16 @@ game.vm.doStringSync(`
   assert(not pcall(function() ecs.set_fields('entity', 'Stats', patch_cycle) end))
   local stats = ecs.get('entity', 'Stats')
   assert(stats.hp == 30 and stats.keep and stats.optional == ecs.null and stats.__proto__ == 'safe')
+  local changed = ecs.get_if_changed('entity', 'Stats')
+  assert(changed.present and changed.value.hp == 30 and type(changed.revision) == 'string')
+  assert(ecs.get_if_changed('entity', 'Stats', changed.revision) == nil)
+  local bad_revision = {}; bad_revision.self = bad_revision
+  assert(not pcall(function() ecs.get_if_changed('entity', 'Stats', bad_revision) end))
+  ecs.set_field('entity', 'Stats', 'hp', 31)
+  local newer = ecs.get_if_changed('entity', 'Stats', changed.revision)
+  assert(newer.present and newer.value.hp == 31 and newer.revision ~= changed.revision)
+  local missing = ecs.get_if_changed('entity', 'Missing')
+  assert(not missing.present and missing.value == ecs.null)
   assert(not pcall(function() ecs.set_field('entity', 'Missing', 'hp', 1) end))
   assert(not pcall(function() ecs.set_field('entity', 'Stats', 'bad', 0/0) end))
   -- Non-string arguments still use the validating general encoder.

@@ -55,6 +55,13 @@ script handles them.
   adapters. get and remove return nil when the component is absent.
 - ecs.get_many(id, names) reads several components into a name-keyed table;
   missing components are omitted and JSON null remains ecs.null.
+- ecs.get_if_changed(id, name, revision_or_nil) returns nil when a tracked
+  component is unchanged. Otherwise it returns {revision, present, value}.
+  Cache the returned string revision and pass it back on the next read. A
+  revision of ecs.null means the adapter cannot track changes, so every read
+  returns a fresh snapshot. The present flag distinguishes a missing component
+  from a component whose value is ecs.null. Tokens are scoped to the world,
+  entity, and component name.
 - ecs.set_field(id, name, field, value) changes one field on an existing
   object-valued component without replacing its other fields. Dynamic objects
   can gain fields; registered adapters apply their usual validation. A missing,

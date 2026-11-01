@@ -4,8 +4,17 @@ use countersplat_scene::{
     CameraController, CameraLens, CameraZoomLens, PlayerCamera, PlayerControls, PlayerRig,
 };
 
+// Only plain value types whose changes flow through World opt into revisions.
+macro_rules! tracked_revision {
+    (tracked, $component:ty) => {
+        fn content_revision(&self, world: &World) -> Option<u64> {
+            world.component_revision::<$component>()
+        }
+    };
+}
+
 macro_rules! adapter {
-    ($name:ident, $component:ty $(, [$($fast_field:ident),+])?) => {
+    ($name:ident, $component:ty $(, [$($fast_field:ident),+])? $(; $tracked:ident)?) => {
         struct $name;
         impl ComponentAdapter for $name {
             fn read(&self, world: &World, entity: Entity) -> Result<Option<Value>, String> {
@@ -101,6 +110,7 @@ macro_rules! adapter {
             fn contains(&self, world: &World, entity: Entity) -> bool {
                 world.has::<$component>(entity)
             }
+            $(tracked_revision!($tracked, $component);)?
             fn indexed_entities<'a>(
                 &self,
                 world: &'a World,
@@ -127,8 +137,8 @@ adapter!(
         view_fov_degrees
     ]
 );
-adapter!(LensAdapter, CameraLens);
-adapter!(ZoomLensAdapter, CameraZoomLens);
+adapter!(LensAdapter, CameraLens; tracked);
+adapter!(ZoomLensAdapter, CameraZoomLens; tracked);
 adapter!(ControllerAdapter, CameraController);
 adapter!(ControlsAdapter, PlayerControls);
 adapter!(RigAdapter, PlayerRig);
@@ -136,6 +146,8 @@ pub fn register(world: &mut World) -> Result<(), String> {
     world.register_component_adapter("PlayerCamera", CameraAdapter)?;
     world.register_component_adapter("CameraLens", LensAdapter)?;
     world.register_component_adapter("CameraZoomLens", ZoomLensAdapter)?;
+    world.track_component_changes::<CameraLens>();
+    world.track_component_changes::<CameraZoomLens>();
     world.register_component_adapter("CameraController", ControllerAdapter)?;
     world.register_component_adapter("PlayerControls", ControlsAdapter)?;
     world.register_component_adapter("PlayerRig", RigAdapter)

@@ -433,6 +433,25 @@ fn install_ecs_api(
         lua,
         &api,
         bridge,
+        "get_if_changed",
+        |lua, bridge, (id, name, revision): (String, String, Option<String>)| {
+            maybe_value(
+                lua,
+                request(
+                    bridge,
+                    WorldOperation::ReadComponentIfChanged {
+                        entity: entity(id)?,
+                        name,
+                        revision,
+                    },
+                )?,
+            )
+        },
+    )?;
+    bind(
+        lua,
+        &api,
+        bridge,
         "get_many",
         |lua, bridge, (id, names): (String, Vec<String>)| {
             maybe_value(

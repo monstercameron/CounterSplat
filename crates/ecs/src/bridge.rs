@@ -67,6 +67,12 @@ pub enum WorldOperation {
         entity: Entity,
         name: String,
     },
+    /// Read only when an adapter's scoped content revision has changed.
+    ReadComponentIfChanged {
+        entity: Entity,
+        name: String,
+        revision: Option<String>,
+    },
     /// Read several components of one entity; missing names are omitted.
     ReadComponents {
         entity: Entity,
@@ -225,6 +231,18 @@ impl World {
             }
             Op::ReadComponent { entity, name } => {
                 Ok(Out::Value(self.read_component_value(entity, &name)?))
+            }
+            Op::ReadComponentIfChanged {
+                entity,
+                name,
+                revision,
+            } => {
+                let change = self.read_component_if_changed(entity, &name, revision.as_deref())?;
+                let value = change
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .map_err(|error| error.to_string())?;
+                Ok(Out::Value(value))
             }
             Op::ReadComponents { entity, names } => Ok(Out::Value(Some(serde_json::json!(self
                 .read_component_values(

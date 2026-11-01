@@ -109,6 +109,14 @@ function ecs.structure_revision() return invoke_flat("structure_revision", {}) e
 function ecs.components(id) return invoke_one_string("components", "id", id) end
 function ecs.query(components) return invoke("query", { components = components }) end
 function ecs.get(id, name) return invoke_two_strings("get", "id", id, "name", name) end
+function ecs.get_if_changed(id, name, revision)
+    local args = {id = id, name = name, revision = revision}
+    if type(id) == "string" and type(name) == "string" and
+        (revision == nil or type(revision) == "string") then
+        return invoke_flat("get_if_changed", args)
+    end
+    return invoke("get_if_changed", args)
+end
 function ecs.get_many(id, names) return invoke("get_many", { id = id, names = names }) end
 function ecs.has(id, name) return invoke_two_strings("has", "id", id, "name", name) end
 function ecs.set(id, name, value) invoke("set", { id = id, name = name, value = value }) end

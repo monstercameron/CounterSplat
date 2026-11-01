@@ -1040,3 +1040,145 @@ fn multi_field_writes_apply_atomically_through_world_and_json() {
         .write_component_fields(entity, "State", Default::default())
         .is_err());
 }
+
+#[test]
+fn tracked_component_reads_invalidate_on_every_world_mutation_path() {
+    struct Tracked;
+    impl ComponentAdapter for Tracked {
+        fn read(&self, world: &World, entity: Entity) -> Result<Option<Value>, String> {
+            world
+                .get::<Position>(entity)
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|e| e.to_string())
+        }
+        fn write(&self, world: &mut World, entity: Entity, value: Value) -> Result<(), String> {
+            world.insert(
+                entity,
+                serde_json::from_value::<Position>(value).map_err(|e| e.to_string())?,
+            )
+        }
+        fn remove(&self, world: &mut World, entity: Entity) -> Result<Option<Value>, String> {
+            world
+                .remove::<Position>(entity)
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|e| e.to_string())
+        }
+        fn contains(&self, world: &World, entity: Entity) -> bool {
+            world.has::<Position>(entity)
+        }
+        fn content_revision(&self, world: &World) -> Option<u64> {
+            world.component_revision::<Position>()
+        }
+    }
+    let mut world = World::new();
+    world
+        .register_component_adapter("Tracked", Tracked)
+        .unwrap();
+    world.register_component_adapter("Other", Tracked).unwrap();
+    let a = world.spawn();
+    let b = world.spawn();
+    world.insert(a, Position { x: 1.0, y: 2.0 }).unwrap();
+    assert_eq!(world.component_revision::<Position>(), None);
+    let untracked = world
+        .read_component_if_changed(a, "Tracked", None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(untracked.revision, None);
+    assert!(world
+        .read_component_if_changed(a, "Tracked", Some("anything"))
+        .unwrap()
+        .is_some());
+
+    world.track_component_changes::<Position>();
+    let initial = world
+        .read_component_if_changed(a, "Tracked", None)
+        .unwrap()
+        .unwrap();
+    assert!(initial.present);
+    let mut token = initial.revision.unwrap();
+    assert!(world
+        .read_component_if_changed(a, "Tracked", Some(&token))
+        .unwrap()
+        .is_none());
+    assert!(world
+        .read_component_if_changed(b, "Tracked", Some(&token))
+        .unwrap()
+        .is_some());
+    assert!(world
+        .read_component_if_changed(a, "Other", Some(&token))
+        .unwrap()
+        .is_some());
+
+    // Mutably borrowing an existing value invalidates even if it is not changed.
+    world.get_mut::<Position>(a).unwrap().x = 4.0;
+    let changed = world
+        .read_component_if_changed(a, "Tracked", Some(&token))
+        .unwrap()
+        .unwrap();
+    assert_eq!(changed.value["x"], 4.0);
+    token = changed.revision.unwrap();
+    assert!(world.get_mut::<Position>(b).is_none());
+    assert!(world
+        .read_component_if_changed(a, "Tracked", Some(&token))
+        .unwrap()
+        .is_none());
+    world.insert(b, Position { x: 8.0, y: 9.0 }).unwrap();
+    let changed = world
+        .read_component_if_changed(a, "Tracked", Some(&token))
+        .unwrap()
+        .unwrap();
+    token = changed.revision.unwrap();
+    world.remove::<Position>(a).unwrap();
+    let missing = world
+        .read_component_if_changed(a, "Tracked", Some(&token))
+        .unwrap()
+        .unwrap();
+    assert!(!missing.present && missing.value == Value::Null);
+    let missing_token = missing.revision.unwrap();
+    assert!(world
+        .read_component_if_changed(a, "Tracked", Some(&missing_token))
+        .unwrap()
+        .is_none());
+    world.insert(a, Position { x: 2.0, y: 3.0 }).unwrap();
+    let present = world
+        .read_component_if_changed(a, "Tracked", Some(&missing_token))
+        .unwrap()
+        .unwrap();
+    let revision = present.revision.unwrap();
+    let request =
+        json!({"op":"get_if_changed","id":a.to_string(),"name":"Tracked","revision":revision});
+    let result: Value =
+        serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+    assert_eq!(result, json!({"found":false,"value":null}));
+    assert!(world.despawn(b));
+    assert!(world
+        .read_component_if_changed(a, "Tracked", Some(&revision))
+        .unwrap()
+        .is_some());
+    assert!(world.despawn(a));
+    assert!(world
+        .read_component_if_changed(a, "Tracked", Some(&revision))
+        .is_err());
+
+    let c = world.spawn();
+    world.set_dynamic(c, "Null", Value::Null).unwrap();
+    let null = world
+        .read_component_if_changed(c, "Null", None)
+        .unwrap()
+        .unwrap();
+    assert!(null.present && null.value == Value::Null && null.revision.is_none());
+    let roundtrip: countersplat_ecs::ComponentChange =
+        serde_json::from_value(serde_json::to_value(&null).unwrap()).unwrap();
+    assert_eq!(roundtrip, null);
+    let missing = world
+        .read_component_if_changed(c, "Missing", None)
+        .unwrap()
+        .unwrap();
+    assert!(!missing.present && missing.value == Value::Null && missing.revision.is_none());
+    assert!(world
+        .read_component_if_changed(c, "Null", Some("any"))
+        .unwrap()
+        .is_some());
+}

@@ -133,3 +133,19 @@ Run `cargo run --locked --release --target-dir .artifacts/target -p
 countersplat-scene --example lens_decode_bench` to compare decoding the
 transient camera lens from cloned and borrowed JSON values. The benchmark
 isolates CPU decoding; it does not measure rendering.
+
+
+## Change-aware component reads
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-scene-ecs --example lens_revision_bench` for Rust lens read
+costs, and `node scripts/benchmark_lua_lens_cache.mjs` for Lua/JavaScript
+transfer costs. The latter uses an in-memory host and excludes rendering.
+`cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-ecs --example mutation_bench` compares ordinary and tracked
+component mutations.
+
+Tracking is opt-in for component types whose changes pass through the ECS
+world. Untracked or externally mutable adapters return fresh data on every
+change-aware read; a successful mutable borrow conservatively invalidates a
+tracked component even if its value is not changed.

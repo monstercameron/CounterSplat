@@ -63,8 +63,37 @@ impl<T> ComponentView<'_, T> {
 /// An ordered, exact-size view of the entities in a component index.
 pub type EntityIndex<'a> = Box<dyn ExactSizeIterator<Item = Entity> + 'a>;
 
+// Compare the scoped token without allocating a new String on an unchanged read.
+fn component_token_matches(entity: Entity, name: &str, revision: u64, known: &str) -> bool {
+    use std::fmt::{self, Write};
+    struct Matcher<'a> {
+        remaining: &'a str,
+    }
+    impl Write for Matcher<'_> {
+        fn write_str(&mut self, part: &str) -> fmt::Result {
+            self.remaining = self.remaining.strip_prefix(part).ok_or(fmt::Error)?;
+            Ok(())
+        }
+    }
+    let mut matcher = Matcher { remaining: known };
+    write!(&mut matcher, "{entity}|{}:{name}|{revision}", name.len()).is_ok()
+        && matcher.remaining.is_empty()
+}
+
 /// Named field values for an atomic update to an object-valued component.
 pub type ComponentFields = serde_json::Map<String, Value>;
+
+/// A changed component snapshot. Use `present` to distinguish a missing
+/// component from one whose JSON value is null.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComponentChange {
+    /// Opaque scoped token, or None when this adapter cannot be cached.
+    pub revision: Option<String>,
+    /// Whether the component exists.
+    pub present: bool,
+    /// The component value, or JSON null when absent.
+    pub value: Value,
+}
 
 /// A narrow adapter exposing a Rust-owned component to scripting and other external consumers.
 ///
@@ -117,6 +146,13 @@ pub trait ComponentAdapter: Send + Sync + 'static {
     fn remove(&self, world: &mut World, entity: Entity) -> Result<Option<Value>, String>;
     /// Reports component presence for queries and component listings.
     fn contains(&self, world: &World, entity: Entity) -> bool;
+    /// A monotonic revision for every value and presence exposed by this
+    /// adapter. It must change whenever any such result may change and must
+    /// never reuse an earlier revision in this world. Return None when changes
+    /// can occur outside the tracked world, including through interior mutation.
+    fn content_revision(&self, _world: &World) -> Option<u64> {
+        None
+    }
 
     /// Optionally supplies exactly the live entities accepted by contains,
     /// once each and in entity order. A typed adapter can return
@@ -398,15 +434,16 @@ impl World {
         let store = self.stores.entry(TypeId::of::<T>()).or_insert_with(|| {
             Box::new(Store::<T> {
                 values: BTreeMap::new(),
+                revision: 0,
+                tracking: false,
             })
         });
-        let inserted = store
+        let store = store
             .as_any_mut()
             .downcast_mut::<Store<T>>()
-            .expect("component store type mismatch")
-            .values
-            .insert(entity, component)
-            .is_none();
+            .expect("component store type mismatch");
+        let inserted = store.values.insert(entity, component).is_none();
+        Store::<T>::mark_changed(&mut store.revision);
         if inserted {
             self.structure_changed();
         }
@@ -418,7 +455,12 @@ impl World {
     }
     /// Mutably borrows a typed component, or returns None if absent or stale.
     pub fn get_mut<T: Send + 'static>(&mut self, entity: Entity) -> Option<&mut T> {
-        self.typed_mut::<T>()?.values.get_mut(&entity)
+        let Store {
+            values, revision, ..
+        } = self.typed_mut::<T>()?;
+        let value = values.get_mut(&entity)?;
+        Store::<T>::mark_changed(revision);
+        Some(value)
     }
     /// Checks for a typed component on an entity.
     pub fn has<T: Send + 'static>(&self, entity: Entity) -> bool {
@@ -427,12 +469,43 @@ impl World {
     }
     /// Removes and returns a typed component if present.
     pub fn remove<T: Send + 'static>(&mut self, entity: Entity) -> Option<T> {
-        let value = self.typed_mut::<T>()?.values.remove(&entity);
+        let store = self.typed_mut::<T>()?;
+        let value = store.values.remove(&entity);
         if value.is_some() {
+            Store::<T>::mark_changed(&mut store.revision);
             self.structure_changed();
         }
         value
     }
+    /// Enable conservative per-type change tracking. Inserts, removals,
+    /// despawns, and successful mutable borrows change the revision. Call this
+    /// only for types that cannot mutate through a shared reference; a mutable
+    /// borrow counts even when the caller leaves the value unchanged.
+    pub fn track_component_changes<T: Send + 'static>(&mut self) {
+        let store = self.stores.entry(TypeId::of::<T>()).or_insert_with(|| {
+            Box::new(Store::<T> {
+                values: BTreeMap::new(),
+                revision: 0,
+                tracking: false,
+            })
+        });
+        let store = store
+            .as_any_mut()
+            .downcast_mut::<Store<T>>()
+            .expect("component store type mismatch");
+        if !store.tracking {
+            store.tracking = true;
+            store.revision = 1;
+        }
+    }
+
+    /// Revision of an opted-in typed store, or None when tracking is disabled
+    /// or the counter has exhausted its range.
+    pub fn component_revision<T: Send + 'static>(&self) -> Option<u64> {
+        self.typed::<T>()
+            .and_then(|store| (store.revision != 0).then_some(store.revision))
+    }
+
     /// Borrows the component index for repeated lookups and ordered iteration.
     pub fn component_view<T: Send + 'static>(&self) -> Option<ComponentView<'_, T>> {
         self.typed::<T>().map(|store| ComponentView {
@@ -683,6 +756,36 @@ impl World {
         } else {
             Ok(false)
         }
+    }
+
+    /// Returns None only when a cacheable adapter reports the same revision.
+    /// Untracked/custom adapters always return a fresh snapshot. Revision
+    /// tokens are scoped to this world, entity, and component name.
+    pub fn read_component_if_changed(
+        &self,
+        entity: Entity,
+        name: &str,
+        known: Option<&str>,
+    ) -> Result<Option<ComponentChange>, String> {
+        self.require_alive(entity)?;
+        validate_name(name)?;
+        let revision = self
+            .adapters
+            .get(name)
+            .and_then(|adapter| adapter.content_revision(self));
+        if let (Some(revision), Some(known)) = (revision, known) {
+            if component_token_matches(entity, name, revision, known) {
+                return Ok(None);
+            }
+        }
+        let revision =
+            revision.map(|revision| format!("{entity}|{}:{name}|{revision}", name.len()));
+        let value = self.read_component_value(entity, name)?;
+        Ok(Some(ComponentChange {
+            revision,
+            present: value.is_some(),
+            value: value.unwrap_or(Value::Null),
+        }))
     }
 
     /// Reads several named components from one entity. Missing components are
@@ -1083,5 +1186,41 @@ fn validate_name(name: &str) -> Result<(), String> {
         Err("component name must be 1–256 bytes without surrounding whitespace or control characters".into())
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod revision_tests {
+    use super::*;
+    #[test]
+    fn scoped_token_matching_handles_unicode_and_delimiters() {
+        let mut world = World::new();
+        let first = world.spawn();
+        let second = world.spawn();
+        for name in ["plain", "quoted\\\"|:é", "long|0:name"] {
+            let token = format!("{first}|{}:{name}|{}", name.len(), 123);
+            assert!(component_token_matches(first, name, 123, &token));
+            assert!(!component_token_matches(second, name, 123, &token));
+            assert!(!component_token_matches(first, name, 124, &token));
+            assert!(!component_token_matches(
+                first,
+                name,
+                123,
+                &(token.clone() + "extra")
+            ));
+            assert!(!component_token_matches(first, "other", 123, &token));
+        }
+    }
+    #[test]
+    fn exhausted_revisions_never_reuse_old_tokens() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        world.track_component_changes::<u32>();
+        world.typed_mut::<u32>().unwrap().revision = u64::MAX;
+        world.insert(entity, 1_u32).unwrap();
+        assert_eq!(world.component_revision::<u32>(), None);
+        world.track_component_changes::<u32>();
+        world.insert(entity, 2_u32).unwrap();
+        assert_eq!(world.component_revision::<u32>(), None);
     }
 }

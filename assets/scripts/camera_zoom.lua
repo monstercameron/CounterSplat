@@ -8,13 +8,25 @@ engine.export(player, "zoom_response", {component="PlayerControls", field="zoom_
 local held = false
 local magnification, lens_blend = 1, 0
 local last_lens = nil
+local lens_cache = {
+    standard = {name="CameraLens"},
+    zoom = {name="CameraZoomLens"},
+}
+local function read_lens(cache)
+    local change = ecs.get_if_changed(player, cache.name, cache.revision)
+    if change then
+        cache.revision = change.revision ~= ecs.null and change.revision or nil
+        cache.value = change.present and change.value or nil
+    end
+    return cache.value
+end
 local lens_numbers = {"aperture_f_number", "shutter_angle_degrees", "shutter_fps", "iso",
     "exposure_compensation_ev", "focus_distance_m", "sensor_height_mm"}
 
 -- The editable components stay independent. Publish only a transient render
 -- snapshot, so entering or leaving zoom never overwrites either profile.
 local function publish_lens(amount)
-    local standard, zoom = ecs.get(player, "CameraLens"), ecs.get(player, "CameraZoomLens")
+    local standard, zoom = read_lens(lens_cache.standard), read_lens(lens_cache.zoom)
     if not standard or not zoom then
         if last_lens then ecs.remove_resource("camera.render_lens"); last_lens = nil end
         return

@@ -41,5 +41,5 @@ pub use schedule::{Schedule, System, SystemError};
 pub use serde_json::Value;
 pub use world::{
     write_object_field_via_adapter, write_object_fields_via_adapter, ComponentAdapter,
-    ComponentFields, ComponentView, EntityIndex, LifecycleEvent, World,
+    ComponentChange, ComponentFields, ComponentView, EntityIndex, LifecycleEvent, World,
 };

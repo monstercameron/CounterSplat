@@ -177,6 +177,14 @@ enum ScriptOperation<'a> {
         #[serde(borrow)]
         name: Cow<'a, str>,
     },
+    GetIfChanged {
+        #[serde(borrow)]
+        id: Cow<'a, str>,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
+        #[serde(borrow, default)]
+        revision: Option<Cow<'a, str>>,
+    },
     GetMany {
         #[serde(borrow)]
         id: Cow<'a, str>,
@@ -300,6 +308,13 @@ impl World {
             }
             S::Get { id, name } => {
                 return script_component_result(self, Entity::from_str(&id)?, &name);
+            }
+            S::GetIfChanged { id, name, revision } => {
+                return script_result(self.read_component_if_changed(
+                    Entity::from_str(&id)?,
+                    &name,
+                    revision.as_deref(),
+                )?);
             }
             S::GetMany { id, names } => {
                 return script_components_result(self, Entity::from_str(&id)?, &names);
