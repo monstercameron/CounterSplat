@@ -131,6 +131,92 @@ fn custom_adapter_controls_script_access_without_copying_native_state() {
 }
 
 #[test]
+fn sparse_queries_match_live_entities_across_components_and_reused_slots() {
+    let mut world = World::new();
+    world
+        .register_serde_component::<Position>("Position")
+        .unwrap();
+    world
+        .register_component_adapter("ReadOnlyHealth", ReadOnlyHealth)
+        .unwrap();
+    let mut entities = Vec::new();
+    for index in 0..180 {
+        let entity = world.spawn();
+        entities.push(entity);
+        if index % 2 == 0 {
+            world
+                .insert(
+                    entity,
+                    Position {
+                        x: index as f32,
+                        y: 0.0,
+                    },
+                )
+                .unwrap();
+        }
+        if index % 3 == 0 {
+            world.insert(entity, index as u32).unwrap();
+        }
+        if index % 5 == 0 {
+            // Null is still a present dynamic component.
+            world.set_dynamic(entity, "Rare", Value::Null).unwrap();
+        }
+        if index % 7 == 0 {
+            world.set_dynamic(entity, "Tag", json!(true)).unwrap();
+        }
+    }
+    assert!(world.despawn(entities[0]));
+    let replacement = world.spawn();
+    world
+        .insert(replacement, Position { x: 1.0, y: 2.0 })
+        .unwrap();
+    world.set_dynamic(replacement, "Rare", Value::Null).unwrap();
+    world.remove_dynamic(entities[35], "Rare");
+
+    let queries: &[&[&str]] = &[
+        &[],
+        &["Position"],
+        &["Rare"],
+        &["Missing"],
+        &["Rare", "Rare"],
+        &["Position", "Rare"],
+        &["Rare", "Position"],
+        &["Position", "ReadOnlyHealth", "Rare", "Tag"],
+        &["ReadOnlyHealth", "Position"],
+    ];
+    for names in queries {
+        let expected = world
+            .entities()
+            .into_iter()
+            .filter(|entity| {
+                names.iter().all(|name| match *name {
+                    "Position" => world.has::<Position>(*entity),
+                    "ReadOnlyHealth" => world.has::<u32>(*entity),
+                    other => world.get_dynamic(*entity, other).is_some(),
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            world.query_components(names).unwrap(),
+            expected,
+            "{names:?}"
+        );
+    }
+    assert_eq!(
+        world.query_dynamic(&["Tag", "Rare"]),
+        world
+            .entities()
+            .into_iter()
+            .filter(|entity| world.get_dynamic(*entity, "Tag").is_some()
+                && world.get_dynamic(*entity, "Rare").is_some())
+            .collect::<Vec<_>>()
+    );
+    assert!(world.query_dynamic(&["Missing"]).is_empty());
+    // Every name is validated, even after a missing component.
+    assert!(world.query_components(&["Missing", ""]).is_err());
+}
+
+#[test]
 fn hierarchy_rejects_cycles_and_defines_despawn_behavior() {
     let mut world = World::new();
     world.set_lifecycle_tracking(true);

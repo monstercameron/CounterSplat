@@ -398,12 +398,32 @@ impl World {
     }
     /// Matches every named dynamic component; an empty list matches all living entities.
     pub fn query_dynamic(&self, names: &[&str]) -> Vec<Entity> {
-        self.entities()
-            .into_iter()
-            .filter(|&entity| {
-                names
+        if names.is_empty() {
+            return self.entities();
+        }
+        // Component stores contain only live entities. Starting from the
+        // smallest one avoids scanning every entity for a sparse component.
+        let mut stores = Vec::with_capacity(names.len());
+        for name in names {
+            let Some(store) = self.dynamic_components.get(*name) else {
+                return Vec::new();
+            };
+            stores.push(store);
+        }
+        let anchor = stores
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, store)| store.len())
+            .map(|(index, _)| index)
+            .expect("nonempty names have a store");
+        stores[anchor]
+            .keys()
+            .copied()
+            .filter(|entity| {
+                stores
                     .iter()
-                    .all(|name| self.get_dynamic(entity, name).is_some())
+                    .enumerate()
+                    .all(|(index, store)| index == anchor || store.contains_key(entity))
             })
             .collect()
     }
@@ -466,21 +486,60 @@ impl World {
     }
     /// Matches all dynamic or registered typed component names; an empty list matches every live entity.
     pub fn query_components(&self, names: &[&str]) -> Result<Vec<Entity>, String> {
+        // Validate every name even if an earlier component has no store.
         for name in names {
             validate_name(name)?;
         }
-        Ok(self
-            .entities()
-            .into_iter()
-            .filter(|&entity| {
-                names.iter().all(|name| {
-                    self.adapters.get(*name).map_or_else(
-                        || self.get_dynamic(entity, name).is_some(),
-                        |adapter| adapter.contains(self, entity),
-                    )
+        if names.is_empty() {
+            return Ok(self.entities());
+        }
+
+        // Resolve each name once, rather than looking up its adapter or store
+        // for every entity. Registered adapters remain the source of truth for
+        // native components; dynamic stores never shadow an adapter.
+        let mut stores = Vec::with_capacity(names.len());
+        let mut adapters = Vec::with_capacity(names.len());
+        for name in names {
+            if let Some(adapter) = self.adapters.get(*name) {
+                adapters.push(adapter);
+            } else if let Some(store) = self.dynamic_components.get(*name) {
+                stores.push(store);
+            } else {
+                return Ok(Vec::new());
+            }
+        }
+
+        if let Some((anchor, _)) = stores
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, store)| store.len())
+        {
+            // Stores are ordered by entity and only contain live handles, so
+            // the result has the same deterministic order as entities().
+            Ok(stores[anchor]
+                .keys()
+                .copied()
+                .filter(|entity| {
+                    stores
+                        .iter()
+                        .enumerate()
+                        .all(|(index, store)| index == anchor || store.contains_key(entity))
+                        && adapters
+                            .iter()
+                            .all(|adapter| adapter.contains(self, *entity))
                 })
-            })
-            .collect())
+                .collect())
+        } else {
+            Ok(self
+                .entities()
+                .into_iter()
+                .filter(|entity| {
+                    adapters
+                        .iter()
+                        .all(|adapter| adapter.contains(self, *entity))
+                })
+                .collect())
+        }
     }
 
     /// Dynamic resources are separate from typed Rust resources; applications explicitly choose what scripts see.

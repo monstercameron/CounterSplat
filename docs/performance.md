@@ -45,3 +45,10 @@ browser Lua value bridge. It warms up Wasmoon and reports nine sorted timings
 for 3,000 reads of a nested component. The fixture includes Lua, JavaScript,
 and JSON conversion, but substitutes a JavaScript ECS response for Rust: use
 the in-browser profiler as well when measuring end-to-end behavior.
+
+## ECS query benchmark
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-ecs --example query_bench` to compare named component queries
+against sparse, dense, missing, and native component sets at two world sizes.
+The example warms up each query and reports the median of seven samples.
