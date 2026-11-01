@@ -8,6 +8,7 @@ const BOOTSTRAP = `
 local call, call_flat = __ecs_call, __ecs_call_flat
 local call_changed, call_strings, query_one = __ecs_call_changed, __ecs_call_strings, __ecs_query_one
 local set_scalar, set_vector = __ecs_set_scalar, __ecs_set_vector
+local set_pair, set_vector_pair = __ecs_set_pair, __ecs_set_vector_pair
 local type, pairs, ipairs, next_key, raw_get, get_meta = type, pairs, ipairs, next, rawget, getmetatable
 local profile_now, profile_sample = __profile_now, __profile_sample
 local huge = math.huge
@@ -50,7 +51,7 @@ local function bounded(fn, ...)
     end
 end
 __ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings = nil, nil, nil, nil
-__ecs_query_one, __ecs_set_scalar, __ecs_set_vector = nil, nil, nil
+__ecs_query_one, __ecs_set_scalar, __ecs_set_vector, __ecs_set_pair, __ecs_set_vector_pair = nil, nil, nil, nil, nil
 __profile_now, __profile_sample = nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
@@ -147,33 +148,69 @@ function ecs.set(id, name, value) invoke("set", { id = id, name = name, value = 
 local function finite_number(value)
     return type(value) == "number" and value == value and value ~= huge and value ~= -huge
 end
+local function scalar_value(value)
+    local kind = type(value)
+    return kind == "string" or kind == "boolean" or finite_number(value)
+end
+-- Only ordinary tables with exactly three finite numbers can bypass encoding.
+local function vector3(value)
+    if type(value) ~= "table" or get_meta(value) ~= nil then return end
+    local x, y, z = raw_get(value, 1), raw_get(value, 2), raw_get(value, 3)
+    if not (finite_number(x) and finite_number(y) and finite_number(z)) then return end
+    local key, count = next_key(value), 0
+    while key ~= nil and (key == 1 or key == 2 or key == 3) do
+        count = count + 1
+        key = next_key(value, key)
+    end
+    if key == nil and count == 3 then return x, y, z end
+end
 function ecs.set_field(id, name, field, value)
     if type(id) == "string" and type(name) == "string" and type(field) == "string" then
-        local kind = type(value)
-        if kind == "string" or kind == "boolean" or finite_number(value) then
+        if scalar_value(value) then
             set_scalar(id, name, field, value)
             return
         end
-        -- Physics commonly writes three-number vectors. Only ordinary tables
-        -- containing exactly those three entries can bypass general encoding.
-        if kind == "table" and get_meta(value) == nil then
-            local x, y, z = raw_get(value, 1), raw_get(value, 2), raw_get(value, 3)
-            if finite_number(x) and finite_number(y) and finite_number(z) then
-                local key, count = next_key(value), 0
-                while key ~= nil and (key == 1 or key == 2 or key == 3) do
-                    count = count + 1
-                    key = next_key(value, key)
-                end
-                if key == nil and count == 3 then
-                    set_vector(id, name, field, x, y, z)
-                    return
-                end
-            end
+        local x, y, z = vector3(value)
+        if x ~= nil then
+            set_vector(id, name, field, x, y, z)
+            return
         end
     end
     invoke("set_field", { id = id, name = name, field = field, value = value })
 end
-function ecs.set_fields(id, name, fields) invoke("set_fields", { id = id, name = name, fields = fields }) end
+function ecs.set_fields(id, name, fields)
+    -- Keep marked arrays, metatables, and unusual values on the validating path.
+    if type(id) == "string" and type(name) == "string" and type(fields) == "table" and
+        get_meta(fields) == nil and not arrays[fields] then
+        local first = next_key(fields)
+        if type(first) == "string" and first ~= "__countersplat_array" then
+            local second = next_key(fields, first)
+            if type(second) == "string" and second ~= "__countersplat_array" and next_key(fields, second) == nil then
+                local a, b = raw_get(fields, first), raw_get(fields, second)
+                local a_scalar, b_scalar = scalar_value(a), scalar_value(b)
+                if a_scalar and b_scalar then
+                    set_pair(id, name, first, a, second, b)
+                    return
+                end
+                if b_scalar then
+                    local x, y, z = vector3(a)
+                    if x ~= nil then
+                        set_vector_pair(id, name, first, x, y, z, second, b, true)
+                        return
+                    end
+                end
+                if a_scalar then
+                    local x, y, z = vector3(b)
+                    if x ~= nil then
+                        set_vector_pair(id, name, second, x, y, z, first, a, false)
+                        return
+                    end
+                end
+            end
+        end
+    end
+    invoke("set_fields", { id = id, name = name, fields = fields })
+end
 function ecs.remove(id, name) return invoke_two_strings("remove", "id", id, "name", name) end
 function ecs.get_resource(name) return invoke_one_string("get_resource", "name", name) end
 function ecs.get_resource_field(name, field) return invoke_two_strings("get_resource_field", "name", name, "field", field) end
@@ -303,6 +340,17 @@ export class LuaScene {
       });
       vm.global.set('__ecs_set_vector', (id, name, field, x, y, z) => {
         host.call({op:'set_field', id, name, field, value:[x, y, z]}, true);
+      });
+      vm.global.set('__ecs_set_pair', (id, name, first, a, second, b) => {
+        const fields = Object.create(null);
+        fields[first] = a; fields[second] = b;
+        host.call({op:'set_fields', id, name, fields}, true);
+      });
+      vm.global.set('__ecs_set_vector_pair', (id, name, vector, x, y, z, other, value, vectorFirst) => {
+        const fields = Object.create(null);
+        if (vectorFirst) { fields[vector] = [x, y, z]; fields[other] = value; }
+        else { fields[other] = value; fields[vector] = [x, y, z]; }
+        host.call({op:'set_fields', id, name, fields}, true);
       });
       if (profile) {
         vm.global.set('__profile_now', () => performance.now());

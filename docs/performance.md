@@ -218,5 +218,5 @@ encoder with the one-name query path. The in-memory fixture measures
 Lua/JavaScript transport and excludes Rust query execution and GPU work.
 
 Run `node scripts/benchmark_lua_field_writes.mjs` to compare the general
-Lua field encoder with validated scalar and three-number vector writes. The
-fixture excludes Rust validation, collision, and rendering.
+Lua field encoder with validated scalar, three-number vector, and atomic
+two-field writes. The fixture excludes Rust validation, collision, and rendering.

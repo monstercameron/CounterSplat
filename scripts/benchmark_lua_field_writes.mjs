@@ -8,7 +8,7 @@ const {LuaFactory} = require('../third_party/wasmoon/index.js');
 const api = await readFile(new URL('../crates/scripting-lua/src/engine_api.lua', import.meta.url), 'utf8');
 const target = {ecs_operation(_layer, raw) {
   const op = JSON.parse(raw);
-  if (op.op !== 'set_field') throw new Error('invalid operation');
+  if (op.op !== 'set_field' && op.op !== 'set_fields') throw new Error('invalid operation');
   return JSON.stringify({found:false, value:null});
 }};
 const scene = await LuaScene.create(new LuaFactory(), target, 'gameplay', api, []);
@@ -35,8 +35,14 @@ scene.vm.doStringSync(`
     local args = {op='set_field', id=id, name=name, field=field, value=value}
     old_call(encode(args, {}, 0, {n=0}))
   end
+  local function old_set_pair(id, name, fields)
+    local args = {op='set_fields', id=id, name=name, fields=fields}
+    old_call(encode(args, {}, 0, {n=0}))
+  end
   local old_vector = {1,2,3}; arrays[old_vector] = true
   local new_vector = ecs.array(); new_vector[1],new_vector[2],new_vector[3] = 1,2,3
+  local old_fields = {velocity=old_vector, grounded=true}
+  local new_fields = {velocity=new_vector, grounded=true}
   function benchmark_old_vector()
     for i=1,2000 do old_set('entity','PhysicsBody','velocity',old_vector) end
   end
@@ -49,8 +55,14 @@ scene.vm.doStringSync(`
   function benchmark_new_scalar()
     for i=1,2000 do ecs.set_field('entity','PlayerControls','enabled',false) end
   end
+  function benchmark_old_pair()
+    for i=1,2000 do old_set_pair('entity','PhysicsBody',old_fields) end
+  end
+  function benchmark_new_pair()
+    for i=1,2000 do ecs.set_fields('entity','PhysicsBody',new_fields) end
+  end
 `);
-for (const kind of ['vector','scalar']) {
+for (const kind of ['vector','scalar','pair']) {
   const fns = {old:scene.vm.global.get('benchmark_old_'+kind), current:scene.vm.global.get('benchmark_new_'+kind)};
   for (let i=0; i<3; i++) {fns.old(); fns.current();}
   const samples = {old:[], current:[]};
