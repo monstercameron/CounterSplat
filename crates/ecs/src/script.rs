@@ -162,6 +162,26 @@ impl AsRef<str> for RequestName<'_> {
     }
 }
 
+// Browser scalar reads put the operation first. Borrow their strings and
+// avoid buffering an internally tagged enum for these common requests.
+#[derive(Deserialize)]
+struct FastComponentRead<'a> {
+    #[serde(rename = "op")]
+    _op: serde::de::IgnoredAny,
+    #[serde(borrow)]
+    id: Cow<'a, str>,
+    #[serde(borrow)]
+    name: Cow<'a, str>,
+}
+
+#[derive(Deserialize)]
+struct FastResourceRead<'a> {
+    #[serde(rename = "op")]
+    _op: serde::de::IgnoredAny,
+    #[serde(borrow)]
+    name: Cow<'a, str>,
+}
+
 // Most browser change-aware reads have the operation first and carry only
 // scalar arguments, so deserialize them without the tagged enum buffer.
 #[derive(Deserialize)]
@@ -335,6 +355,16 @@ impl World {
                 command.revision.as_deref(),
             )?);
         }
+        if request.starts_with(r#"{"op":"get","#) {
+            let command: FastComponentRead =
+                serde_json::from_str(request).map_err(|e| e.to_string())?;
+            return script_component_result(self, Entity::from_str(&command.id)?, &command.name);
+        }
+        if request.starts_with(r#"{"op":"get_resource","#) {
+            let command: FastResourceRead =
+                serde_json::from_str(request).map_err(|e| e.to_string())?;
+            return script_result(self.get_dynamic_resource(&command.name));
+        }
         if request.starts_with(r#"{"op":"drain_next","#) {
             let command: FastDrainNext =
                 serde_json::from_str(request).map_err(|e| e.to_string())?;
@@ -478,6 +508,147 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Evaluate a read through the original tagged-enum parser for comparison.
+    fn general_scalar_read(world: &World, text: &str) -> Result<String, String> {
+        match serde_json::from_str::<ScriptOperation<'_>>(text).map_err(|e| e.to_string())? {
+            ScriptOperation::Get { id, name } => {
+                script_component_result(world, Entity::from_str(&id)?, &name)
+            }
+            ScriptOperation::GetResource { name } => {
+                script_result(world.get_dynamic_resource(&name))
+            }
+            _ => Err("not a scalar read".into()),
+        }
+    }
+
+    #[test]
+    fn fast_scalar_reads_match_general_protocol() {
+        #[derive(Serialize, Deserialize)]
+        struct Position {
+            x: f32,
+            y: f32,
+        }
+        let mut world = World::new();
+        world
+            .register_serde_component::<Position>("Position")
+            .unwrap();
+        let entity = world.spawn();
+        world.insert(entity, Position { x: 1.0, y: -2.5 }).unwrap();
+        world
+            .set_dynamic(entity, "quoted\"name", json!({"value":null}))
+            .unwrap();
+        world.set_dynamic_resource("settings", json!({"enabled":true}));
+        world.set_dynamic_resource("null", Value::Null);
+        let id = entity.to_string();
+        let stale = world.spawn();
+        assert!(world.despawn(stale));
+        let requests = [
+            format!(r#"{{"op":"get","id":"{id}","name":"Position"}}"#),
+            format!(r#"{{"op":"get","id":"{id}","name":"quoted\"name","extra":[1,null]}}"#),
+            format!(r#"{{"op":"get","id":"{id}","name":"missing"}}"#),
+            format!(r#"{{"op":"get","id":"{stale}","name":"Position"}}"#),
+            r#"{"op":"get","id":"bad","name":"Position"}"#.into(),
+            r#"{"op":"get","id":null,"name":"Position"}"#.into(),
+            format!(r#"{{"op":"get","id":"{id}"}}"#),
+            format!(r#"{{"op":"get","id":"{id}","name":"a","name":"b"}}"#),
+            format!(r#"{{"op":"get","id":"{id}","name":"Position","op":"other"}}"#),
+            r#"{"op":"get_resource","name":"settings"}"#.into(),
+            r#"{"op":"get_resource","name":"null"}"#.into(),
+            r#"{"op":"get_resource","name":"missing"}"#.into(),
+            r#"{"op":"get_resource","name":"sett\u0069ngs","extra":{"a":[1,null]}}"#.into(),
+            r#"{"op":"get_resource","name":null}"#.into(),
+            r#"{"op":"get_resource","name":"a","name":"b"}"#.into(),
+            r#"{"op":"get_resource","name":"settings","op":"other"}"#.into(),
+        ];
+        for request in requests {
+            let expected = general_scalar_read(&world, &request);
+            let actual = world.apply_script_json(&request);
+            match (expected, actual) {
+                (Ok(expected), Ok(actual)) => assert_eq!(actual, expected, "{request}"),
+                (Err(_), Err(_)) => {}
+                (expected, actual) => {
+                    panic!("different read behavior for {request}: {expected:?} vs {actual:?}")
+                }
+            }
+        }
+        // Reordered keys and whitespace take the general path and keep the same wire result.
+        let reordered = format!(r#"{{ "name":"Position", "id":"{id}", "op":"get" }}"#);
+        assert_eq!(
+            world.apply_script_json(&reordered),
+            general_scalar_read(&world, &reordered)
+        );
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_scalar_read_bridge() {
+        use std::{hint::black_box, time::Instant};
+        #[derive(Serialize, Deserialize)]
+        struct Position {
+            position: [f32; 3],
+            yaw: f32,
+            pitch: f32,
+        }
+        let mut world = World::new();
+        world
+            .register_serde_component::<Position>("Position")
+            .unwrap();
+        let entity = world.spawn();
+        world
+            .insert(
+                entity,
+                Position {
+                    position: [1.0, 2.0, 3.0],
+                    yaw: 0.4,
+                    pitch: -0.2,
+                },
+            )
+            .unwrap();
+        world
+            .set_dynamic(entity, "State", json!({"enabled":true,"amount":1.0}))
+            .unwrap();
+        world.set_dynamic_resource("settings", json!({"enabled":true,"speed":4.0}));
+        for (label, request) in [
+            (
+                "typed component",
+                format!(r#"{{"op":"get","id":"{entity}","name":"Position"}}"#),
+            ),
+            (
+                "dynamic component",
+                format!(r#"{{"op":"get","id":"{entity}","name":"State"}}"#),
+            ),
+            (
+                "resource",
+                r#"{"op":"get_resource","name":"settings"}"#.to_owned(),
+            ),
+        ] {
+            assert_eq!(
+                world.apply_script_json(&request),
+                general_scalar_read(&world, &request)
+            );
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..9 {
+                for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                    let start = Instant::now();
+                    for _ in 0..150_000 {
+                        if mode == 0 {
+                            black_box(general_scalar_read(&world, black_box(&request)).unwrap());
+                        } else {
+                            black_box(world.apply_script_json(black_box(&request)).unwrap());
+                        }
+                    }
+                    samples[mode].push(start.elapsed().as_nanos() as f64 / 150_000.0);
+                }
+            }
+            samples[0].sort_by(f64::total_cmp);
+            samples[1].sort_by(f64::total_cmp);
+            println!(
+                "{label}: tagged {:.0} ns, direct {:.0} ns",
+                samples[0][4], samples[1][4]
+            );
+        }
+    }
 
     #[test]
     fn fast_change_read_parser_matches_general_protocol() {

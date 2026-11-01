@@ -308,6 +308,11 @@ countersplat-ecs benchmark_change_read -- --ignored --nocapture --test-threads=1
 to compare the general and direct change-aware read parsers and full Rust
 bridge paths. These measurements exclude Lua and rendering.
 
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-ecs --lib benchmark_scalar_read_bridge -- --ignored --nocapture
+--test-threads=1` to compare tagged and direct parsing for typed and dynamic
+component reads and resource reads. This measures the Rust bridge only.
+
 
 ## Native Lua scalar input
 
