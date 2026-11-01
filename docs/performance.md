@@ -78,6 +78,9 @@ channel checks with ordered batched checks. The fixture measures host-side JSON
 transport only; use the browser profiler to measure the actual Rust/WASM path
 and event handlers.
 
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-ecs --example event_bench` to compare event burst and drain costs.
+
 ## UI layout benchmark
 
 Run `cargo run --locked --release --target-dir .artifacts/target -p

@@ -810,16 +810,17 @@ impl World {
 
     /// Queues an owned event for the world thread; consumers explicitly drain each channel.
     pub fn emit_event(&mut self, name: &str, value: Value) {
-        self.events
-            .entry(name.to_owned())
-            .or_default()
-            .push_back(value);
+        if let Some(events) = self.events.get_mut(name) {
+            events.push_back(value);
+        } else {
+            let mut events = VecDeque::new();
+            events.push_back(value);
+            self.events.insert(name.to_owned(), events);
+        }
     }
     /// Removes and returns every queued event for a channel in emission order.
     pub fn drain_events(&mut self, name: &str) -> Vec<Value> {
-        self.events
-            .remove(name)
-            .map_or_else(Vec::new, |events| events.into_iter().collect())
+        self.events.remove(name).map_or_else(Vec::new, Vec::from)
     }
     /// Drains the first nonempty channel at or after start in caller-supplied
     /// order. Other channels remain queued, so callers can dispatch this batch
@@ -836,7 +837,7 @@ impl World {
             .find_map(|(index, name)| {
                 self.events
                     .remove(name.as_ref())
-                    .map(|events| (index, events.into_iter().collect()))
+                    .map(|events| (index, Vec::from(events)))
             })
     }
 

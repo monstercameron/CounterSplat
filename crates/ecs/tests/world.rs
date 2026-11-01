@@ -596,6 +596,24 @@ fn hierarchy_rejects_cycles_and_defines_despawn_behavior() {
 }
 
 #[test]
+fn event_bursts_drain_in_emission_order() {
+    let mut world = World::new();
+    for index in 0..256 {
+        world.emit_event("burst", json!({"index":index}));
+    }
+    world.emit_event("other", Value::Null);
+    let burst = world.drain_events("burst");
+    assert_eq!(burst.len(), 256);
+    for (index, value) in burst.iter().enumerate() {
+        assert_eq!(value["index"], index);
+    }
+    assert!(world.drain_events("burst").is_empty());
+    assert_eq!(world.drain_events("other"), vec![Value::Null]);
+    world.emit_event("burst", json!("again"));
+    assert_eq!(world.drain_events("burst"), vec![json!("again")]);
+}
+
+#[test]
 fn ordered_event_batches_preserve_later_and_reentrant_events() {
     let mut world = World::new();
     let names = ["earlier", "first", "later"];
