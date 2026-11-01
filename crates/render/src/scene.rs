@@ -374,7 +374,7 @@ fn assemble(
         mapped_at_creation: false,
     });
     queue.write_buffer(&fade, 0, &f32s(&vec![1.0; count.max(1) as usize]));
-    let sorter = DepthSorter::new(device, queue, count, &centers, &fade);
+    let sorter = DepthSorter::new_for_direct_draw(device, queue, count, &centers, &fade);
     buffers.insert("splatFade".into(), fade);
     // Per-slot level of detail (plus one; 0 for splats not from a streamed level) and the LOD tint switch.
     let lod = device.create_buffer(&wgpu::BufferDescriptor {

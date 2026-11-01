@@ -75,7 +75,9 @@ pub struct DepthSorter {
     block_sums: wgpu::Buffer,
     depth_uniform: wgpu::Buffer,
     depth_pipeline: wgpu::ComputePipeline,
-    /// Splats the depth-key pass found in view, reset each sort.
+    /// Whether the caller needs a visibility count and indirect draw arguments.
+    count_visible: bool,
+    /// Splats the depth-key pass found in view, reset each indirect sort.
     visible: wgpu::Buffer,
     args_pipeline: wgpu::ComputePipeline,
     args: wgpu::BindGroup,
@@ -113,6 +115,29 @@ impl DepthSorter {
         count: u32,
         centers: &wgpu::Buffer,
         fade: &wgpu::Buffer,
+    ) -> Self {
+        Self::with_visibility_count(device, queue, count, centers, fade, true)
+    }
+
+    /// Scene drawing uses a direct active-prefix draw and never consumes the
+    /// indirect arguments. Skip its visibility-count work on the GPU.
+    pub(crate) fn new_for_direct_draw(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        count: u32,
+        centers: &wgpu::Buffer,
+        fade: &wgpu::Buffer,
+    ) -> Self {
+        Self::with_visibility_count(device, queue, count, centers, fade, false)
+    }
+
+    fn with_visibility_count(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        count: u32,
+        centers: &wgpu::Buffer,
+        fade: &wgpu::Buffer,
+        count_visible: bool,
     ) -> Self {
         assert!(count > 0, "sorting needs at least one splat");
         let workgroups = count.div_ceil(ELEMENTS_PER_WORKGROUP);
@@ -246,7 +271,13 @@ impl DepthSorter {
             ],
         );
 
-        let depth_pipeline = pipeline(device, "depth keys", &depth_layout, DEPTH_KEYS_SRC, "main");
+        let depth_pipeline = pipeline(
+            device,
+            "depth keys",
+            &depth_layout,
+            DEPTH_KEYS_SRC,
+            if count_visible { "main" } else { "direct" },
+        );
         let depth = bind(
             device,
             "depth keys",
@@ -396,6 +427,7 @@ impl DepthSorter {
             block_sums,
             depth_uniform,
             depth_pipeline,
+            count_visible,
             visible,
             args_pipeline,
             args,
@@ -505,7 +537,9 @@ impl DepthSorter {
         queue.write_buffer(&self.depth_uniform, 0, &uniform);
         *self.sorted_for.borrow_mut() = Some(uniform);
 
-        encoder.clear_buffer(&self.visible, 0, None);
+        if self.count_visible {
+            encoder.clear_buffer(&self.visible, 0, None);
+        }
         // Block sums past the active workgroups would hold a previous sort's counts; the scan reads all of them.
         encoder.clear_buffer(&self.block_sums, 0, None);
         let workgroups = active.div_ceil(ELEMENTS_PER_WORKGROUP).max(1);
@@ -521,7 +555,9 @@ impl DepthSorter {
             &self.depth,
             active.div_ceil(THREADS_PER_WORKGROUP).max(1),
         );
-        dispatch(&mut compute, &self.args_pipeline, &self.args, 1);
+        if self.count_visible {
+            dispatch(&mut compute, &self.args_pipeline, &self.args, 1);
+        }
         for pass in 0..PASS_COUNT as usize {
             let bind_pass = &self.passes[pass];
             dispatch(
@@ -795,6 +831,268 @@ mod uniform_tests {
         bytes.extend_from_slice(&active.to_le_bytes());
         bytes.extend_from_slice(&fade_count.to_le_bytes());
         bytes
+    }
+
+    #[test]
+    fn direct_and_counted_depth_sorts_produce_identical_order_and_fades() {
+        let Some((device, queue)) = crate::try_device() else {
+            return;
+        };
+        let count = 4099u32;
+        let buffer = |label: &str, size: u64, usage: wgpu::BufferUsages| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        let centers = buffer(
+            "comparison centres",
+            u64::from(count) * 12,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
+        let points: Vec<[f32; 3]> = (0..count)
+            .map(|i| {
+                if i % 19 == 0 {
+                    [f32::NAN; 3]
+                } else {
+                    [
+                        (i % 25) as f32 * 0.2 - 2.4,
+                        (i % 11) as f32 * 0.2 - 1.0,
+                        -0.5 - (i % 1000) as f32 * 0.01,
+                    ]
+                }
+            })
+            .collect();
+        queue.write_buffer(&centers, 0, bytemuck::cast_slice(&points));
+        let fade_a = buffer(
+            "counted fade",
+            u64::from(count) * 4,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        );
+        let fade_b = buffer(
+            "direct fade",
+            u64::from(count) * 4,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        );
+        let order_a = buffer(
+            "counted order",
+            u64::from(count) * 4,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        );
+        let order_b = buffer(
+            "direct order",
+            u64::from(count) * 4,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+        );
+        let counted = DepthSorter::new(&device, &queue, count, &centers, &fade_a);
+        let direct = DepthSorter::new_for_direct_draw(&device, &queue, count, &centers, &fade_b);
+        let matrix = crate::camera::IDENTITY;
+        let cut = Cutout {
+            target: [0.0, 0.0, -5.0],
+            radius: 0.5,
+            floor_y: -0.8,
+            depth_margin: 0.2,
+            soft: 1.5,
+            splat_reach: 0.1,
+        };
+        let bytes = u64::from(count) * 4;
+        for scenario in 0..3 {
+            let ranges = if scenario == 0 {
+                vec![]
+            } else {
+                vec![(11, 500, 0.0), (800, 1300, 0.4), (1800, 3000, 1.0)]
+            };
+            counted.set_fades(&queue, &ranges);
+            direct.set_fades(&queue, &ranges);
+            let active = if scenario == 2 { count - 111 } else { count };
+            counted.set_active(&queue, active);
+            direct.set_active(&queue, active);
+            let clip = (scenario != 0).then_some(&matrix);
+            let cutout = (scenario == 2).then_some((&cut, &matrix, &matrix));
+            let readback = buffer(
+                "sort comparison readback",
+                bytes * 4,
+                wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            );
+            let mut encoder = device.create_command_encoder(&Default::default());
+            counted.encode(&queue, &mut encoder, &matrix, clip, cutout, &order_a);
+            direct.encode(&queue, &mut encoder, &matrix, clip, cutout, &order_b);
+            encoder.copy_buffer_to_buffer(&order_a, 0, &readback, 0, bytes);
+            encoder.copy_buffer_to_buffer(&order_b, 0, &readback, bytes, bytes);
+            encoder.copy_buffer_to_buffer(&fade_a, 0, &readback, bytes * 2, bytes);
+            encoder.copy_buffer_to_buffer(&fade_b, 0, &readback, bytes * 3, bytes);
+            queue.submit(Some(encoder.finish()));
+            let slice = readback.slice(..);
+            let (tx, rx) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |result| {
+                tx.send(result).unwrap();
+            });
+            device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            rx.recv().unwrap().unwrap();
+            let data = slice.get_mapped_range().unwrap();
+            let n = bytes as usize;
+            assert_eq!(
+                &data[..n],
+                &data[n..2 * n],
+                "sort order scenario {scenario}"
+            );
+            assert_eq!(
+                &data[2 * n..3 * n],
+                &data[3 * n..4 * n],
+                "fade values scenario {scenario}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual GPU timestamp benchmark"]
+    fn benchmark_direct_depth_keys() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        else {
+            eprintln!("no GPU adapter");
+            return;
+        };
+        if !adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            eprintln!("GPU timestamp queries unavailable");
+            return;
+        }
+        let Ok((device, queue)) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::TIMESTAMP_QUERY,
+                ..Default::default()
+            }))
+        else {
+            eprintln!("timestamp device unavailable");
+            return;
+        };
+        let count = 2_550_000u32;
+        let buffer = |label: &str, size: u64, usage: wgpu::BufferUsages| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
+        let centers = buffer("bench centres", u64::from(count) * 12, storage);
+        let points: Vec<[f32; 3]> = (0..count)
+            .map(|i| [((i % 13) as f32 - 6.0) * 0.5, 0.0, -2.0])
+            .collect();
+        queue.write_buffer(&centers, 0, bytemuck::cast_slice(&points));
+        let keys = buffer("bench keys", u64::from(count) * 4, storage);
+        let visible = buffer("bench visible", 4, storage);
+        let fades = buffer("bench fades", 16, storage);
+        let fade = buffer("bench fade", u64::from(count) * 4, storage);
+        let uniform = buffer(
+            "bench uniform",
+            DEPTH_UNIFORM_SIZE,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let matrix = crate::camera::IDENTITY;
+        queue.write_buffer(
+            &uniform,
+            0,
+            &pack_depth_uniform(&matrix, &matrix, None, count, 0),
+        );
+        let layout = layout(
+            &device,
+            "bench depth",
+            &[
+                uniform_entry(0),
+                storage_entry(1, true),
+                storage_entry(2, false),
+                storage_entry(3, false),
+                storage_entry(4, true),
+                storage_entry(5, false),
+            ],
+        );
+        let pipelines = [
+            pipeline(&device, "counted", &layout, DEPTH_KEYS_SRC, "main"),
+            pipeline(&device, "direct", &layout, DEPTH_KEYS_SRC, "direct"),
+        ];
+        let group = bind(
+            &device,
+            "bench depth",
+            &pipelines[0].get_bind_group_layout(0),
+            &[
+                (0, uniform.as_entire_binding()),
+                (1, centers.as_entire_binding()),
+                (2, keys.as_entire_binding()),
+                (3, visible.as_entire_binding()),
+                (4, fades.as_entire_binding()),
+                (5, fade.as_entire_binding()),
+            ],
+        );
+        let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("depth timestamps"),
+            ty: wgpu::QueryType::Timestamp,
+            count: 2,
+        });
+        let resolved = buffer(
+            "timestamp resolve",
+            16,
+            wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+        );
+        let readback = buffer(
+            "timestamp readback",
+            16,
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        );
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..13 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                encoder.clear_buffer(&visible, 0, None);
+                {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("timed depth"),
+                        timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                            query_set: &queries,
+                            beginning_of_pass_write_index: Some(0),
+                            end_of_pass_write_index: Some(1),
+                        }),
+                    });
+                    dispatch(
+                        &mut pass,
+                        &pipelines[mode],
+                        &group,
+                        count.div_ceil(THREADS_PER_WORKGROUP),
+                    );
+                }
+                encoder.resolve_query_set(&queries, 0..2, &resolved, 0);
+                encoder.copy_buffer_to_buffer(&resolved, 0, &readback, 0, 16);
+                queue.submit(Some(encoder.finish()));
+                let slice = readback.slice(..);
+                let (tx, rx) = std::sync::mpsc::channel();
+                slice.map_async(wgpu::MapMode::Read, move |result| {
+                    tx.send(result).unwrap();
+                });
+                device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+                rx.recv().unwrap().unwrap();
+                let data = slice.get_mapped_range().unwrap();
+                let start = u64::from_le_bytes(data[0..8].try_into().unwrap());
+                let end = u64::from_le_bytes(data[8..16].try_into().unwrap());
+                if round >= 2 {
+                    samples[mode].push(
+                        (end - start) as f64 * f64::from(queue.get_timestamp_period())
+                            / 1_000_000.0,
+                    );
+                }
+                drop(data);
+                readback.unmap();
+            }
+        }
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        println!(
+            "depth keys for {count} splats: counted {:.3} ms, direct {:.3} ms",
+            samples[0][5], samples[1][5]
+        );
     }
 
     #[test]

@@ -141,3 +141,10 @@ fn main(@builtin(global_invocation_id) id: vec3u, @builtin(local_invocation_inde
     workgroupBarrier();
     if (lane == 0u) { atomicAdd(&visible, atomicLoad(&local_visible)); }
 }
+
+// Direct draws already cover the active prefix and reject culled slots in the
+// vertex stage. They need the same keys and fades but no visibility count.
+@compute @workgroup_size(256)
+fn direct(@builtin(global_invocation_id) id: vec3u) {
+    let ignored = write_key(id.x);
+}

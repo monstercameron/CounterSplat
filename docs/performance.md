@@ -229,3 +229,9 @@ Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-ecs benchmark_component_token_matching -- --ignored --nocapture`
 to compare revision-token matching in isolation. The dynamic revision
 benchmark above measures the surrounding ECS read path.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render --lib benchmark_direct_depth_keys -- --ignored --nocapture
+--test-threads=1` to compare GPU timestamp measurements of the depth-key
+shader with and without visibility counting. It requires timestamp-query
+support and measures only that shader, not the rest of sorting or rendering.
