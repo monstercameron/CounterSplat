@@ -51,7 +51,12 @@ class WorldFixture {
       case 'has': value = (this.components.get(op.id) || new Map()).has(op.name); break;
       case 'is_alive': value = this.components.has(op.id); break;
       case 'get_if_changed': {
+        if (op.id === 'stale') throw new Error('stale entity');
         const components = this.components.get(op.id) || new Map();
+        if (op.name === 'Untracked') {
+          value = {revision:null, present:true, value:{number:this.revision}};
+          break;
+        }
         const revision = `${op.id}|${op.name}|${this.revision}`;
         if (op.revision === revision) { found = false; break; }
         value = {revision, present:components.has(op.name), value:components.get(op.name) ?? null};
@@ -113,7 +118,7 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
-  assert(__ecs_call == nil and __ecs_call_flat == nil)
+  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
@@ -149,6 +154,10 @@ game.vm.doStringSync(`
   assert(engine.component_reader('entity', 'Nullable')() == ecs.null)
   assert(engine.component_reader('entity', 'Missing')() == nil)
   assert(engine.component_reader('entity', 'False')() == false)
+  local read_untracked = engine.component_reader('entity', 'Untracked')
+  local untracked1, untracked2 = read_untracked(), read_untracked()
+  assert(untracked1.number == untracked2.number and untracked1 ~= untracked2)
+  assert(not pcall(function() ecs.get_if_changed('stale', 'Stats') end))
   assert(not pcall(function() ecs.set_field('entity', 'Missing', 'hp', 1) end))
   assert(not pcall(function() ecs.set_field('entity', 'Stats', 'bad', 0/0) end))
   -- Non-string arguments still use the validating general encoder.

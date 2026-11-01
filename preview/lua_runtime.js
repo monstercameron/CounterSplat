@@ -5,7 +5,7 @@
 const INSTRUCTION_LIMIT = 10_000_000;
 const HOOK_INTERVAL = 1_000;
 const BOOTSTRAP = `
-local call, call_flat = __ecs_call, __ecs_call_flat
+local call, call_flat, call_changed = __ecs_call, __ecs_call_flat, __ecs_call_changed
 local type, pairs, ipairs = type, pairs, ipairs
 local profile_now, profile_sample = __profile_now, __profile_sample
 local set_hook, raw_pcall, raw_xpcall, raise, select_value =
@@ -46,7 +46,7 @@ local function bounded(fn, ...)
         raise(result, 0)
     end
 end
-__ecs_call, __ecs_call_flat, __profile_now, __profile_sample = nil, nil, nil, nil
+__ecs_call, __ecs_call_flat, __ecs_call_changed, __profile_now, __profile_sample = nil, nil, nil, nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
     count.n = count.n + 1
@@ -113,7 +113,10 @@ function ecs.get_if_changed(id, name, revision)
     local args = {id = id, name = name, revision = revision}
     if type(id) == "string" and type(name) == "string" and
         (revision == nil or type(revision) == "string") then
-        return invoke_flat("get_if_changed", args)
+        args.op = "get_if_changed"
+        local result = call_changed(args)
+        if result ~= false then return decode(result) end
+        return nil
     end
     return invoke("get_if_changed", args)
 end
@@ -223,6 +226,10 @@ export class LuaScene {
       // This callback is private to the bootstrap and accepts only internally
       // constructed requests whose arguments have been checked as strings.
       vm.global.set('__ecs_call_flat', request => { const result = host.call(request, true); return {found: result.found, value: encodeResult(result.value)}; });
+      // Change-aware reads either return their result object or no change. A
+      // boolean sentinel avoids transferring a wrapper table for the common
+      // unchanged case; false cannot be a valid change record.
+      vm.global.set('__ecs_call_changed', request => { const result = host.call(request, true); return result.found ? encodeResult(result.value) : false; });
       if (profile) {
         vm.global.set('__profile_now', () => performance.now());
         vm.global.set('__profile_sample', (name, elapsed) => host.recordProfile('systems', name, elapsed));
