@@ -112,6 +112,16 @@ liveness and presence checks, entity queries, resource fields, and empty event
 drains. The benchmark uses both typed components and a larger dynamic component.
 It does not include Lua, JavaScript, or rendering costs.
 
+## Voxel movement benchmark
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-physics --example voxel_move_bench` to time capsule movement over a
+synthetic floor, wall, and obstacle at 5 cm voxel resolution. For a local level,
+append `-- path/to/level center_x center_y center_z`; the coordinates are the
+capsule center, not the camera eye. It reports median time for idle, walking,
+and airborne movements plus output checksums to compare builds. This measures
+native collision work only; browser worker and frame timings are separate.
+
 ## Native worker latency benchmark
 
 Run `cargo run --locked --release --target-dir .artifacts/target -p

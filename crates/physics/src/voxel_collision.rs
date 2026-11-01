@@ -19,6 +19,30 @@ pub struct VoxelRayHit {
     pub normal: [f32; 3],
 }
 
+// Visit only occupied cells in the same z/y/x order as a per-cell scan.
+// The caller clips the inclusive bounds to the grid before invoking this helper.
+// Reading each leaf once per x row avoids retraversing the octree for all four cells.
+fn for_each_solid_cell(tree: &Octree, lo: [i32; 3], hi: [i32; 3], mut visit: impl FnMut([i32; 3])) {
+    for z in lo[2]..=hi[2] {
+        for y in lo[1]..=hi[1] {
+            let mut x = lo[0] as u32;
+            let hi_x = hi[0] as u32;
+            while x <= hi_x {
+                let end = (x | 3).min(hi_x);
+                let shift = ((y as u32 & 3) * 4) + ((z as u32 & 3) * 16);
+                let row = (tree.block_mask([x, y as u32, z as u32]) >> shift) & 0xf;
+                let mut mask = row & (0xf << (x & 3)) & (0xf >> (3 - (end & 3)));
+                while mask != 0 {
+                    let cell_x = (x & !3) + mask.trailing_zeros();
+                    visit([cell_x as i32, y, z]);
+                    mask &= mask - 1;
+                }
+                x = end + 1;
+            }
+        }
+    }
+}
+
 pub struct VoxelCollider {
     tree: Octree,
     // Version 1.0 stores X/Y in the old splat coordinate system. Version 1.1 is world space.
@@ -353,66 +377,58 @@ impl VoxelCollider {
         let mut output = None;
         let segment_min = center[1] - half_height;
         let segment_max = center[1] + half_height;
-        for z in lo[2]..=hi[2] {
-            for y in lo[1]..=hi[1] {
-                for x in lo[0]..=hi[0] {
-                    let cell = [x, y, z];
-                    if !self.tree.is_solid(cell) {
-                        continue;
-                    }
-                    let min = [0, 1, 2].map(|i| m.grid_min[i] + cell[i] as f32 * m.resolution);
-                    let max = min.map(|v| v + m.resolution);
-                    // Find the closest pair of points on the vertical segment
-                    // and voxel box. Their separation gives the capsule normal.
-                    let segment_y = if segment_max < min[1] {
-                        segment_max
-                    } else if segment_min > max[1] {
-                        segment_min
-                    } else {
-                        center[1].clamp(segment_min.max(min[1]), segment_max.min(max[1]))
-                    };
-                    let point = [center[0], segment_y, center[2]];
-                    let near = [0, 1, 2].map(|i| point[i].clamp(min[i], max[i]));
-                    let offset = [0, 1, 2].map(|i| point[i] - near[i]);
-                    let distance_sq = offset.iter().map(|v| v * v).sum::<f32>();
-                    if distance_sq >= radius * radius {
-                        continue;
-                    }
-                    let (push, penetration) = if distance_sq > 1.0e-12 {
-                        let distance = distance_sq.sqrt();
-                        let penetration = radius - distance;
-                        (offset.map(|v| v * penetration / distance), penetration)
-                    } else {
-                        // The segment intersects the box. Escape on the shortest
-                        // axis, including the capsule's full vertical extent.
-                        let escape = [0, 1, 2].map(|i| {
-                            let (lower, upper) = if i == 1 {
-                                (segment_min, segment_max)
-                            } else {
-                                (center[i], center[i])
-                            };
-                            let negative = upper - min[i] + radius;
-                            let positive = max[i] - lower + radius;
-                            if negative < positive {
-                                -negative
-                            } else {
-                                positive
-                            }
-                        });
-                        let axis = (0..3)
-                            .min_by(|&a, &b| escape[a].abs().total_cmp(&escape[b].abs()))
-                            .unwrap();
-                        let mut push = [0.0; 3];
-                        push[axis] = escape[axis];
-                        (push, escape[axis].abs())
-                    };
-                    if penetration > best {
-                        best = penetration;
-                        output = Some(push);
-                    }
-                }
+        for_each_solid_cell(&self.tree, lo, hi, |cell| {
+            let min = [0, 1, 2].map(|i| m.grid_min[i] + cell[i] as f32 * m.resolution);
+            let max = min.map(|v| v + m.resolution);
+            // Find the closest pair of points on the vertical segment
+            // and voxel box. Their separation gives the capsule normal.
+            let segment_y = if segment_max < min[1] {
+                segment_max
+            } else if segment_min > max[1] {
+                segment_min
+            } else {
+                center[1].clamp(segment_min.max(min[1]), segment_max.min(max[1]))
+            };
+            let point = [center[0], segment_y, center[2]];
+            let near = [0, 1, 2].map(|i| point[i].clamp(min[i], max[i]));
+            let offset = [0, 1, 2].map(|i| point[i] - near[i]);
+            let distance_sq = offset.iter().map(|v| v * v).sum::<f32>();
+            if distance_sq >= radius * radius {
+                return;
             }
-        }
+            let (push, penetration) = if distance_sq > 1.0e-12 {
+                let distance = distance_sq.sqrt();
+                let penetration = radius - distance;
+                (offset.map(|v| v * penetration / distance), penetration)
+            } else {
+                // The segment intersects the box. Escape on the shortest
+                // axis, including the capsule's full vertical extent.
+                let escape = [0, 1, 2].map(|i| {
+                    let (lower, upper) = if i == 1 {
+                        (segment_min, segment_max)
+                    } else {
+                        (center[i], center[i])
+                    };
+                    let negative = upper - min[i] + radius;
+                    let positive = max[i] - lower + radius;
+                    if negative < positive {
+                        -negative
+                    } else {
+                        positive
+                    }
+                });
+                let axis = (0..3)
+                    .min_by(|&a, &b| escape[a].abs().total_cmp(&escape[b].abs()))
+                    .unwrap();
+                let mut push = [0.0; 3];
+                push[axis] = escape[axis];
+                (push, escape[axis].abs())
+            };
+            if penetration > best {
+                best = penetration;
+                output = Some(push);
+            }
+        });
         output
     }
 
@@ -492,5 +508,75 @@ impl VoxelCollider {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod occupied_scan_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn tree(words: &[u32], node_count: usize, leaf_count: usize) -> Octree {
+        let metadata = json!({"version":"1.1", "gridBounds":{"min":[0,0,0],"max":[7.3,7.1,6.2]},
+            "voxelResolution":1.0, "leafSize":4, "treeDepth":1, "nodeCount":node_count, "leafDataCount":leaf_count});
+        let bytes: Vec<_> = words.iter().copied().flat_map(u32::to_le_bytes).collect();
+        Octree::from_json_and_bin(metadata.to_string().as_bytes(), &bytes).unwrap()
+    }
+
+    fn compare_regions(tree: &Octree) {
+        let dims = grid_cells(&tree.meta);
+        let mut seed = 0x2345_6789_u32;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        for sample in 0..4_000 {
+            let a = [0, 1, 2].map(|i| (next() % dims[i]) as i32);
+            let b = [0, 1, 2].map(|i| (next() % dims[i]) as i32);
+            let (lo, hi) = if sample == 0 {
+                ([0; 3], dims.map(|n| n as i32 - 1))
+            } else {
+                (
+                    [0, 1, 2].map(|i| a[i].min(b[i])),
+                    [0, 1, 2].map(|i| a[i].max(b[i])),
+                )
+            };
+            let mut actual = Vec::new();
+            for_each_solid_cell(tree, lo, hi, |cell| actual.push(cell));
+            let mut expected = Vec::new();
+            for z in lo[2]..=hi[2] {
+                for y in lo[1]..=hi[1] {
+                    for x in lo[0]..=hi[0] {
+                        if tree.is_solid([x, y, z]) {
+                            expected.push([x, y, z]);
+                        }
+                    }
+                }
+            }
+            assert_eq!(actual, expected, "bounds {lo:?}..={hi:?}");
+        }
+    }
+
+    #[test]
+    fn leaf_rows_match_per_cell_occupancy_and_order_for_clipped_regions() {
+        // Mixed, solid, empty and absent children, including partial grid edges.
+        let masks = [
+            0x8000_0000_0000_0001_u64,
+            0,
+            u64::MAX,
+            0x5555_aaaa_3333_cccc,
+            0x8421_8421_1248_1248,
+        ];
+        let mut words = vec![(0b1101_1101_u32 << 24) | 1, 0, 1, 0xff00_0000, 2, 3, 4];
+        for mask in masks {
+            words.extend([mask as u32, (mask >> 32) as u32]);
+        }
+        compare_regions(&tree(&words, 7, 10));
+        // A mixed leaf or solid node may terminate before the declared depth.
+        compare_regions(&tree(&[0, 0x8421_8421, 0x1248_1248], 1, 2));
+        compare_regions(&tree(&[0xff00_0000], 1, 0));
+        compare_regions(&tree(&[0, 0, 0], 1, 2));
     }
 }
