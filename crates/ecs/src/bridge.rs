@@ -82,6 +82,13 @@ pub enum WorldOperation {
         name: String,
         value: Value,
     },
+    /// Update one field on an existing object-valued component.
+    WriteComponentField {
+        entity: Entity,
+        name: String,
+        field: String,
+        value: Value,
+    },
     RemoveComponent {
         entity: Entity,
         name: String,
@@ -226,6 +233,15 @@ impl World {
                 value,
             } => {
                 self.write_component_value(entity, &name, value)?;
+                Ok(Out::Applied)
+            }
+            Op::WriteComponentField {
+                entity,
+                name,
+                field,
+                value,
+            } => {
+                self.write_component_field(entity, &name, &field, value)?;
                 Ok(Out::Applied)
             }
             Op::RemoveComponent { entity, name } => {

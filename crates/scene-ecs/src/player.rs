@@ -5,7 +5,7 @@ use countersplat_scene::{
 };
 
 macro_rules! adapter {
-    ($name:ident, $component:ty) => {
+    ($name:ident, $component:ty $(, $fast_field:ident)?) => {
         struct $name;
         impl ComponentAdapter for $name {
             fn read(&self, world: &World, entity: Entity) -> Result<Option<Value>, String> {
@@ -33,6 +33,31 @@ macro_rules! adapter {
                 component.validate().map_err(str::to_owned)?;
                 world.insert(entity, component)
             }
+            $(
+            fn write_field(
+                &self,
+                world: &mut World,
+                entity: Entity,
+                field: &str,
+                value: Value,
+            ) -> Result<(), String> {
+                if field != stringify!($fast_field) {
+                    return countersplat_ecs::write_object_field_via_adapter(
+                        self, world, entity, field, value,
+                    );
+                }
+                // Validate a copy before replacing the component, so a bad
+                // field cannot leave partially changed physics or camera state.
+                let mut component = world
+                    .get::<$component>(entity)
+                    .cloned()
+                    .ok_or("component is missing")?;
+                component.$fast_field =
+                    serde_json::from_value(value).map_err(|e| e.to_string())?;
+                component.validate().map_err(str::to_owned)?;
+                world.insert(entity, component)
+            }
+            )?
             fn remove(&self, world: &mut World, entity: Entity) -> Result<Option<Value>, String> {
                 let old = self.read(world, entity)?;
                 world.remove::<$component>(entity);
@@ -50,7 +75,7 @@ macro_rules! adapter {
         }
     };
 }
-adapter!(CameraAdapter, PlayerCamera);
+adapter!(CameraAdapter, PlayerCamera, position);
 adapter!(LensAdapter, CameraLens);
 adapter!(ZoomLensAdapter, CameraZoomLens);
 adapter!(ControllerAdapter, CameraController);

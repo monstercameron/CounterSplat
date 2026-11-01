@@ -53,6 +53,12 @@ script handles them.
 - ecs.get(id, name), ecs.has(id, name), ecs.set(id, name, value), and
   ecs.remove(id, name) access dynamic components and registered Rust component
   adapters. get and remove return nil when the component is absent.
+- ecs.get_many(id, names) reads several components into a name-keyed table;
+  missing components are omitted and JSON null remains ecs.null.
+- ecs.set_field(id, name, field, value) changes one field on an existing
+  object-valued component without replacing its other fields. Dynamic objects
+  can gain fields; registered adapters apply their usual validation. A missing,
+  non-object, or invalid target raises an error.
 - ecs.get_resource(name), ecs.set_resource(name, value), and
   ecs.remove_resource(name) access dynamic resources.
 - ecs.set_parent(child, parent_or_nil), ecs.parent(id), and ecs.children(id)

@@ -51,6 +51,13 @@ fn scripting_worker_operates_on_a_separate_ecs_owner() {
         ecs.set(root, "Health", 50)
         ecs.set(root, "Position", {x=1, y=2})
         ecs.set(child, "Position", {x=9, y=3})
+        ecs.set_field(root, "Position", "y", 4)
+        ecs.set_field(child, "Position", "marker", ecs.null)
+        assert(ecs.get(root, "Position").y == 4 and ecs.get(child, "Position").marker == ecs.null)
+        assert(not pcall(function() ecs.set_field(root, "Health", "x", 1) end))
+        assert(not pcall(function() ecs.set_field(root, "Position", "x", 0/0) end))
+        local field_cycle = {}; field_cycle.self = field_cycle
+        assert(not pcall(function() ecs.set_field(root, "Position", "bad", field_cycle) end))
         ecs.set_parent(child, root)
         assert(ecs.parent(child) == root and ecs.children(root)[1] == child)
         assert(#ecs.entities() == 2 and #ecs.query({"Position"}) == 2)
@@ -115,6 +122,7 @@ fn scripting_worker_operates_on_a_separate_ecs_owner() {
         assert(ecs.despawn(child) == 1 and not ecs.is_alive(child))
         assert(not pcall(function() ecs.has(child, "Position") end))
         assert(not pcall(function() ecs.set(child, "Position", {x=1}) end))
+        assert(not pcall(function() ecs.set_field(child, "Position", "x", 1) end))
         ecs.set_resource("root_id", root)
         assert(ecs.remove_resource("order") == "done")
         ecs.off("heal")
@@ -138,7 +146,7 @@ fn scripting_worker_operates_on_a_separate_ecs_owner() {
     assert_eq!(world.get::<i32>(id), Some(&57));
     assert_eq!(
         world.get_dynamic(id, "Position"),
-        Some(&json!({"x": 1.5, "y": 2}))
+        Some(&json!({"x": 1.5, "y": 4}))
     );
     assert_eq!(
         world.get_dynamic_resource("Game").unwrap(),

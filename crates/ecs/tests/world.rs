@@ -490,6 +490,84 @@ fn script_queries_and_liveness_match_world_operations() {
 }
 
 #[test]
+fn component_field_writes_preserve_other_fields_and_validate_targets() {
+    let mut world = World::new();
+    world
+        .register_serde_component::<Position>("Position")
+        .unwrap();
+    let entity = world.spawn();
+    world.insert(entity, Position { x: 1.0, y: 2.0 }).unwrap();
+    world
+        .set_dynamic(entity, "State", json!({"keep":1,"nullable":null}))
+        .unwrap();
+    world.set_dynamic(entity, "Scalar", json!(5)).unwrap();
+    let revision = world.structure_revision();
+
+    world
+        .write_component_field(entity, "State", "quoted\"field", json!([1, 2, 3]))
+        .unwrap();
+    assert_eq!(
+        world.get_dynamic(entity, "State"),
+        Some(&json!({"keep":1,"nullable":null,"quoted\"field":[1,2,3]}))
+    );
+    world
+        .write_component_field(entity, "Position", "x", json!(8.0))
+        .unwrap();
+    assert_eq!(
+        world.get::<Position>(entity),
+        Some(&Position { x: 8.0, y: 2.0 })
+    );
+    assert!(world
+        .write_component_field(entity, "Position", "y", json!("bad"))
+        .is_err());
+    assert_eq!(
+        world.get::<Position>(entity),
+        Some(&Position { x: 8.0, y: 2.0 })
+    );
+    assert!(world
+        .write_component_field(entity, "Missing", "x", json!(1))
+        .is_err());
+    assert!(world
+        .write_component_field(entity, "Scalar", "x", json!(1))
+        .is_err());
+    assert_eq!(world.get_dynamic(entity, "Scalar"), Some(&json!(5)));
+    world
+        .write_component_field(entity, "State", "__proto__", json!("safe"))
+        .unwrap();
+    assert_eq!(
+        world.get_dynamic(entity, "State").unwrap()["__proto__"],
+        "safe"
+    );
+    assert_eq!(world.structure_revision(), revision);
+
+    let request = json!({"op":"set_field","id":entity.to_string(),"name":"State","field":"quoted\"field","value":null});
+    let response: Value =
+        serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+    assert_eq!(response, json!({"found":false,"value":null}));
+    assert_eq!(
+        world.get_dynamic(entity, "State").unwrap()["quoted\"field"],
+        Value::Null
+    );
+    assert_eq!(
+        world
+            .apply_operation(WorldOperation::WriteComponentField {
+                entity,
+                name: "State".into(),
+                field: "keep".into(),
+                value: json!(9),
+            })
+            .unwrap(),
+        WorldOutcome::Applied
+    );
+    assert_eq!(world.get_dynamic(entity, "State").unwrap()["keep"], 9);
+
+    assert!(world.despawn(entity));
+    assert!(world
+        .write_component_field(entity, "State", "keep", json!(1))
+        .is_err());
+}
+
+#[test]
 fn batched_reads_discard_partial_output_from_an_absent_adapter() {
     struct Absent;
     impl ComponentAdapter for Absent {

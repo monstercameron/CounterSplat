@@ -160,7 +160,7 @@ local function move_position(entity, delta, name, body)
         applied[i] = next_value - pose.position[i]
         pose.position[i] = next_value
     end
-    ecs.set(entity, name, pose)
+    ecs.set_field(entity, name, "position", pose.position)
     if applied[1] ~= 0 or applied[2] ~= 0 or applied[3] ~= 0 then
         motion_version[entity] = (motion_version[entity] or 0) + 1
     end
@@ -186,7 +186,7 @@ function engine.physics.step(dt, skip_entity)
         if name then
             if body.gravity_enabled then
                 body.velocity[2] = math.max(-200, body.velocity[2] - body.gravity * dt)
-                ecs.set(entity, "PhysicsBody", body)
+                ecs.set_field(entity, "PhysicsBody", "velocity", body.velocity)
             end
             local delta = ecs.array()
             local moving = false

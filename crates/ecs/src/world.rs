@@ -87,6 +87,18 @@ pub trait ComponentAdapter: Send + Sync + 'static {
     }
     /// Validates and writes a value; return an error to reject the operation.
     fn write(&self, world: &mut World, entity: Entity, value: Value) -> Result<(), String>;
+    /// Updates one field of an existing object-valued component. The default
+    /// reads the exposed object, changes the field, then uses the normal write
+    /// path so adapter validation remains authoritative.
+    fn write_field(
+        &self,
+        world: &mut World,
+        entity: Entity,
+        field: &str,
+        value: Value,
+    ) -> Result<(), String> {
+        write_object_field_via_adapter(self, world, entity, field, value)
+    }
     /// Removes the component and returns its previous exposed value.
     fn remove(&self, world: &mut World, entity: Entity) -> Result<Option<Value>, String>;
     /// Reports component presence for queries and component listings.
@@ -100,6 +112,24 @@ pub trait ComponentAdapter: Send + Sync + 'static {
     fn indexed_entities<'a>(&self, _world: &'a World) -> Option<EntityIndex<'a>> {
         None
     }
+}
+
+/// Implements an adapter field write through its ordinary read/write API.
+/// Specialized adapters can use this as a fallback for fields they do not
+/// update directly; missing and non-object components return an error.
+pub fn write_object_field_via_adapter<A: ComponentAdapter + ?Sized>(
+    adapter: &A,
+    world: &mut World,
+    entity: Entity,
+    field: &str,
+    value: Value,
+) -> Result<(), String> {
+    let mut component = adapter.read(world, entity)?.ok_or("component is missing")?;
+    let object = component
+        .as_object_mut()
+        .ok_or("component is not an object")?;
+    object.insert(field.to_owned(), value);
+    adapter.write(world, entity, component)
 }
 
 struct SerdeAdapter<T>(PhantomData<fn() -> T>);
@@ -670,6 +700,34 @@ impl World {
             self.set_dynamic(entity, name, value)
         }
     }
+    /// Updates one field of an existing script-visible object component.
+    /// Dynamic components are updated in place; native adapters retain their
+    /// own validation and may specialize the field write.
+    pub fn write_component_field(
+        &mut self,
+        entity: Entity,
+        name: &str,
+        field: &str,
+        value: Value,
+    ) -> Result<(), String> {
+        self.require_alive(entity)?;
+        validate_name(name)?;
+        if let Some(adapter) = self.adapters.get(name).cloned() {
+            adapter.write_field(self, entity, field, value)
+        } else {
+            let component = self
+                .dynamic_components
+                .get_mut(name)
+                .and_then(|store| store.get_mut(&entity))
+                .ok_or("component is missing")?;
+            let object = component
+                .as_object_mut()
+                .ok_or("component is not an object")?;
+            object.insert(field.to_owned(), value);
+            Ok(())
+        }
+    }
+
     /// Removes a dynamic or registered native component and returns its previous value.
     pub fn remove_component_value(
         &mut self,

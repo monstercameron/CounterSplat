@@ -110,6 +110,7 @@ function ecs.get(id, name) return invoke_two_strings("get", "id", id, "name", na
 function ecs.get_many(id, names) return invoke("get_many", { id = id, names = names }) end
 function ecs.has(id, name) return invoke_two_strings("has", "id", id, "name", name) end
 function ecs.set(id, name, value) invoke("set", { id = id, name = name, value = value }) end
+function ecs.set_field(id, name, field, value) invoke("set_field", { id = id, name = name, field = field, value = value }) end
 function ecs.remove(id, name) return invoke_two_strings("remove", "id", id, "name", name) end
 function ecs.get_resource(name) return invoke_one_string("get_resource", "name", name) end
 function ecs.get_resource_field(name, field) return invoke_two_strings("get_resource_field", "name", name, "field", field) end

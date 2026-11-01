@@ -29,6 +29,14 @@ class WorldFixture {
         value = components.get(op.name);
         break;
       }
+      case 'set_field': {
+        const component = (this.components.get(op.id) || new Map()).get(op.name);
+        if (component === null || typeof component !== 'object' || Array.isArray(component))
+          throw new Error('component is missing or not an object');
+        component[op.field] = op.value;
+        found = false;
+        break;
+      }
       case 'has': value = (this.components.get(op.id) || new Map()).has(op.name); break;
       case 'is_alive': value = this.components.has(op.id); break;
       case 'get_many': {
@@ -78,7 +86,7 @@ assert.deepEqual(game.drain('engine.scene'), [{action:'push', scene:'pause_menu'
 game.emit('ui.action', {id:'game-levels', kind:{type:'clicked'}});
 runGameplay();
 assert.deepEqual(game.drain('engine.scene'), [{action:'replace', scene:'level_selector'}]);
-world.components.set('entity', new Map([['Health', 50], ['Nullable', null], ['__proto__', 'safe']]));
+world.components.set('entity', new Map([['Health', 50], ['Nullable', null], ['__proto__', 'safe'], ['Stats', Object.assign(Object.create(null), {hp:10, keep:true})]]));
 world.resources.set('special-keys', JSON.parse('{"__proto__":{"items":[{},[],null]},"constructor":"safe","kind":"user","entries":"data"}'));
 game.vm.doStringSync(`
   local count = select('#', pcall(function() return 1, nil, 3 end))
@@ -91,6 +99,13 @@ game.vm.doStringSync(`
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
   assert(ecs.get('entity', '__proto__') == 'safe' and not ecs.has('entity', 'Missing'))
+  ecs.set_field('entity', 'Stats', 'hp', 25)
+  ecs.set_field('entity', 'Stats', 'optional', ecs.null)
+  ecs.set_field('entity', 'Stats', '__proto__', 'safe')
+  local stats = ecs.get('entity', 'Stats')
+  assert(stats.hp == 25 and stats.keep and stats.optional == ecs.null and stats.__proto__ == 'safe')
+  assert(not pcall(function() ecs.set_field('entity', 'Missing', 'hp', 1) end))
+  assert(not pcall(function() ecs.set_field('entity', 'Stats', 'bad', 0/0) end))
   -- Non-string arguments still use the validating general encoder.
   local cycle = {}; cycle.self = cycle
   assert(not pcall(function() ecs.get(cycle, 'Health') end))

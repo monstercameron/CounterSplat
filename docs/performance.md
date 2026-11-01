@@ -115,3 +115,13 @@ selection for the checked-in 384-leaf level metadata and synthetic 1,024- and
 turns the camera, warms the selector, and reports the median of five samples.
 It excludes network, decoding, uploads, rendering, and GPU time. Compare builds
 under the same conditions; background load and CPU clock changes affect results.
+
+
+## Field-update benchmarks
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-scene-ecs --example field_write_bench` to compare full and
+field-only JSON writes through the real physics and camera adapters. Run
+`node scripts/benchmark_lua_field.mjs` to compare the Lua/JavaScript side
+with an in-memory transport. Both are CPU microbenchmarks; they do not measure
+rendering, collision processing, or frame rate.

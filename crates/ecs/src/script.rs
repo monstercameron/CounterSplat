@@ -196,6 +196,15 @@ enum ScriptOperation<'a> {
         name: Cow<'a, str>,
         value: Value,
     },
+    SetField {
+        #[serde(borrow)]
+        id: Cow<'a, str>,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
+        #[serde(borrow)]
+        field: Cow<'a, str>,
+        value: Value,
+    },
     Remove {
         #[serde(borrow)]
         id: Cow<'a, str>,
@@ -295,6 +304,15 @@ impl World {
             }
             S::Set { id, name, value } => {
                 self.write_component_value(Entity::from_str(&id)?, &name, value)?;
+                return script_result::<Value>(None);
+            }
+            S::SetField {
+                id,
+                name,
+                field,
+                value,
+            } => {
+                self.write_component_field(Entity::from_str(&id)?, &name, &field, value)?;
                 return script_result::<Value>(None);
             }
             S::Remove { id, name } => {

@@ -483,6 +483,23 @@ fn install_ecs_api(
         lua,
         &api,
         bridge,
+        "set_field",
+        |lua, bridge, (id, name, field, value): (String, String, String, Value)| {
+            applied(request(
+                bridge,
+                WorldOperation::WriteComponentField {
+                    entity: entity(id)?,
+                    name,
+                    field,
+                    value: json_input(lua, value)?,
+                },
+            )?)
+        },
+    )?;
+    bind(
+        lua,
+        &api,
+        bridge,
         "remove",
         |lua, bridge, (id, name): (String, String)| {
             maybe_value(
