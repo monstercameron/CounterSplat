@@ -484,3 +484,61 @@ fn physics_rebinds_cached_voxel_settings_and_observes_status_updates() {
         "the worker's ready status must release the hold"
     );
 }
+
+#[test]
+fn physics_skip_predicate_uses_each_body_snapshot_and_retains_id_skip() {
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let (first, second) = {
+        let mut w = world.borrow_mut();
+        let first = w.spawn();
+        let second = w.spawn();
+        for entity in [first, second] {
+            w.insert(entity, Transform::default()).unwrap();
+            w.insert(
+                entity,
+                PhysicsBody {
+                    gravity_enabled: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        }
+        w.set_dynamic_resource(
+            "test.ids",
+            json!({"first":first.to_string(), "second":second.to_string()}),
+        );
+        (first, second)
+    };
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    lua.execute(r#"
+        local ids = ecs.get_resource("test.ids")
+        local seen = 0
+        engine.physics.step(0.1, function(entity, body)
+            assert(body and body.enabled and body.gravity_enabled)
+            seen = seen + 1
+            return entity == ids.first
+        end)
+        assert(seen == 2)
+        assert(not pcall(function() engine.physics.step(0.1, {}) end))
+        assert(not pcall(function() engine.physics.step(0.1, function() error("skip failed") end) end))
+    "#).unwrap();
+    assert_eq!(
+        world.borrow().get::<Transform>(first).unwrap().position[1],
+        0.0
+    );
+    let second_y = world.borrow().get::<Transform>(second).unwrap().position[1];
+    assert!(second_y < 0.0);
+    lua.execute(
+        r#"
+        local ids = ecs.get_resource("test.ids")
+        engine.physics.step(0.1, ids.second)
+    "#,
+    )
+    .unwrap();
+    assert!(world.borrow().get::<Transform>(first).unwrap().position[1] < 0.0);
+    assert_eq!(
+        world.borrow().get::<Transform>(second).unwrap().position[1],
+        second_y
+    );
+}

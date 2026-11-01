@@ -186,3 +186,7 @@ Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-render --lib benchmark_retired_centre_preparation -- --ignored
 --nocapture` to compare CPU preparation of retired splat slots. GPU transfer
 and rendering time are excluded.
+
+Run `node scripts/benchmark_lua_physics_skip.mjs` to compare the player
+body's duplicate read with the per-body skip predicate. This fixture measures
+Lua/JavaScript transport and excludes Rust physics and rendering.

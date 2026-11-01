@@ -12,20 +12,25 @@ local function level_components(level)
     if not level then return nil, nil end
     return read_level(), read_state()
 end
+local player, level, state, stand_pending
+local function skip_while_collision_loads(entity, body)
+    if entity ~= player then return false end
+    local expects_ground = body and body.enabled and body.gravity_enabled and body.collision_enabled and
+        level and level.enabled and level.physics and state
+    return stand_pending or
+        (expects_ground and (state.status ~= "ready" or ecs.get_resource("player.spawn_probe_pending") == true))
+end
 ecs.system("physics.integrate", function(dt)
     -- Read only the bindings needed this tick; the scene can retarget either
     -- entity without copying its entire ID map across the scripting bridge.
-    local player = ecs.get_resource_field("scene.entities", "player")
+    player = ecs.get_resource_field("scene.entities", "player")
+    if player then assert(ecs.is_alive(player), "player entity is missing") end
     local level_entity = ecs.get_resource_field("scene.entities", "active_level")
-    local body = player and ecs.get(player, "PhysicsBody")
-    local level, state = level_components(level_entity)
-    local expects_ground = body and body.enabled and body.gravity_enabled and body.collision_enabled and
-        level and level.enabled and level.physics and state
-    local wait = ecs.get_resource("player.stand_probe_pending") == true or
-        (expects_ground and (state.status ~= "ready" or ecs.get_resource("player.spawn_probe_pending") == true))
+    level, state = level_components(level_entity)
+    stand_pending = ecs.get_resource("player.stand_probe_pending") == true
     -- A missing collider must not drop the player through an unloaded scan.
     -- Other entities and intentionally disabled collision keep normal gravity.
-    engine.physics.step(dt, wait and player or nil)
+    engine.physics.step(dt, skip_while_collision_loads)
 end)
 
 -- The worker reports resolved displacement; Lua defines how bodies respond.

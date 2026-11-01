@@ -137,8 +137,10 @@ transition support are documented in `docs/scenes.md`.
 ## Per-entity physics and exports
 
 `engine.physics.move(entity, delta)` sends an entity displacement through the host's collision owner when
-available; `engine.physics.step(dt, skip_entity)` integrates enabled bodies and can optionally skip one
-entity while its collision data loads. Use `engine.export(entity, name, spec)` to
+available; `engine.physics.step(dt, skip)` integrates enabled bodies. The optional
+skip can be an entity ID or a function `function(entity, body)` returning true
+to skip that body; treat the body snapshot as read-only. This lets a script
+apply per-entity policy without another ECS read. Use `engine.export(entity, name, spec)` to
 make a numeric or boolean ECS component field or resource field editable in the entity inspector. Numeric
 exports specify `min` and `max`. The same API works with the native and browser Lua runtimes; the host must
 supply physics integration. See [entity physics and Lua tuning](../../docs/entity-physics.md) for examples,

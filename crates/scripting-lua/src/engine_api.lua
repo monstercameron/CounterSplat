@@ -190,14 +190,17 @@ function engine.physics.move(entity, delta)
     move_position(entity, delta, name, ecs.get(entity, "PhysicsBody"))
 end
 
--- Run this once per fixed simulation tick. Bodies with disabled physics keep
--- their stored velocity; collisions and gravity can be switched independently.
-function engine.physics.step(dt, skip_entity)
+-- Run once per fixed tick. The optional skip value is an entity ID or a
+-- predicate receiving the entity and its read-only body snapshot. A predicate
+-- lets game scripts decide per body without fetching that component twice.
+function engine.physics.step(dt, skip)
     assert(finite_number(dt) and dt >= 0 and dt <= 0.25, "invalid physics tick")
-    assert(skip_entity == nil or type(skip_entity) == "string", "invalid skipped entity")
+    local skip_type = type(skip)
+    assert(skip == nil or skip_type == "string" or skip_type == "function", "invalid physics skip")
     for _, entity in ipairs(ecs.query({"PhysicsBody"})) do
         local body = ecs.get(entity, "PhysicsBody")
-        local name = entity ~= skip_entity and body and body.enabled and position_component(entity)
+        local skipped = skip_type == "function" and skip(entity, body) or entity == skip
+        local name = not skipped and body and body.enabled and position_component(entity)
         if name then
             if body.gravity_enabled then
                 body.velocity[2] = math.max(-200, body.velocity[2] - body.gravity * dt)
