@@ -212,3 +212,7 @@ Rust execution, GPU rendering, or frame rate.
 Run `node scripts/benchmark_lua_scalar_reads.mjs` to compare Lua request
 and response tables with scalar arguments and direct results for a camera read
 and a presence check. The in-memory fixture excludes Rust and GPU work.
+
+Run `node scripts/benchmark_lua_query.mjs` to compare the general Lua query
+encoder with the one-name query path. The in-memory fixture measures
+Lua/JavaScript transport and excludes Rust query execution and GPU work.

@@ -5,8 +5,8 @@
 const INSTRUCTION_LIMIT = 10_000_000;
 const HOOK_INTERVAL = 1_000;
 const BOOTSTRAP = `
-local call, call_flat, call_changed, call_strings = __ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings
-local type, pairs, ipairs = type, pairs, ipairs
+local call, call_flat, call_changed, call_strings, query_one = __ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings, __ecs_query_one
+local type, pairs, ipairs, next_key, raw_get, get_meta = type, pairs, ipairs, next, rawget, getmetatable
 local profile_now, profile_sample = __profile_now, __profile_sample
 local set_hook, raw_pcall, raw_xpcall, raise, select_value =
     debug.sethook, pcall, xpcall, error, select
@@ -46,7 +46,7 @@ local function bounded(fn, ...)
         raise(result, 0)
     end
 end
-__ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings, __profile_now, __profile_sample = nil, nil, nil, nil, nil, nil
+__ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings, __ecs_query_one, __profile_now, __profile_sample = nil, nil, nil, nil, nil, nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
     count.n = count.n + 1
@@ -107,7 +107,17 @@ function ecs.entities() return invoke_flat("entities", {}) end
 function ecs.hierarchy() return invoke_flat("hierarchy", {}) end
 function ecs.structure_revision() return invoke_flat("structure_revision", {}) end
 function ecs.components(id) return invoke_one_string("components", "id", id) end
-function ecs.query(components) return invoke("query", { components = components }) end
+function ecs.query(components)
+    -- Ordinary one-name queries are common in systems. Keep metatables,
+    -- extra keys, and all other shapes on the general validating path.
+    if type(components) == "table" and get_meta(components) == nil then
+        local component = raw_get(components, 1)
+        if type(component) == "string" and next_key(components) == 1 and next_key(components, 1) == nil then
+            return decode(query_one(component))
+        end
+    end
+    return invoke("query", { components = components })
+end
 function ecs.get(id, name) return invoke_two_strings("get", "id", id, "name", name) end
 function ecs.get_if_changed(id, name, revision)
     if type(id) == "string" and type(name) == "string" and
@@ -239,6 +249,10 @@ export class LuaScene {
         const request = {op, [key1]:value1};
         if (key2 != null) request[key2] = value2;
         const result = host.call(request, true);
+        return result.found ? encodeResult(result.value) : undefined;
+      });
+      vm.global.set('__ecs_query_one', component => {
+        const result = host.call({op:'query', components:[component]}, true);
         return result.found ? encodeResult(result.value) : undefined;
       });
       if (profile) {

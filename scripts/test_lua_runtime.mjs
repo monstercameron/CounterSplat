@@ -120,7 +120,7 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
-  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil)
+  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
@@ -263,6 +263,45 @@ assert.deepEqual(calls, [
   {op:'children', id:'entity'}, {op:'drain', name:'event'}, {op:'snapshot'},
 ]);
 scalar.close();
+
+// One-name query optimization preserves ordinary, explicitly marked, and
+// metatable-driven queries, while invalid shapes still reach validation.
+const queryCalls = [];
+const queryWorld = {ecs_operation(_layer, encoded) {
+  const op = JSON.parse(encoded);
+  queryCalls.push(op);
+  if (op.op !== 'query' || !Array.isArray(op.components)) throw new Error('invalid query');
+  return JSON.stringify({found:true, value:['entity']});
+}};
+const queryScene = await LuaScene.create(factory, queryWorld, 'gameplay', engineApi, []);
+queryScene.vm.doStringSync(`
+  assert(ecs.query({'PhysicsBody'})[1] == 'entity')
+  local marked = ecs.array(); marked[1] = 'PlayerCamera'
+  assert(ecs.query(marked)[1] == 'entity')
+  local proxy = setmetatable({'ignored'}, {
+    __pairs = function() return next, {'Transform'}, nil end
+  })
+  assert(ecs.query(proxy)[1] == 'entity')
+  assert(ecs.query({'PhysicsBody', 'Transform'})[1] == 'entity')
+  assert(ecs.query(ecs.array())[1] == 'entity')
+  assert(not pcall(function() ecs.query({[1]='PhysicsBody', extra='invalid'}) end))
+  local cycle = {}; cycle.self = cycle
+  assert(not pcall(function() ecs.query(cycle) end))
+  local saved_next, saved_rawget, saved_getmetatable = next, rawget, getmetatable
+  next = function() return 1 end
+  rawget = function() return 'PhysicsBody' end
+  getmetatable = function() return nil end
+  assert(not pcall(function() ecs.query(cycle) end))
+  next, rawget, getmetatable = saved_next, saved_rawget, saved_getmetatable
+`);
+assert.deepEqual(queryCalls.slice(0, 5), [
+  {op:'query', components:['PhysicsBody']},
+  {op:'query', components:['PlayerCamera']},
+  {op:'query', components:['Transform']},
+  {op:'query', components:['PhysicsBody','Transform']},
+  {op:'query', components:[]},
+]);
+queryScene.close();
 
 // Dispatching a channel may enqueue events for earlier, current, or later
 // channels. Only later channels are delivered during this pass.
