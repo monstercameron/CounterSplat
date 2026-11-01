@@ -1,0 +1,20 @@
+[package]
+name = "countersplat-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Layered, stereo-aware game audio for CounterSplat"
+
+[features]
+default = ["device"]
+# Kira uses CPAL for native output and Web Audio on wasm.
+device = ["kira/cpal"]
+
+[dependencies]
+kira = { version = "0.12.6", default-features = false, features = ["symphonia", "wav", "pcm", "ogg", "vorbis", "flac", "mp3"] }
+serde = { version = "1", features = ["derive"] }
+
+[[example]]
+name = "stereo_check"
+required-features = ["device"]

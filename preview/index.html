@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CounterSplat · WebGPU Canvas</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0b0e13; color: #e7edf4; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+    header, footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.4rem; }
+    header { border-bottom: 1px solid #27313d; } footer { color: #94a4b6; font-size: .8rem; border-top: 1px solid #27313d; }
+    h1 { font-size: 1rem; letter-spacing: .06em; margin: 0; }
+    .header-actions { display: flex; align-items: center; justify-content: flex-end; gap: .8rem; flex-wrap: wrap; }
+    @media (max-width: 620px) { header { padding: .75rem; } h1 { font-size: .8rem; } .header-actions { gap: .4rem; } }
+    .arrange { border: 1px solid #4b6c72; border-radius: 6px; background: #18313a; color: #d9eee9; font: inherit; font-size: .8rem; padding: .4rem .7rem; cursor: pointer; }
+    .arrange:hover, .arrange[aria-pressed="true"] { border-color: #e8bc77; color: #fff3dd; background: #5a432b; }
+    .arrange:focus-visible { outline: 2px solid #e8bc77; outline-offset: 2px; }
+    .status { color: #9ddfc6; font-size: .8rem; } .status::before { content: '●'; margin-right: .45rem; }
+    main { display: grid; place-items: center; padding: 1rem; overflow: hidden; }
+    canvas { display: block; width: min(100%, 1280px); max-height: calc(100vh - 9rem); aspect-ratio: 16 / 9; object-fit: contain; border: 1px solid #27313d; background: #050608; touch-action: none; }
+    canvas:focus-visible { outline: 2px solid #e8bc77; outline-offset: 3px; }
+    #message { color: #b8c6d5; text-align: center; max-width: 50rem; }
+    .canvas { display: grid; place-items: center; width: 100%; height: 100%; }
+    .canvas > * { grid-area: 1 / 1; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header><h1>COUNTERSPLAT <span style="color:#8292a3">/ CANVAS</span></h1><div class="header-actions"><button class="arrange" id="reset-layout" type="button" title="Restore this scene’s original UI positions" hidden>Reset positions</button><button class="arrange" id="arrange" type="button" aria-pressed="false" title="Move individual UI elements">Arrange UI</button><span class="status" id="status" aria-live="polite">Starting WebGPU</span></div></header>
+  <main><div class="canvas"><canvas id="canvas" tabindex="0" width="960" height="540" aria-label="Live CounterSplat WebGPU renderer"></canvas><p id="message">Loading the renderer…</p></div></main>
+  <footer><span id="metrics">Waiting for engine</span><span>WebGPU canvas · local preview</span></footer>
+  <script src="/pkg/wasmoon/index.js"></script>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

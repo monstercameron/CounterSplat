@@ -1,0 +1,11 @@
+[package]
+name = "countersplat-physics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Game-neutral physics and voxel collision helpers for CounterSplat"
+
+[dependencies]
+countersplat-assets.workspace = true
+rapier3d.workspace = true

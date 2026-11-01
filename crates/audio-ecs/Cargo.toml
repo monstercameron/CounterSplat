@@ -1,0 +1,12 @@
+[package]
+name = "countersplat-audio-ecs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ECS and scripting adapters for CounterSplat audio data"
+
+[dependencies]
+countersplat-audio = { workspace = true, default-features = false }
+countersplat-ecs.workspace = true
+serde_json.workspace = true

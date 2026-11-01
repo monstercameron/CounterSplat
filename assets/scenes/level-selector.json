@@ -1,0 +1,832 @@
+{
+  "version": 1,
+  "name": "Level selector",
+  "component_types": {
+    "UiElement": {
+      "storage": "native"
+    },
+    "LevelChoice": {
+      "storage": "dynamic"
+    },
+    "AssetLoader": {
+      "storage": "native"
+    }
+  },
+  "resources": {
+    "assets": {
+      "catalog": {
+        "kind": "level_catalog",
+        "uri": "/assets/levels/catalog.json",
+        "load": "preload"
+      },
+      "gameplay_scene": {
+        "kind": "scene",
+        "uri": "/assets/scenes/gameplay.json",
+        "load": "preload"
+      }
+    },
+    "selector": {
+      "item_template": {
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "width": 250,
+          "height": 38
+        },
+        "z": 3,
+        "style": {
+          "fill": [
+            25,
+            47,
+            55,
+            255
+          ],
+          "border": [
+            67,
+            104,
+            112,
+            210
+          ],
+          "text": [
+            229,
+            241,
+            239,
+            255
+          ],
+          "font_size": 14,
+          "rounding": 5
+        },
+        "widget": {
+          "type": "button",
+          "label": "Level"
+        }
+      },
+      "selected_style": {
+        "fill": [
+          43,
+          83,
+          80,
+          255
+        ],
+        "border": [
+          139,
+          213,
+          191,
+          255
+        ],
+        "text": [
+          250,
+          255,
+          251,
+          255
+        ]
+      },
+      "unselected_style": {
+        "fill": [
+          25,
+          47,
+          55,
+          255
+        ],
+        "border": [
+          67,
+          104,
+          112,
+          210
+        ],
+        "text": [
+          229,
+          241,
+          239,
+          255
+        ]
+      }
+    }
+  },
+  "entities": [
+    {
+      "id": "title",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 30,
+            "y": 18,
+            "width": 450,
+            "height": 36
+          },
+          "z": 4,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              229,
+              241,
+              239,
+              255
+            ],
+            "font_size": 28
+          },
+          "widget": {
+            "type": "text",
+            "text": "Choose a level",
+            "align": "left"
+          }
+        }
+      }
+    },
+    {
+      "id": "subtitle",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 31,
+            "y": 55,
+            "width": 520,
+            "height": 20
+          },
+          "z": 4,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              151,
+              185,
+              187,
+              255
+            ],
+            "font_size": 13
+          },
+          "widget": {
+            "type": "text",
+            "text": "Select a location, then launch the scene.",
+            "align": "left"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 28,
+            "y": 86,
+            "width": 800,
+            "height": 270
+          },
+          "z": 1,
+          "style": {
+            "fill": [
+              13,
+              30,
+              39,
+              220
+            ],
+            "border": [
+              67,
+              104,
+              112,
+              210
+            ],
+            "rounding": 8
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      }
+    },
+    {
+      "id": "page_info",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 30,
+            "y": 370,
+            "width": 200,
+            "height": 22
+          },
+          "z": 4,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              151,
+              185,
+              187,
+              255
+            ],
+            "font_size": 12
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      }
+    },
+    {
+      "id": "previous",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 510,
+            "y": 370,
+            "width": 90,
+            "height": 26
+          },
+          "z": 5,
+          "style": {
+            "fill": [
+              23,
+              46,
+              56,
+              255
+            ],
+            "border": [
+              67,
+              104,
+              112,
+              210
+            ],
+            "text": [
+              229,
+              241,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 6
+          },
+          "widget": {
+            "type": "button",
+            "label": "Previous"
+          }
+        }
+      }
+    },
+    {
+      "id": "next",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 610,
+            "y": 370,
+            "width": 90,
+            "height": 26
+          },
+          "z": 5,
+          "style": {
+            "fill": [
+              23,
+              46,
+              56,
+              255
+            ],
+            "border": [
+              67,
+              104,
+              112,
+              210
+            ],
+            "text": [
+              229,
+              241,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 6
+          },
+          "widget": {
+            "type": "button",
+            "label": "Next"
+          }
+        }
+      }
+    },
+    {
+      "id": "detail_panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 28,
+            "y": 410,
+            "width": 800,
+            "height": 60
+          },
+          "z": 1,
+          "style": {
+            "fill": [
+              28,
+              51,
+              57,
+              245
+            ],
+            "border": [
+              98,
+              155,
+              151,
+              220
+            ],
+            "rounding": 8
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      }
+    },
+    {
+      "id": "selected_name",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 7,
+            "width": 500,
+            "height": 24
+          },
+          "z": 4,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              229,
+              241,
+              239,
+              255
+            ],
+            "font_size": 17
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "detail_panel"
+    },
+    {
+      "id": "selected_info",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 32,
+            "width": 500,
+            "height": 18
+          },
+          "z": 4,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              151,
+              185,
+              187,
+              255
+            ],
+            "font_size": 12
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "detail_panel"
+    },
+    {
+      "id": "launch",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 600,
+            "y": 11,
+            "width": 170,
+            "height": 38
+          },
+          "z": 6,
+          "style": {
+            "fill": [
+              190,
+              137,
+              70,
+              255
+            ],
+            "border": [
+              235,
+              197,
+              132,
+              255
+            ],
+            "text": [
+              255,
+              252,
+              242,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 6
+          },
+          "widget": {
+            "type": "button",
+            "label": "Launch level"
+          }
+        }
+      },
+      "parent": "detail_panel"
+    },
+    {
+      "id": "notice",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 30,
+            "y": 470,
+            "width": 700,
+            "height": 18
+          },
+          "z": 7,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              255,
+              184,
+              147,
+              255
+            ],
+            "font_size": 12
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      }
+    },
+    {
+      "id": "loader_overlay",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1,
+            "height": 1
+          },
+          "z": 1000,
+          "widget": {
+            "type": "rectangle"
+          },
+          "draggable": false,
+          "visible": false,
+          "style": {
+            "fill": [
+              3,
+              8,
+              14,
+              238
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "rounding": 0
+          }
+        },
+        "AssetLoader": {}
+      }
+    },
+    {
+      "id": "loader_card",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 480,
+            "height": 220
+          },
+          "z": 1001,
+          "widget": {
+            "type": "panel"
+          },
+          "draggable": false,
+          "anchor": "center",
+          "style": {
+            "fill": [
+              16,
+              32,
+              40,
+              255
+            ],
+            "border": [
+              102,
+              152,
+              151,
+              220
+            ],
+            "rounding": 10
+          }
+        }
+      },
+      "parent": "loader_overlay"
+    },
+    {
+      "id": "loader_title",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 24,
+            "y": 18,
+            "width": 430,
+            "height": 35
+          },
+          "z": 1002,
+          "widget": {
+            "type": "text",
+            "text": "Loading level",
+            "align": "left"
+          },
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              228,
+              241,
+              237,
+              255
+            ],
+            "font_size": 24
+          }
+        }
+      },
+      "parent": "loader_card"
+    },
+    {
+      "id": "loader_phase",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 24,
+            "y": 63,
+            "width": 430,
+            "height": 23
+          },
+          "z": 1002,
+          "widget": {
+            "type": "text",
+            "text": "Preparing assets…",
+            "align": "left"
+          },
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              165,
+              195,
+              193,
+              255
+            ],
+            "font_size": 14
+          }
+        }
+      },
+      "parent": "loader_card"
+    },
+    {
+      "id": "loader_progress",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 24,
+            "y": 101,
+            "width": 430,
+            "height": 20
+          },
+          "z": 1002,
+          "widget": {
+            "type": "progress",
+            "value": 0.0
+          },
+          "draggable": false,
+          "style": {
+            "fill": [
+              8,
+              20,
+              28,
+              255
+            ],
+            "border": [
+              69,
+              105,
+              109,
+              255
+            ],
+            "accent": [
+              232,
+              188,
+              119,
+              255
+            ],
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "loader_card"
+    },
+    {
+      "id": "loader_count",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 24,
+            "y": 130,
+            "width": 430,
+            "height": 20
+          },
+          "z": 1002,
+          "widget": {
+            "type": "text",
+            "text": "0%",
+            "align": "left"
+          },
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              165,
+              195,
+              193,
+              255
+            ],
+            "font_size": 12
+          }
+        }
+      },
+      "parent": "loader_card"
+    },
+    {
+      "id": "loader_cancel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 24,
+            "y": 167,
+            "width": 150,
+            "height": 34
+          },
+          "z": 1002,
+          "widget": {
+            "type": "button",
+            "label": "Cancel"
+          },
+          "draggable": false,
+          "style": {
+            "fill": [
+              29,
+              56,
+              62,
+              255
+            ],
+            "border": [
+              100,
+              150,
+              151,
+              220
+            ],
+            "text": [
+              229,
+              242,
+              237,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 6
+          }
+        }
+      },
+      "parent": "loader_card"
+    }
+  ]
+}

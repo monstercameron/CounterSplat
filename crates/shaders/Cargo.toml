@@ -1,0 +1,14 @@
+[package]
+name = "countersplat-shaders"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Gaussian-splat WGSL composition and source catalogue"
+build = "build.rs"
+
+[build-dependencies]
+serde_json.workspace = true
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in", "wgsl-out"] }

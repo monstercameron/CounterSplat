@@ -1,0 +1,299 @@
+{
+  "version": 1,
+  "levels": [
+    {
+      "id": "58d333ae",
+      "name": "The Barn",
+      "creator": "dongiku",
+      "source_url": "https://superspl.at/scene/58d333ae",
+      "license": null,
+      "format": "single_sog",
+      "manifest": "assets/levels/58d333ae/meta.json",
+      "lod_levels": null,
+      "lod_counts": null,
+      "collision": true,
+      "verified_files": 10,
+      "verified_bytes": 30784205,
+      "origin": "requested SuperSplat scenes",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "9f0f903a",
+      "name": "La Cité - Angers",
+      "creator": "jeromebg",
+      "source_url": "https://superspl.at/scene/9f0f903a",
+      "license": null,
+      "format": "streamed_sog",
+      "manifest": "assets/levels/9f0f903a/lod-meta.json",
+      "lod_levels": 8,
+      "lod_counts": [
+        9962915,
+        4981458,
+        2490729,
+        1245365,
+        622683,
+        311342,
+        155671,
+        77836
+      ],
+      "collision": true,
+      "verified_files": 465,
+      "verified_bytes": 290882592,
+      "origin": "requested SuperSplat scenes",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "947dbaec",
+      "name": "Falls",
+      "creator": "vice",
+      "source_url": "https://superspl.at/scene/947dbaec",
+      "license": null,
+      "format": "streamed_sog",
+      "manifest": "assets/levels/947dbaec/lod-meta.json",
+      "lod_levels": 4,
+      "lod_counts": [
+        4998469,
+        2499235,
+        1249618,
+        624809
+      ],
+      "collision": true,
+      "verified_files": 155,
+      "verified_bytes": 194210281,
+      "origin": "requested SuperSplat scenes",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "b8262a29",
+      "name": "260204_서울시 용산구 우사단로4다길 14(14, Usadan-ro 4da-gil, Yongsan-gu)",
+      "creator": "mias",
+      "source_url": "https://superspl.at/scene/b8262a29",
+      "license": null,
+      "format": "streamed_sog",
+      "manifest": "assets/levels/b8262a29/lod-meta.json",
+      "lod_levels": 4,
+      "lod_counts": [
+        7417665,
+        3708833,
+        1854417,
+        927209
+      ],
+      "collision": false,
+      "verified_files": 233,
+      "verified_bytes": 268842331,
+      "origin": "requested SuperSplat scenes",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "ff1a8800",
+      "name": "Ananuri Fortress",
+      "creator": "maorio",
+      "source_url": "https://superspl.at/scene/ff1a8800",
+      "license": null,
+      "format": "streamed_sog",
+      "manifest": "assets/levels/ff1a8800/lod-meta.json",
+      "lod_levels": 4,
+      "lod_counts": [
+        4999686,
+        2499843,
+        1249922,
+        624961
+      ],
+      "collision": true,
+      "verified_files": 163,
+      "verified_bytes": 164993809,
+      "origin": "requested SuperSplat scenes",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "9649b9e2",
+      "name": "서울특별시 은평구 불광동 264-14(264-14, Bulgwang-dong, Eunpyeong-gu, Seoul)",
+      "creator": "mias",
+      "source_url": "https://superspl.at/scene/9649b9e2",
+      "license": null,
+      "format": "streamed_sog",
+      "manifest": "assets/levels/9649b9e2/lod-meta.json",
+      "lod_levels": 4,
+      "lod_counts": [
+        5960267,
+        2980134,
+        1490067,
+        745034
+      ],
+      "collision": false,
+      "verified_files": 185,
+      "verified_bytes": 220336859,
+      "origin": "requested SuperSplat scenes",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "541bac0c",
+      "name": "Botanical Garden Greenhouses - Kiel",
+      "creator": "simonbethke",
+      "source_url": "https://superspl.at/scene/541bac0c",
+      "license": "CC BY 4.0",
+      "format": "streamed_sog",
+      "manifest": "assets/levels/541bac0c/lod-meta.json",
+      "lod_levels": 3,
+      "lod_counts": [
+        123569487,
+        19993241,
+        999395
+      ],
+      "collision": true,
+      "verified_files": 1859,
+      "verified_bytes": 2271467723,
+      "origin": "requested SuperSplat scenes",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "fb3b5ed5",
+      "name": "Nelson Ghost Town",
+      "creator": "tosolini",
+      "source_url": "https://superspl.at/scene/fb3b5ed5",
+      "license": "CC BY 4.0",
+      "format": "streamed_sog",
+      "manifest": "assets/levels/fb3b5ed5/lod-meta.json",
+      "lod_levels": 6,
+      "lod_counts": [
+        8759558,
+        4359488,
+        2171895,
+        1082203,
+        538478,
+        267440
+      ],
+      "collision": true,
+      "verified_files": 219,
+      "verified_bytes": 194510964,
+      "origin": "Neural-Sight",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "b0ff3cb9",
+      "name": "El Romeral",
+      "creator": "getarq",
+      "source_url": "https://superspl.at/scene/b0ff3cb9",
+      "license": null,
+      "format": "streamed_sog",
+      "manifest": "assets/levels/b0ff3cb9/lod-meta.json",
+      "lod_levels": 6,
+      "lod_counts": [
+        11585781,
+        5785009,
+        2887679,
+        1440430,
+        718123,
+        358073
+      ],
+      "collision": true,
+      "verified_files": 261,
+      "verified_bytes": 268805197,
+      "origin": "Neural-Sight",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "9cbaba42",
+      "name": "Fort Clatsop",
+      "creator": "virtualworldtours",
+      "source_url": "https://superspl.at/scene/9cbaba42",
+      "license": null,
+      "format": "streamed_sog",
+      "manifest": "assets/levels/9cbaba42/lod-meta.json",
+      "lod_levels": 6,
+      "lod_counts": [
+        15712062,
+        7847236,
+        3918980,
+        1956321,
+        976196,
+        487095
+      ],
+      "collision": true,
+      "verified_files": 345,
+      "verified_bytes": 393062057,
+      "origin": "Neural-Sight",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    },
+    {
+      "id": "fd3083e4",
+      "name": "San Juan",
+      "creator": "AJ Creek / virtualworldtours",
+      "source_url": "https://superspl.at/scene/fd3083e4",
+      "license": null,
+      "format": "streamed_sog",
+      "manifest": "assets/levels/fd3083e4/lod-meta.json",
+      "lod_levels": 8,
+      "lod_counts": [
+        63888251,
+        31840900,
+        15848949,
+        7877251,
+        3912884,
+        1943891,
+        966854,
+        486711
+      ],
+      "collision": true,
+      "verified_files": 1281,
+      "verified_bytes": 1527653016,
+      "origin": "Neural-Sight",
+      "assets": {
+        "manifest": "preload",
+        "viewer_settings": "preload",
+        "chunk_metadata": "preload",
+        "splat_chunks": "streamable"
+      }
+    }
+  ]
+}

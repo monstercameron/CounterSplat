@@ -1,0 +1,23 @@
+[package]
+name = "countersplat-threaded-demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "End-to-end native ECS, Lua, and physics worker example"
+
+[dependencies]
+countersplat-core.workspace = true
+countersplat-ecs = { path = "../../crates/ecs" }
+countersplat-scripting-lua = { path = "../../crates/scripting-lua" }
+countersplat-runtime = { path = "../../crates/runtime" }
+countersplat-physics = { path = "../../crates/physics" }
+serde_json.workspace = true
+
+[dev-dependencies]
+countersplat-audio.workspace = true
+countersplat-audio-ecs.workspace = true
+countersplat-scene.workspace = true
+countersplat-scene-ecs.workspace = true
+countersplat-ui.workspace = true
+countersplat-ui-ecs.workspace = true

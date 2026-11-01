@@ -1,0 +1,153 @@
+// Browser Lua 5.4 host. Scripts use the same ECS operation names and scene event API as native Lua.
+// The VM runs only on this browser thread; the ECS world remains owned by the Rust host.
+const BOOTSTRAP = `
+local call = __ecs_call
+__ecs_call = nil
+local arrays = setmetatable({}, { __mode = "k" })
+local function encode(value, seen, depth, count)
+    count.n = count.n + 1
+    assert(depth <= 128 and count.n <= 100000, "ECS value is too large or deeply nested")
+    if type(value) ~= "table" then return value end
+    assert(not seen[value], "ECS values must be acyclic")
+    seen[value] = true
+    local result = {}
+    if arrays[value] then result.__countersplat_array = true end
+    for key, item in pairs(value) do result[key] = encode(item, seen, depth + 1, count) end
+    seen[value] = nil
+    return result
+end
+local function decode(value)
+    if type(value) ~= "table" then return value end
+    local result = {}
+    if value.kind == "array" then
+        arrays[result] = true
+        for i, item in ipairs(value.entries) do result[i] = decode(item) end
+    elseif value.kind == "object" then
+        for _, entry in ipairs(value.entries) do result[entry.key] = decode(entry.value) end
+    else
+        error("invalid ECS bridge value")
+    end
+    return result
+end
+local function invoke(op, args)
+    args = args or {}
+    args.op = op
+    local result = call(encode(args, {}, 0, {n = 0}))
+    if result.found then return decode(result.value) end
+end
+ecs = { null = null }
+function ecs.array() local result = {}; arrays[result] = true; return result end
+function ecs.spawn() return invoke("spawn") end
+function ecs.despawn(id, recursive) return invoke("despawn", { id = id, recursive = recursive or false }) end
+function ecs.is_alive(id) return invoke("is_alive", { id = id }) end
+function ecs.entities() return invoke("entities") end
+function ecs.components(id) return invoke("components", { id = id }) end
+function ecs.query(components) return invoke("query", { components = components }) end
+function ecs.get(id, name) return invoke("get", { id = id, name = name }) end
+function ecs.has(id, name) return invoke("has", { id = id, name = name }) end
+function ecs.set(id, name, value) invoke("set", { id = id, name = name, value = value }) end
+function ecs.remove(id, name) return invoke("remove", { id = id, name = name }) end
+function ecs.get_resource(name) return invoke("get_resource", { name = name }) end
+function ecs.set_resource(name, value) invoke("set_resource", { name = name, value = value }) end
+function ecs.remove_resource(name) return invoke("remove_resource", { name = name }) end
+function ecs.set_parent(child, parent) invoke("set_parent", { child = child, parent = parent }) end
+function ecs.parent(id) return invoke("parent", { id = id }) end
+function ecs.children(id) return invoke("children", { id = id }) end
+function ecs.emit(name, value) invoke("emit", { name = name, value = value }) end
+function ecs.drain(name) return invoke("drain", { name = name }) end
+function ecs.snapshot() return invoke("snapshot") end
+local systems, order, handlers = {}, {}, {}
+function ecs.system(name, callback)
+    assert(type(name) == "string" and #name > 0 and type(callback) == "function", "invalid system")
+    if not systems[name] then order[#order + 1] = name end
+    systems[name] = callback
+end
+function ecs.remove_system(name)
+    systems[name] = nil
+    for i = #order, 1, -1 do if order[i] == name then table.remove(order, i) end end
+end
+function ecs.on(name, callback)
+    assert(type(name) == "string" and #name > 0 and type(callback) == "function", "invalid handler")
+    handlers[name] = handlers[name] or {}
+    table.insert(handlers[name], callback)
+end
+function ecs.off(name) handlers[name] = nil end
+function __run_systems(dt)
+    local snapshot = { table.unpack(order) }
+    for _, name in ipairs(snapshot) do if systems[name] then systems[name](dt) end end
+end
+function __dispatch(name, payload)
+    local snapshot = { table.unpack(handlers[name] or {}) }
+    for _, callback in ipairs(snapshot) do callback(payload) end
+end
+-- Match the native host's restricted libraries and filesystem policy.
+io = nil; os = nil; package = nil; debug = nil; coroutine = nil
+require = nil; dofile = nil; loadfile = nil; Promise = nil
+`;
+
+// Convert the JSON-shaped values crossing the bridge and reject cyclic or non-finite data.
+function normalize(value, depth = 0, seen = new Set(), count = {value: 0}) {
+  if (++count.value > 100000 || depth > 128) throw new Error('ECS value is too large or deeply nested');
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('ECS values require finite numbers');
+    return value;
+  }
+  if (typeof value !== 'object' || seen.has(value)) throw new Error('ECS values must be acyclic JSON');
+  seen.add(value);
+  let result;
+  if (Array.isArray(value)) result = value.map(v => normalize(v, depth + 1, seen, count));
+  else if (value.__countersplat_array === true) {
+    const keys = Object.keys(value).filter(key => key !== '__countersplat_array');
+    if (keys.some(key => !/^[1-9][0-9]*$/.test(key) || Number(key) > keys.length))
+      throw new Error('ECS array must contain sequential entries');
+    result = Array.from({length: keys.length}, (_, i) => normalize(value[i + 1], depth + 1, seen, count));
+  } else {
+    result = Object.create(null);
+    for (const [key, entry] of Object.entries(value)) result[key] = normalize(entry, depth + 1, seen, count);
+  }
+  seen.delete(value);
+  return result;
+}
+
+// Preserve JSON arrays (including empty ones) separately from objects across Wasmoon's table bridge.
+function encodeResult(value) {
+  if (Array.isArray(value)) return {kind: 'array', entries: value.map(encodeResult)};
+  if (value !== null && typeof value === 'object') return {
+    kind: 'object', entries: Object.entries(value).map(([key, entry]) => ({key, value: encodeResult(entry)})),
+  };
+  return value;
+}
+
+export class LuaScene {
+  static async create(factory, target, layer, engineApi, scripts) {
+    const vm = await factory.createEngine({openStandardLibs: true, enableProxy: false,
+      injectObjects: true, traceAllocations: true, functionTimeout: 50});
+    try {
+      vm.global.setMemoryMax(32 * 1024 * 1024);
+      const host = new LuaScene(vm, target, layer);
+      vm.global.set('__ecs_call', request => { const result = host.call(request); return {found: result.found, value: encodeResult(result.value)}; });
+      vm.global.setTimeout(Date.now() + 250);
+      try {
+        vm.doStringSync(BOOTSTRAP);
+        vm.doStringSync(engineApi);
+        for (const source of scripts) vm.doStringSync(source);
+      } finally { vm.global.setTimeout(undefined); }
+      host.runSystems = vm.global.get('__run_systems');
+      host.dispatchEvent = vm.global.get('__dispatch');
+      return host;
+    } catch (error) { vm.global.close(); throw error; }
+  }
+  constructor(vm, target, layer) { this.vm = vm; this.target = target; this.layer = layer; }
+  call(request) {
+    const op = normalize(request);
+    // An empty Lua table is ambiguous; a query explicitly expects a sequence.
+    if (op.op === 'query' && !Array.isArray(op.components) && Object.keys(op.components || {}).length === 0) op.components = [];
+    return JSON.parse(this.target.ecs_operation(this.layer, JSON.stringify(op)));
+  }
+  emit(name, value) { this.call({op: 'emit', name, value}); }
+  drain(name) { return this.call({op: 'drain', name}).value; }
+  run(dt) { this.runSystems(dt); }
+  dispatch(name, payload) { this.dispatchEvent(name, payload); }
+  close() { if (this.vm) { this.vm.global.close(); this.vm = null; } }
+}

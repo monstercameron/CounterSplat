@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/audio",
+    "crates/audio-ecs",
+    "crates/audio-runtime",
+    "crates/scene",
+    "crates/scene-ecs",
+    "crates/ui",
+    "crates/ui-ecs",
+    "crates/ui-wgpu",
+    "crates/ecs",
+    "crates/scripting-lua",
+    "crates/runtime",
+    "crates/assets",
+    "crates/shaders",
+    "crates/render",
+    "crates/physics",
+    "apps/viewer",
+    "apps/web",
+    "apps/threaded-demo",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 AND MIT"
+rust-version = "1.96"
+
+[workspace.dependencies]
+countersplat-core = { path = "crates/core" }
+countersplat-audio = { path = "crates/audio", default-features = false }
+countersplat-audio-ecs = { path = "crates/audio-ecs" }
+countersplat-audio-runtime = { path = "crates/audio-runtime", default-features = false }
+countersplat-scene = { path = "crates/scene" }
+countersplat-scene-ecs = { path = "crates/scene-ecs" }
+countersplat-ui = { path = "crates/ui" }
+countersplat-ui-ecs = { path = "crates/ui-ecs" }
+countersplat-ui-wgpu = { path = "crates/ui-wgpu" }
+countersplat-ecs = { path = "crates/ecs" }
+countersplat-scripting-lua = { path = "crates/scripting-lua" }
+countersplat-runtime = { path = "crates/runtime" }
+countersplat-assets = { path = "crates/assets" }
+countersplat-shaders = { path = "crates/shaders" }
+countersplat-render = { path = "crates/render" }
+countersplat-physics = { path = "crates/physics" }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["webp", "png", "hdr"] }
+zip = { version = "2", default-features = false }
+wgpu = "30"
+pollster = "0.4"
+rapier3d = "0.36.1"

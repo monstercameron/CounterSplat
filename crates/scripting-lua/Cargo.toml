@@ -1,0 +1,12 @@
+[package]
+name = "countersplat-scripting-lua"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 AND MIT"
+rust-version = "1.96"
+description = "Thread-owned Lua scripting host for CounterSplat"
+
+[dependencies]
+countersplat-ecs = { path = "../ecs" }
+mlua = { version = "0.11.6", features = ["lua54", "vendored", "serialize"] }
+serde_json = "1"

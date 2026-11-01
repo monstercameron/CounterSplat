@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import {loadPolicy, levelPolicies, planScripts, LoadingProgress} from '../preview/asset_loader.js';
+assert.equal(loadPolicy(), 'preload');
+assert.equal(levelPolicies().splat_chunks, 'streamable');
+assert.equal(levelPolicies({splat_chunks:'preload'}).splat_chunks, 'preload');
+assert.throws(() => levelPolicies({chunk_metadata:'streamable'}));
+assert.throws(() => loadPolicy('unknown'));
+const base = new URL('http://localhost/assets/scenes/gameplay.json');
+const scene = {resources:{scripts:{main:{language:'lua',uri:'../scripts/main.lua',load:'preload',autoload:true},
+  optional:{language:'lua',uri:'../scripts/optional.lua',load:'streamable'}}}};
+assert.deepEqual(planScripts(scene, base, base.origin).map(s => s.id), ['main']);
+assert.throws(() => planScripts({resources:{scripts:{bad:{language:'lua',uri:'x',load:'streamable',autoload:true}}}}, base, base.origin));
+const reports = [];
+const tracker = new LoadingProgress((...args) => reports.push(args));
+tracker.update('Metadata',0.1,0.5,1,2);
+tracker.update('Metadata',0.1,0.5,2,2);
+tracker.update('Cached',0,0.1,1,1);
+assert.ok(Math.abs(reports[0][1] - 0.3) < 1e-9);
+assert.deepEqual(reports.slice(1).map(report => report[1]), [0.5, 0.5]);
+assert.throws(() => tracker.update('Bad',0,1,2,1));
+console.log('Asset loading policies and progress tests passed.');

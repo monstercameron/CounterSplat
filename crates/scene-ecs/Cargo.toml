@@ -1,0 +1,12 @@
+[package]
+name = "countersplat-scene-ecs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ECS adapters for CounterSplat scene components"
+
+[dependencies]
+countersplat-ecs.workspace = true
+countersplat-scene.workspace = true
+serde_json.workspace = true

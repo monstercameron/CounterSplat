@@ -1,0 +1,11 @@
+[package]
+name = "countersplat-scene"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Renderer-independent scene components for CounterSplat"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true

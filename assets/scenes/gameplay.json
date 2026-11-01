@@ -1,0 +1,1790 @@
+{
+  "version": 1,
+  "name": "CounterSplat preview",
+  "component_types": {
+    "Skybox": {
+      "storage": "native"
+    },
+    "UiElement": {
+      "storage": "native"
+    },
+    "FrameCounter": {
+      "storage": "native"
+    },
+    "PlayerCamera": {
+      "storage": "native"
+    },
+    "PlayerControls": {
+      "storage": "native"
+    }
+  },
+  "resources": {
+    "assets": {
+      "level": {
+        "kind": "sog_level",
+        "uri": "/level/",
+        "load": "streamable"
+      },
+      "example-sky": {
+        "kind": "radiance_hdr",
+        "uri": "../images/environments/kloppenheim_06_puresky_1k.hdr",
+        "load": "preload"
+      },
+      "pause_menu": {
+        "kind": "scene",
+        "uri": "menu.json",
+        "load": "preload"
+      },
+      "level_selector": {
+        "kind": "scene",
+        "uri": "level-selector.json",
+        "load": "preload"
+      }
+    },
+    "scripts": {
+      "rotate-sky": {
+        "language": "lua",
+        "uri": "../scripts/rotate_sky.lua",
+        "autoload": false,
+        "load": "streamable"
+      },
+      "gameplay-navigation": {
+        "language": "lua",
+        "uri": "../scripts/gameplay_navigation.lua",
+        "autoload": false,
+        "load": "preload"
+      },
+      "player-controls": {
+        "language": "lua",
+        "uri": "../scripts/player_controls.lua",
+        "autoload": false,
+        "load": "preload"
+      }
+    },
+    "preview": {
+      "level_asset": "level",
+      "skybox_entity": "skybox",
+      "capacity": 300000,
+      "rotate_z_180": true,
+      "ui": {
+        "animate": "animate",
+        "sway": "sway",
+        "reset": "reset",
+        "limit_enabled": "limit_enabled",
+        "frame_limit": "frame_limit",
+        "sky_visible": "sky_visible",
+        "sky_exposure": "sky_exposure",
+        "sky_rotation": "sky_rotation",
+        "counter": "counter",
+        "graph": "graph",
+        "graph_scale": "graph_scale",
+        "back_to_levels": "back_to_levels"
+      },
+      "browser_scripts": [
+        "gameplay-navigation",
+        "player-controls"
+      ],
+      "player_spawn": "level"
+    }
+  },
+  "entities": [
+    {
+      "id": "skybox",
+      "layer": "scene",
+      "components": {
+        "Skybox": {
+          "asset": "example-sky",
+          "enabled": true,
+          "priority": 0,
+          "exposure": 1.0,
+          "rotation_degrees": 0.0
+        }
+      }
+    },
+    {
+      "id": "scene_panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 323.0,
+            "width": 274.0,
+            "x": 20.0,
+            "y": 20.0
+          },
+          "z": 10,
+          "collapsible": {
+            "title": "Scene view",
+            "collapsed": false,
+            "header_height": 36.0
+          },
+          "style": {
+            "border": [
+              116,
+              157,
+              161,
+              180
+            ],
+            "fill": [
+              17,
+              37,
+              51,
+              235
+            ],
+            "rounding": 7.0
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      }
+    },
+    {
+      "id": "camera_motion_label",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 20.0,
+            "width": 235.0,
+            "x": 18.0,
+            "y": 9.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 12.0,
+            "rounding": 7.0,
+            "text": [
+              169,
+              196,
+              194,
+              255
+            ]
+          },
+          "widget": {
+            "align": "left",
+            "text": "Camera motion",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "animate",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 26.0,
+            "width": 238.0,
+            "x": 17.0,
+            "y": 38.0
+          },
+          "z": 12,
+          "widget": {
+            "checked": false,
+            "label": "Animate camera",
+            "type": "checkbox"
+          }
+        }
+      }
+    },
+    {
+      "id": "sway",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 24.0,
+            "width": 238.0,
+            "x": 17.0,
+            "y": 73.0
+          },
+          "z": 12,
+          "widget": {
+            "label": "Sway",
+            "max": 0.1599999964237213,
+            "min": 0.0,
+            "type": "slider",
+            "value": 0.07999999821186066
+          }
+        }
+      }
+    },
+    {
+      "id": "reset",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 31.0,
+            "width": 116.0,
+            "x": 17.0,
+            "y": 114.0
+          },
+          "z": 12,
+          "style": {
+            "border": [
+              232,
+              188,
+              119,
+              200
+            ],
+            "fill": [
+              112,
+              77,
+              48,
+              255
+            ],
+            "font_size": 14.0,
+            "rounding": 7.0,
+            "text": [
+              255,
+              249,
+              235,
+              255
+            ]
+          },
+          "widget": {
+            "label": "Reset view",
+            "type": "button"
+          }
+        }
+      }
+    },
+    {
+      "id": "pacing_divider",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 1.0,
+            "width": 238.0,
+            "x": 17.0,
+            "y": 159.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              99,
+              139,
+              145,
+              140
+            ],
+            "font_size": 12.0,
+            "rounding": 7.0,
+            "text": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "widget": {
+            "end": [
+              238.0,
+              0.0
+            ],
+            "thickness": 1.0,
+            "type": "line"
+          }
+        }
+      }
+    },
+    {
+      "id": "pacing_title",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 21.0,
+            "width": 238.0,
+            "x": 17.0,
+            "y": 165.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 14.0,
+            "rounding": 7.0,
+            "text": [
+              246,
+              248,
+              242,
+              255
+            ]
+          },
+          "widget": {
+            "align": "left",
+            "text": "Frame pacing",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "vsync_browser_label",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 17.0,
+            "width": 238.0,
+            "x": 17.0,
+            "y": 188.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 11.0,
+            "rounding": 7.0,
+            "text": [
+              169,
+              196,
+              194,
+              255
+            ]
+          },
+          "widget": {
+            "align": "left",
+            "text": "VSync: browser controlled",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "limit_enabled",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 22.0,
+            "width": 238.0,
+            "x": 17.0,
+            "y": 210.0
+          },
+          "z": 12,
+          "widget": {
+            "checked": false,
+            "label": "Limit FPS",
+            "type": "checkbox"
+          }
+        }
+      }
+    },
+    {
+      "id": "frame_limit",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 22.0,
+            "width": 238.0,
+            "x": 17.0,
+            "y": 239.0
+          },
+          "z": 12,
+          "widget": {
+            "label": "FPS cap",
+            "max": 240.0,
+            "min": 15.0,
+            "type": "slider",
+            "value": 60.0
+          }
+        }
+      }
+    },
+    {
+      "id": "vsync_native_label",
+      "layer": "ui",
+      "parent": "scene_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 15.0,
+            "width": 238.0,
+            "x": 17.0,
+            "y": 266.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 10.0,
+            "rounding": 7.0,
+            "text": [
+              169,
+              196,
+              194,
+              255
+            ]
+          },
+          "widget": {
+            "align": "left",
+            "text": "VSync off: native window",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "stats_panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 192.0,
+            "width": 236.0,
+            "x": 20.0,
+            "y": 20.0
+          },
+          "anchor": "top_right",
+          "z": 10,
+          "collapsible": {
+            "title": "Performance",
+            "collapsed": false,
+            "header_height": 32.0
+          },
+          "style": {
+            "border": [
+              116,
+              157,
+              161,
+              180
+            ],
+            "fill": [
+              17,
+              37,
+              51,
+              235
+            ],
+            "rounding": 7.0
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      }
+    },
+    {
+      "id": "counter",
+      "layer": "ui",
+      "parent": "stats_panel",
+      "components": {
+        "FrameCounter": {},
+        "UiElement": {
+          "rect": {
+            "height": 23.0,
+            "width": 210.0,
+            "x": 13.0,
+            "y": 12.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font": "monospace",
+            "font_size": 14.0,
+            "rounding": 7.0,
+            "text": [
+              246,
+              248,
+              242,
+              255
+            ]
+          },
+          "widget": {
+            "align": "left",
+            "text": "",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "graph_title",
+      "layer": "ui",
+      "parent": "stats_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 16.0,
+            "width": 210.0,
+            "x": 13.0,
+            "y": 39.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 10.0,
+            "rounding": 7.0,
+            "text": [
+              169,
+              196,
+              194,
+              255
+            ]
+          },
+          "widget": {
+            "align": "left",
+            "text": "FRAME INTERVAL / 250 ms PEAK",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "graph",
+      "layer": "ui",
+      "parent": "stats_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 66.0,
+            "width": 210.0,
+            "x": 13.0,
+            "y": 60.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              99,
+              139,
+              145,
+              80
+            ],
+            "fill": [
+              9,
+              23,
+              32,
+              190
+            ],
+            "font_size": 10.0,
+            "rounding": 7.0,
+            "text": [
+              0,
+              0,
+              0,
+              0
+            ]
+          },
+          "widget": {
+            "points": [],
+            "type": "line_graph",
+            "x_max": 60.0,
+            "x_min": 0.0,
+            "y_max": 50.0,
+            "y_min": 0.0
+          }
+        }
+      }
+    },
+    {
+      "id": "graph_start_label",
+      "layer": "ui",
+      "parent": "stats_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 16.0,
+            "width": 48.0,
+            "x": 13.0,
+            "y": 131.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 10.0,
+            "rounding": 7.0,
+            "text": [
+              169,
+              196,
+              194,
+              255
+            ]
+          },
+          "widget": {
+            "align": "left",
+            "text": "-60s",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "graph_scale",
+      "layer": "ui",
+      "parent": "stats_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 16.0,
+            "width": 110.0,
+            "x": 62.0,
+            "y": 131.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 10.0,
+            "rounding": 7.0,
+            "text": [
+              169,
+              196,
+              194,
+              255
+            ]
+          },
+          "widget": {
+            "align": "center",
+            "text": "0-50 ms",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "graph_now_label",
+      "layer": "ui",
+      "parent": "stats_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 16.0,
+            "width": 49.0,
+            "x": 174.0,
+            "y": 131.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 10.0,
+            "rounding": 7.0,
+            "text": [
+              169,
+              196,
+              194,
+              255
+            ]
+          },
+          "widget": {
+            "align": "right",
+            "text": "NOW",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "sky_panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 154.0,
+            "width": 236.0,
+            "x": 20.0,
+            "y": 222.0
+          },
+          "anchor": "top_right",
+          "z": 10,
+          "collapsible": {
+            "title": "HDR sky",
+            "collapsed": false,
+            "header_height": 32.0
+          },
+          "style": {
+            "border": [
+              116,
+              157,
+              161,
+              180
+            ],
+            "fill": [
+              17,
+              37,
+              51,
+              235
+            ],
+            "rounding": 7.0
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      }
+    },
+    {
+      "id": "sky_visible",
+      "layer": "ui",
+      "parent": "sky_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 22.0,
+            "width": 210.0,
+            "x": 13.0,
+            "y": 5.0
+          },
+          "z": 12,
+          "widget": {
+            "checked": true,
+            "label": "Show sky",
+            "type": "checkbox"
+          }
+        }
+      }
+    },
+    {
+      "id": "sky_exposure",
+      "layer": "ui",
+      "parent": "sky_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 22.0,
+            "width": 210.0,
+            "x": 13.0,
+            "y": 33.0
+          },
+          "z": 12,
+          "widget": {
+            "label": "Exposure",
+            "max": 3.0,
+            "min": 0.0,
+            "type": "slider",
+            "value": 1.0
+          }
+        }
+      }
+    },
+    {
+      "id": "sky_rotation",
+      "layer": "ui",
+      "parent": "sky_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 22.0,
+            "width": 210.0,
+            "x": 13.0,
+            "y": 61.0
+          },
+          "z": 12,
+          "widget": {
+            "label": "Rotate",
+            "max": 180.0,
+            "min": -180.0,
+            "type": "slider",
+            "value": 0.0
+          }
+        }
+      }
+    },
+    {
+      "id": "sky_hint",
+      "layer": "ui",
+      "parent": "sky_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "height": 16.0,
+            "width": 210.0,
+            "x": 13.0,
+            "y": 92.0
+          },
+          "z": 11,
+          "style": {
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 10.0,
+            "rounding": 7.0,
+            "text": [
+              169,
+              196,
+              194,
+              255
+            ]
+          },
+          "widget": {
+            "align": "left",
+            "text": "Drop a .hdr file to change sky",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "id": "back_to_levels",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 20.0,
+            "y": 18.0,
+            "width": 140.0,
+            "height": 32.0
+          },
+          "anchor": "bottom_left",
+          "z": 30,
+          "style": {
+            "fill": [
+              20,
+              44,
+              52,
+              240
+            ],
+            "border": [
+              111,
+              156,
+              152,
+              210
+            ],
+            "text": [
+              240,
+              248,
+              243,
+              255
+            ],
+            "font_size": 13.0,
+            "rounding": 6.0
+          },
+          "widget": {
+            "type": "button",
+            "label": "Levels"
+          }
+        }
+      }
+    },
+    {
+      "id": "player",
+      "layer": "player",
+      "components": {
+        "PlayerCamera": {},
+        "PlayerControls": {}
+      }
+    },
+    {
+      "id": "controls_panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 20,
+            "y": 20,
+            "width": 360,
+            "height": 450
+          },
+          "z": 90,
+          "widget": {
+            "type": "panel"
+          },
+          "style": {
+            "fill": [
+              13,
+              29,
+              37,
+              255
+            ],
+            "border": [
+              116,
+              157,
+              161,
+              210
+            ],
+            "rounding": 7
+          },
+          "anchor": "bottom_right",
+          "collapsible": {
+            "title": "Player controls",
+            "collapsed": true,
+            "header_height": 34
+          }
+        }
+      }
+    },
+    {
+      "id": "controls_hint",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 2,
+            "width": 335,
+            "height": 18
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Drag the scene to look • Esc opens menu",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 10
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_enabled",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 22,
+            "width": 160,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "checkbox",
+            "label": "Movement",
+            "checked": true
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_mouse",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 175,
+            "y": 22,
+            "width": 170,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "checkbox",
+            "label": "Mouse look",
+            "checked": true
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_speed",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 49,
+            "width": 330,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "slider",
+            "label": "Speed",
+            "value": 4.0,
+            "min": 0.1,
+            "max": 100.0
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_sprint",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 77,
+            "width": 330,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "slider",
+            "label": "Sprint",
+            "value": 3.0,
+            "min": 1.0,
+            "max": 10.0
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_sensitivity",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 105,
+            "width": 330,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "slider",
+            "label": "Look sensitivity",
+            "value": 0.003,
+            "min": 0.0001,
+            "max": 0.03
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_invert",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 161,
+            "width": 220,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "checkbox",
+            "label": "Invert mouse Y",
+            "checked": false
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_keys_label",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 186,
+            "width": 335,
+            "height": 18
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Click a binding, then press the desired key",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 10
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "label_key_forward",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 209,
+            "width": 66,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Forward",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "key_forward",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 78,
+            "y": 209,
+            "width": 88,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "button",
+            "label": "W"
+          },
+          "style": {
+            "font_size": 12
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "label_key_backward",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 182,
+            "y": 209,
+            "width": 66,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Back",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "key_backward",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 248,
+            "y": 209,
+            "width": 88,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "button",
+            "label": "S"
+          },
+          "style": {
+            "font_size": 12
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "label_key_left",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 243,
+            "width": 66,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Left",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "key_left",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 78,
+            "y": 243,
+            "width": 88,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "button",
+            "label": "A"
+          },
+          "style": {
+            "font_size": 12
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "label_key_right",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 182,
+            "y": 243,
+            "width": 66,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Right",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "key_right",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 248,
+            "y": 243,
+            "width": 88,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "button",
+            "label": "D"
+          },
+          "style": {
+            "font_size": 12
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "label_key_up",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 277,
+            "width": 66,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Up",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "key_up",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 78,
+            "y": 277,
+            "width": 88,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "button",
+            "label": "E"
+          },
+          "style": {
+            "font_size": 12
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "label_key_down",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 182,
+            "y": 277,
+            "width": 66,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Down",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "key_down",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 248,
+            "y": 277,
+            "width": 88,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "button",
+            "label": "Q"
+          },
+          "style": {
+            "font_size": 12
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "label_key_sprint",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 311,
+            "width": 66,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "Sprint",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "key_sprint",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 78,
+            "y": 311,
+            "width": 88,
+            "height": 24
+          },
+          "z": 91,
+          "widget": {
+            "type": "button",
+            "label": "Left Shift"
+          },
+          "style": {
+            "font_size": 12
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_notice",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 346,
+            "width": 335,
+            "height": 17
+          },
+          "z": 91,
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              232,
+              188,
+              119,
+              255
+            ],
+            "font_size": 10
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_reset",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 368,
+            "width": 332,
+            "height": 28
+          },
+          "z": 91,
+          "widget": {
+            "type": "button",
+            "label": "Reset controls"
+          },
+          "style": {
+            "font_size": 13
+          }
+        }
+      },
+      "parent": "controls_panel"
+    },
+    {
+      "id": "controls_fov",
+      "layer": "ui",
+      "parent": "controls_panel",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 133,
+            "width": 330,
+            "height": 22
+          },
+          "z": 91,
+          "widget": {
+            "type": "slider",
+            "label": "Field of view",
+            "value": 60.0,
+            "min": 1.0,
+            "max": 178.9
+          }
+        }
+      }
+    }
+  ]
+}

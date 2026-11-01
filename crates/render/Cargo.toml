@@ -1,0 +1,19 @@
+[package]
+name = "countersplat-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "GPU rendering and level streaming for Gaussian-splat scenes"
+
+[dependencies]
+countersplat-assets.workspace = true
+countersplat-shaders.workspace = true
+serde_json.workspace = true
+image.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+bytemuck = "1"
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in"] }

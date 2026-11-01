@@ -1,0 +1,39 @@
+# Build and generated preview output
+/target/
+/cargo-home/
+/preview/pkg/
+*.png
+!crates/**/tests/fixtures/*.png
+
+# Keep the catalog and setup notes, but never commit downloaded levels.
+/assets/levels/*
+!/assets/levels/catalog.json
+!/assets/levels/README.md
+*.sog
+*.splat
+*.ksplat
+*.spz
+*.ply
+
+# Local environment files, credentials, and key material at any depth.
+.env*
+*.env
+*.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.kdbx
+*.credentials
+id_rsa
+id_ed25519
+.ssh/
+.aws/
+secrets/
+credentials/
+credentials.json
+credentials.*.json
+service-account*.json
+*[aA][pP][iI]*[kK][eE][yY]*

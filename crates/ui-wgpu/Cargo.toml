@@ -1,0 +1,16 @@
+[package]
+name = "countersplat-ui-wgpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "egui/wgpu renderer for the CounterSplat UI layer"
+
+[dependencies]
+countersplat-ui.workspace = true
+egui = { version = "0.37.0", features = ["default_fonts"] }
+egui-wgpu = { version = "0.37.0", default-features = false }
+wgpu.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true

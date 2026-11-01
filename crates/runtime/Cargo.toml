@@ -1,0 +1,9 @@
+[package]
+name = "countersplat-runtime"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 AND MIT"
+rust-version = "1.96"
+description = "Thread-owned subsystem supervision and bounded message transport for CounterSplat"
+
+[dependencies]

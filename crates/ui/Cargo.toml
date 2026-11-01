@@ -1,0 +1,10 @@
+[package]
+name = "countersplat-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Renderer-neutral UI elements, shapes, controls, and events for CounterSplat"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

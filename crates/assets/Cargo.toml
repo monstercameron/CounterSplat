@@ -1,0 +1,12 @@
+[package]
+name = "countersplat-assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "SOG, level-of-detail, and sparse-voxel asset formats for CounterSplat"
+
+[dependencies]
+serde_json.workspace = true
+image.workspace = true
+zip.workspace = true

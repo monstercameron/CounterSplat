@@ -1,0 +1,307 @@
+{
+  "version": 1,
+  "name": "Pause menu",
+  "component_types": {
+    "UiElement": {
+      "storage": "native"
+    }
+  },
+  "resources": {
+    "assets": {
+      "level_selector": {
+        "kind": "scene",
+        "uri": "level-selector.json",
+        "load": "preload"
+      }
+    },
+    "scripts": {
+      "menu-navigation": {
+        "language": "lua",
+        "uri": "../scripts/menu_navigation.lua",
+        "autoload": true,
+        "load": "preload"
+      }
+    }
+  },
+  "entities": [
+    {
+      "id": "backdrop",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1,
+            "height": 1
+          },
+          "z": 100,
+          "widget": {
+            "type": "rectangle"
+          },
+          "style": {
+            "fill": [
+              3,
+              8,
+              15,
+              185
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "rounding": 0
+          },
+          "draggable": false
+        }
+      }
+    },
+    {
+      "id": "panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 380,
+            "height": 286
+          },
+          "z": 110,
+          "widget": {
+            "type": "panel"
+          },
+          "style": {
+            "fill": [
+              16,
+              32,
+              41,
+              250
+            ],
+            "border": [
+              103,
+              145,
+              145,
+              230
+            ],
+            "rounding": 10
+          },
+          "anchor": "center"
+        }
+      },
+      "parent": "backdrop"
+    },
+    {
+      "id": "heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 28,
+            "y": 23,
+            "width": 324,
+            "height": 38
+          },
+          "z": 111,
+          "widget": {
+            "type": "text",
+            "text": "Paused",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 28,
+            "text": [
+              240,
+              248,
+              244,
+              255
+            ]
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "description",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 28,
+            "y": 67,
+            "width": 324,
+            "height": 26
+          },
+          "z": 111,
+          "widget": {
+            "type": "text",
+            "text": "Take a moment, then continue.",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 14,
+            "text": [
+              165,
+              190,
+              194,
+              255
+            ]
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "resume",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 28,
+            "y": 111,
+            "width": 324,
+            "height": 46
+          },
+          "z": 112,
+          "widget": {
+            "type": "button",
+            "label": "Resume"
+          },
+          "style": {
+            "fill": [
+              163,
+              113,
+              54,
+              255
+            ],
+            "border": [
+              237,
+              190,
+              121,
+              255
+            ],
+            "text": [
+              255,
+              248,
+              234,
+              255
+            ],
+            "font_size": 16,
+            "rounding": 6
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "levels",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 28,
+            "y": 169,
+            "width": 324,
+            "height": 46
+          },
+          "z": 112,
+          "widget": {
+            "type": "button",
+            "label": "Choose level"
+          },
+          "style": {
+            "fill": [
+              29,
+              56,
+              62,
+              255
+            ],
+            "border": [
+              100,
+              150,
+              151,
+              220
+            ],
+            "text": [
+              229,
+              242,
+              237,
+              255
+            ],
+            "font_size": 16,
+            "rounding": 6
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "hint",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 28,
+            "y": 234,
+            "width": 324,
+            "height": 22
+          },
+          "z": 111,
+          "widget": {
+            "type": "text",
+            "text": "ESC to resume",
+            "align": "center"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "font_size": 12,
+            "text": [
+              157,
+              178,
+              181,
+              255
+            ]
+          }
+        }
+      },
+      "parent": "panel"
+    }
+  ]
+}

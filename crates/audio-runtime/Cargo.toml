@@ -1,0 +1,19 @@
+[package]
+name = "countersplat-audio-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Native audio subsystem worker for CounterSplat"
+
+[features]
+default = ["device"]
+device = ["countersplat-audio/device"]
+
+[dependencies]
+countersplat-audio.workspace = true
+countersplat-runtime.workspace = true
+
+[[example]]
+name = "stereo_worker"
+required-features = ["device"]
