@@ -20,6 +20,7 @@ members = [
     "apps/viewer",
     "apps/web",
     "apps/threaded-demo",
+    "tools/ecs-wasm-bench",
 ]
 
 [workspace.package]

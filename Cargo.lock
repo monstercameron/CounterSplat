@@ -463,6 +463,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "countersplat-ecs-wasm-bench"
+version = "0.1.0"
+dependencies = [
+ "countersplat-ecs",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "countersplat-physics"
 version = "0.1.0"
 dependencies = [

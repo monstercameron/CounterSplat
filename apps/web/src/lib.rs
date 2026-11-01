@@ -463,6 +463,26 @@ impl Viewer {
         }
         .map_err(js_error)
     }
+    /// Read a changed component without encoding an intermediate JSON request.
+    /// An absent result means the caller's revision is still current.
+    pub fn ecs_get_if_changed(
+        &self,
+        layer: &str,
+        id: &str,
+        name: &str,
+        revision: Option<String>,
+    ) -> Result<Option<String>, JsValue> {
+        match layer {
+            "gameplay" => self
+                .ui
+                .script_component_change(id, name, revision.as_deref()),
+            "menu" => self
+                .menu
+                .script_component_change(id, name, revision.as_deref()),
+            _ => Err("unknown script world".into()),
+        }
+        .map_err(js_error)
+    }
     /// Whether a canvas point overlaps the current gameplay UI.
     pub fn ui_hit_test(&self, x: f32, y: f32) -> bool {
         self.menu_visible || self.ui.hit_test(x, y)

@@ -340,6 +340,27 @@ enum ScriptOperation<'a> {
 }
 
 impl World {
+    /// Read a component change with scalar arguments, returning JSON only when
+    /// its snapshot changed. This uses the same validation and revision rules
+    /// as `get_if_changed` in the JSON protocol.
+    pub fn script_component_change_json(
+        &self,
+        id: &str,
+        name: &str,
+        revision: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        let input_bytes = id
+            .len()
+            .saturating_add(name.len())
+            .saturating_add(revision.map_or(0, str::len));
+        if input_bytes > MAX_REQUEST_BYTES {
+            return Err("ECS script request is too large".into());
+        }
+        self.read_component_if_changed(Entity::from_str(id)?, name, revision)?
+            .map(|change| serde_json::to_string(&change).map_err(|error| error.to_string()))
+            .transpose()
+    }
+
     /// Apply one JSON operation and return `{found, value}`. `found` distinguishes a missing
     /// value from JSON null; all entity handles use the same opaque strings as native Lua.
     pub fn apply_script_json(&mut self, request: &str) -> Result<String, String> {
@@ -756,6 +777,55 @@ mod tests {
         let invalid_general = r#"{"id":"bad","name":"Settings","op":"get_if_changed"}"#;
         assert!(world.apply_script_json(invalid_fast).is_err());
         assert!(world.apply_script_json(invalid_general).is_err());
+    }
+
+    #[test]
+    fn scalar_change_read_matches_json_protocol_across_mutations() {
+        fn compare(world: &mut World, id: &str, name: &str, revision: Option<&str>) {
+            let request = serde_json::json!({"op":"get_if_changed", "id":id, "name":name, "revision":revision});
+            let original = world.apply_script_json(&request.to_string());
+            let scalar = world.script_component_change_json(id, name, revision);
+            match (original, scalar) {
+                (Ok(original), Ok(scalar)) => {
+                    let original: Value = serde_json::from_str(&original).unwrap();
+                    let scalar: Option<Value> =
+                        scalar.map(|text| serde_json::from_str(&text).unwrap());
+                    assert_eq!(original["found"], Value::Bool(scalar.is_some()));
+                    assert_eq!(original["value"], scalar.unwrap_or(Value::Null));
+                }
+                (Err(_), Err(_)) => {}
+                other => panic!("protocol mismatch: {other:?}"),
+            }
+        }
+        let mut world = World::new();
+        world.register_serde_component::<u32>("Untracked").unwrap();
+        let entity = world.spawn();
+        let id = entity.to_string();
+        world.insert(entity, 42_u32).unwrap();
+        world.set_dynamic(entity, "café", Value::Null).unwrap();
+        let token = world
+            .read_component_if_changed(entity, "café", None)
+            .unwrap()
+            .unwrap()
+            .revision
+            .unwrap();
+        for name in ["café", "Untracked", "Missing"] {
+            for revision in [None, Some(token.as_str()), Some("wrong|token")] {
+                compare(&mut world, &id, name, revision);
+            }
+        }
+        world
+            .set_dynamic(entity, "café", serde_json::json!({"x":1}))
+            .unwrap();
+        compare(&mut world, &id, "café", Some(&token));
+        world.remove_dynamic(entity, "café");
+        compare(&mut world, &id, "café", Some(&token));
+        compare(&mut world, "bad", "café", None);
+        compare(&mut world, &id, "", None);
+        let oversized = "x".repeat(MAX_REQUEST_BYTES + 1);
+        compare(&mut world, &id, "café", Some(&oversized));
+        world.despawn(entity);
+        compare(&mut world, &id, "café", Some(&token));
     }
 
     #[test]

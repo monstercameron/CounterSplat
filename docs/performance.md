@@ -97,6 +97,21 @@ fixture includes Lua, JavaScript, and JSON conversion, but substitutes a
 JavaScript ECS response for Rust: use the in-browser profiler as well when
 measuring end-to-end behavior.
 
+The direct change-read path can also be measured through Wasmoon and a real
+WebAssembly ECS fixture, without a GPU:
+
+```powershell
+cargo build --locked --release --target-dir .artifacts/target -p countersplat-ecs-wasm-bench --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-dir .artifacts/ecs-wasm-bench/pkg --out-name ecs_bench .artifacts/target/wasm32-unknown-unknown/release/countersplat_ecs_wasm_bench.wasm
+node scripts/benchmark_lua_wasm_changed.mjs
+```
+
+The fixture uses a tracked typed component and alternates both paths in the same
+Lua VM. It checks changes and stale handles, then reports the median of 21
+samples of 5,000 unchanged reads. It excludes rendering and worker scheduling.
+The in-scene `?profile=1` report includes `lua.bridge_paths` counters for direct
+and JSON change reads so that the chosen path can be checked in a live session.
+
 ## ECS query benchmark
 
 Run `cargo run --locked --release --target-dir .artifacts/target -p

@@ -4,6 +4,11 @@
 // spent waiting inside JavaScript/Rust host calls against a healthy script.
 const INSTRUCTION_LIMIT = 10_000_000;
 const HOOK_INTERVAL = 1_000;
+// Invalid UTF-16 must keep the JSON path's escaping and validation behavior.
+const isWellFormed = String.prototype.isWellFormed;
+function directString(value, limit) {
+  return value.length <= limit && typeof isWellFormed === 'function' && isWellFormed.call(value);
+}
 const BOOTSTRAP = `
 local call, call_flat = __ecs_call, __ecs_call_flat
 local call_changed, call_strings, query_one, get_pair = __ecs_call_changed, __ecs_call_strings, __ecs_query_one, __ecs_get_pair
@@ -404,10 +409,8 @@ export class LuaScene {
       // boolean sentinel avoids transferring a wrapper table for the common
       // unchanged case; false cannot be a valid change record.
       vm.global.set('__ecs_call_changed', (id, name, revision) => {
-        const request = {op:'get_if_changed', id, name};
-        if (revision != null) request.revision = revision;
-        const result = host.call(request, true);
-        return result.found ? encodeResult(result.value) : false;
+        const result = host.readChanged(id, name, revision);
+        return result === undefined ? false : encodeResult(result);
       });
       // Undefined becomes Lua nil, while JSON null remains ecs.null. Scalar
       // arguments avoid transferring a temporary Lua request table.
@@ -481,7 +484,8 @@ export class LuaScene {
   }
   constructor(vm, target, layer, profile = false) {
     this.vm = vm; this.target = target; this.layer = layer;
-    this.profile = profile ? {systems:Object.create(null), operations:Object.create(null)} : null;
+    this.profile = profile ? {systems:Object.create(null), operations:Object.create(null),
+      bridge_paths:{changed_direct:0, changed_json:0}} : null;
   }
   recordProfile(group, name, elapsed) {
     if (!this.profile || !Number.isFinite(elapsed) || elapsed < 0) return;
@@ -497,6 +501,24 @@ export class LuaScene {
     if (op.op === 'get_many' && !Array.isArray(op.names) && Object.keys(op.names || {}).length === 0) op.names = [];
     try { return JSON.parse(this.target.ecs_operation(this.layer, JSON.stringify(op))); }
     finally { if (this.profile) this.recordProfile('operations', op.op, performance.now()-start); }
+  }
+  readChanged(id, name, revision) {
+    // Keep requests with unusual strings on the exact general protocol. The
+    // small bounds also keep direct calls well under the JSON request budget.
+    if (revision != null && typeof this.target.ecs_get_if_changed === 'function' &&
+        directString(id, 64) && directString(name, 256) && directString(revision, 1024)) {
+      const start = this.profile ? performance.now() : 0;
+      if (this.profile) this.profile.bridge_paths.changed_direct++;
+      try {
+        const result = this.target.ecs_get_if_changed(this.layer, id, name, revision ?? undefined);
+        return result == null ? undefined : JSON.parse(result);
+      } finally { if (this.profile) this.recordProfile('operations', 'get_if_changed', performance.now()-start); }
+    }
+    if (this.profile) this.profile.bridge_paths.changed_json++;
+    const request = {op:'get_if_changed', id, name};
+    if (revision != null) request.revision = revision;
+    const result = this.call(request, true);
+    return result.found ? result.value : undefined;
   }
   // EventChannels requests have already been validated and encoded.
   callEncoded(op, encoded) {

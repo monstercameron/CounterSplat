@@ -407,6 +407,14 @@ impl SceneUi {
     pub fn script_operation(&mut self, request: &str) -> Result<String, String> {
         self.world.apply_script_json(request)
     }
+    pub fn script_component_change(
+        &self,
+        id: &str,
+        name: &str,
+        revision: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        self.world.script_component_change_json(id, name, revision)
+    }
 
     pub fn input(&mut self, event: InputEvent) -> Result<(), &'static str> {
         self.renderer.push_input(event)

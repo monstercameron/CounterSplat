@@ -421,6 +421,40 @@ assert.deepEqual(queryCalls.slice(0, 5), [
 ]);
 queryScene.close();
 
+// The scalar change-read path must behave like the JSON protocol, including
+// stale handles, mutations, request bounds, and unusual UTF-16 strings.
+const changedWorld = new WorldFixture({});
+changedWorld.components.set('entity', new Map([['Stats', {hp:10}]]));
+let changedDirectCalls = 0, changedJsonCalls = 0;
+const changedTarget = {
+  ecs_operation(layer, raw) { changedJsonCalls++; return changedWorld.ecs_operation(layer, raw); },
+  ecs_get_if_changed(layer, id, name, revision) {
+    changedDirectCalls++;
+    const response = JSON.parse(changedWorld.ecs_operation(layer, JSON.stringify({op:'get_if_changed',id,name,revision})));
+    return response.found ? JSON.stringify(response.value) : undefined;
+  }
+};
+const changedScene = await LuaScene.create(factory, changedTarget, 'gameplay', engineApi, [], true);
+changedScene.vm.doStringSync(`
+  local first = ecs.get_if_changed('entity','Stats')
+  assert(first.present and first.value.hp == 10)
+  assert(ecs.get_if_changed('entity','Stats',first.revision) == nil)
+  ecs.set_field('entity','Stats','hp',11)
+  local second = ecs.get_if_changed('entity','Stats',first.revision)
+  assert(second.present and second.value.hp == 11 and second.revision ~= first.revision)
+  assert(not pcall(function() ecs.get_if_changed('stale','Stats','old') end))
+`);
+if (typeof String.prototype.isWellFormed === 'function') assert.equal(changedDirectCalls, 3);
+const directBeforeFallback = changedDirectCalls, jsonBeforeFallback = changedJsonCalls;
+assert(changedScene.readChanged('entity','Stats','x'.repeat(1025)).present);
+assert(changedScene.readChanged('entity','Stats','bad\ud800').present);
+assert.equal(changedDirectCalls, directBeforeFallback);
+assert.equal(changedJsonCalls, jsonBeforeFallback + 2);
+assert(changedScene.profileReport().operations.get_if_changed.count >= 5);
+assert.equal(changedScene.profileReport().bridge_paths.changed_direct, changedDirectCalls);
+assert(changedScene.profileReport().bridge_paths.changed_json >= 3);
+changedScene.close();
+
 // Dispatching a channel may enqueue events for earlier, current, or later
 // channels. Only later channels are delivered during this pass.
 const orderedWorld = new WorldFixture({});
