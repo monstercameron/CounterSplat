@@ -41,6 +41,17 @@ impl Serialize for ScriptEntities<'_> {
     }
 }
 
+struct ScriptEntityList<'a>(&'a [Entity]);
+impl Serialize for ScriptEntityList<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut sequence = serializer.serialize_seq(Some(self.0.len()))?;
+        for &entity in self.0 {
+            sequence.serialize_element(&ScriptEntityId(entity))?;
+        }
+        sequence.end()
+    }
+}
+
 #[derive(Serialize)]
 struct ScriptHierarchyEntry {
     id: ScriptEntityId,
@@ -147,7 +158,8 @@ enum ScriptOperation<'a> {
         recursive: bool,
     },
     IsAlive {
-        id: String,
+        #[serde(borrow)]
+        id: Cow<'a, str>,
     },
     Entities,
     Hierarchy,
@@ -156,7 +168,8 @@ enum ScriptOperation<'a> {
         id: String,
     },
     Query {
-        components: Vec<String>,
+        #[serde(borrow)]
+        components: Vec<RequestName<'a>>,
     },
     Get {
         #[serde(borrow)]
@@ -252,9 +265,7 @@ impl World {
                 entity: Entity::from_str(&id)?,
                 recursive,
             },
-            S::IsAlive { id } => O::IsAlive {
-                entity: Entity::from_str(&id)?,
-            },
+            S::IsAlive { id } => return script_result(Some(self.is_alive(Entity::from_str(&id)?))),
             S::Entities => return script_result(Some(ScriptEntities(self))),
             S::Hierarchy => return script_result(Some(ScriptHierarchy(self))),
             S::StructureRevision => {
@@ -263,7 +274,14 @@ impl World {
             S::Components { id } => O::Components {
                 entity: Entity::from_str(&id)?,
             },
-            S::Query { components } => O::Query { components },
+            S::Query { components } => {
+                if components.is_empty() {
+                    return script_result(Some(ScriptEntities(self)));
+                }
+                let names: Vec<&str> = components.iter().map(AsRef::as_ref).collect();
+                let entities = self.query_components(&names)?;
+                return script_result(Some(ScriptEntityList(&entities)));
+            }
             S::Get { id, name } => {
                 return script_component_result(self, Entity::from_str(&id)?, &name);
             }

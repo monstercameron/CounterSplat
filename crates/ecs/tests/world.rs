@@ -408,6 +408,88 @@ fn batched_reads_preserve_missing_null_and_duplicate_semantics() {
 }
 
 #[test]
+fn script_queries_and_liveness_match_world_operations() {
+    let mut world = World::new();
+    world
+        .register_serde_component::<Position>("Position")
+        .unwrap();
+    let a = world.spawn();
+    let b = world.spawn();
+    let removed = world.spawn();
+    world.insert(a, Position { x: 1.0, y: 2.0 }).unwrap();
+    world.insert(b, Position { x: 3.0, y: 4.0 }).unwrap();
+    world.set_dynamic(a, "quoted\"name", Value::Null).unwrap();
+    world
+        .set_dynamic(removed, "quoted\"name", json!(true))
+        .unwrap();
+    assert!(world.despawn(removed));
+    let reused = world.spawn();
+    world
+        .set_dynamic(reused, "quoted\"name", json!(true))
+        .unwrap();
+
+    for names in [
+        vec![],
+        vec!["Position"],
+        vec!["quoted\"name"],
+        vec!["Position", "quoted\"name"],
+        vec!["Position", "Position"],
+        vec!["Missing"],
+        vec!["Missing", "Position"],
+    ] {
+        let components = names
+            .iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
+        let expected = match world
+            .apply_operation(WorldOperation::Query {
+                components: components.clone(),
+            })
+            .unwrap()
+        {
+            WorldOutcome::Entities(entities) => entities
+                .into_iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>(),
+            other => panic!("unexpected query result: {other:?}"),
+        };
+        let request = json!({"op":"query", "components":components});
+        let actual: Value =
+            serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+        assert_eq!(
+            actual,
+            json!({"found":true, "value":expected}),
+            "query {names:?}"
+        );
+    }
+    let invalid = json!({"op":"query", "components":["Missing",""]});
+    assert!(world.apply_script_json(&invalid.to_string()).is_err());
+
+    for (entity, alive) in [
+        (a, true),
+        (removed, false),
+        (reused, true),
+        (World::new().spawn(), false),
+    ] {
+        let request = json!({"op":"is_alive", "id":entity.to_string()});
+        let actual: Value =
+            serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+        assert_eq!(actual, json!({"found":true,"value":alive}));
+    }
+    let escaped = format!(
+        r#"{{"op":"is_alive","id":"{}\u003a{}.{}"}}"#,
+        a.world(),
+        a.index(),
+        a.generation()
+    );
+    let actual: Value = serde_json::from_str(&world.apply_script_json(&escaped).unwrap()).unwrap();
+    assert_eq!(actual, json!({"found":true,"value":true}));
+    assert!(world
+        .apply_script_json(r#"{"op":"is_alive","id":"invalid"}"#)
+        .is_err());
+}
+
+#[test]
 fn batched_reads_discard_partial_output_from_an_absent_adapter() {
     struct Absent;
     impl ComponentAdapter for Absent {

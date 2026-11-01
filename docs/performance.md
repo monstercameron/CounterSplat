@@ -68,9 +68,9 @@ The example warms up each query and reports the median of seven samples.
 
 Run `cargo run --locked --release --target-dir .artifacts/target -p
 countersplat-ecs --example script_bridge_bench` to measure JSON bridge reads,
-presence checks, resource fields, and empty event drains. The benchmark uses
-both typed components and a larger dynamic component. It does not include Lua,
-JavaScript, or rendering costs.
+liveness and presence checks, entity queries, resource fields, and empty event
+drains. The benchmark uses both typed components and a larger dynamic component.
+It does not include Lua, JavaScript, or rendering costs.
 
 ## Event dispatch benchmark
 

@@ -79,6 +79,11 @@ fn main() {
     world.set_dynamic_resource("state", json!({"x":1,"enabled":true}));
     for (name, request) in [
         (
+            "is alive",
+            json!({"op":"is_alive", "id":entity.to_string()}),
+        ),
+        ("query typed", json!({"op":"query", "components":["Body"]})),
+        (
             "get typed",
             json!({"op":"get", "id":entity.to_string(), "name":"Body"}),
         ),
@@ -153,6 +158,18 @@ fn main() {
             measure(&mut world, &batch, 12_000)
         );
     }
+    let mut query_world = World::new();
+    for _ in 0..1000 {
+        let entity = query_world.spawn();
+        query_world
+            .set_dynamic(entity, "Marker", json!(true))
+            .unwrap();
+    }
+    let request = json!({"op":"query","components":["Marker"]}).to_string();
+    println!(
+        "1000 entity script query: {:.0} ns/op",
+        measure(&mut query_world, &request, 500)
+    );
     for (size, iterations) in [(200, 1000), (2_000, 100)] {
         let mut world = World::new();
         let mut parent = None;
