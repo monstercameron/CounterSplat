@@ -139,9 +139,9 @@ adapter!(
 );
 adapter!(LensAdapter, CameraLens; tracked);
 adapter!(ZoomLensAdapter, CameraZoomLens; tracked);
-adapter!(ControllerAdapter, CameraController);
-adapter!(ControlsAdapter, PlayerControls);
-adapter!(RigAdapter, PlayerRig);
+adapter!(ControllerAdapter, CameraController; tracked);
+adapter!(ControlsAdapter, PlayerControls; tracked);
+adapter!(RigAdapter, PlayerRig; tracked);
 pub fn register(world: &mut World) -> Result<(), String> {
     world.register_component_adapter("PlayerCamera", CameraAdapter)?;
     world.register_component_adapter("CameraLens", LensAdapter)?;
@@ -150,7 +150,11 @@ pub fn register(world: &mut World) -> Result<(), String> {
     world.track_component_changes::<CameraZoomLens>();
     world.register_component_adapter("CameraController", ControllerAdapter)?;
     world.register_component_adapter("PlayerControls", ControlsAdapter)?;
-    world.register_component_adapter("PlayerRig", RigAdapter)
+    world.register_component_adapter("PlayerRig", RigAdapter)?;
+    world.track_component_changes::<CameraController>();
+    world.track_component_changes::<PlayerControls>();
+    world.track_component_changes::<PlayerRig>();
+    Ok(())
 }
 
 #[cfg(test)]

@@ -77,6 +77,17 @@ fn scripting_worker_operates_on_a_separate_ecs_owner() {
         assert(ecs.get_if_changed(root, "Health", "untracked").value == 50)
         local missing = ecs.get_if_changed(child, "Health")
         assert(not missing.present and missing.value == ecs.null)
+        -- Dynamic values are untracked: a reader must fetch fresh snapshots,
+        -- preserve false and null, and distinguish a missing component.
+        local read_flag = engine.component_reader(root, "Flag")
+        assert(read_flag() == nil)
+        ecs.set(root, "Flag", false); assert(read_flag() == false)
+        ecs.set(root, "Flag", true); assert(read_flag() == true)
+        ecs.set(root, "Flag", ecs.null); assert(read_flag() == ecs.null)
+        ecs.remove(root, "Flag"); assert(read_flag() == nil)
+        local read_position = engine.component_reader(root, "Position")
+        local detached = read_position(); detached.x = 999
+        assert(read_position().x == 1 and ecs.get(root, "Position").x == 1)
         ecs.set(root, "Nullable", ecs.null)
         assert(ecs.has(root, "Nullable"))
         local batch = ecs.get_many(root, {"Health", "Position", "Nullable", "Missing"})

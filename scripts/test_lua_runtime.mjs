@@ -104,7 +104,7 @@ assert.deepEqual(game.drain('engine.scene'), [{action:'push', scene:'pause_menu'
 game.emit('ui.action', {id:'game-levels', kind:{type:'clicked'}});
 runGameplay();
 assert.deepEqual(game.drain('engine.scene'), [{action:'replace', scene:'level_selector'}]);
-world.components.set('entity', new Map([['Health', 50], ['Nullable', null], ['__proto__', 'safe'], ['Stats', Object.assign(Object.create(null), {hp:10, keep:true})]]));
+world.components.set('entity', new Map([['Health', 50], ['Nullable', null], ['False', false], ['__proto__', 'safe'], ['Stats', Object.assign(Object.create(null), {hp:10, keep:true})]]));
 world.resources.set('special-keys', JSON.parse('{"__proto__":{"items":[{},[],null]},"constructor":"safe","kind":"user","entries":"data"}'));
 world.resources.set('nested-roundtrip', JSON.parse('{"rows":[{"name":"original","enabled":false},[],null],"empty":{},"empty_list":[],"zero":0}'));
 game.vm.doStringSync(`
@@ -139,6 +139,16 @@ game.vm.doStringSync(`
   assert(newer.present and newer.value.hp == 31 and newer.revision ~= changed.revision)
   local missing = ecs.get_if_changed('entity', 'Missing')
   assert(not missing.present and missing.value == ecs.null)
+  local read_stats = engine.component_reader('entity', 'Stats')
+  local cached = read_stats()
+  assert(cached.hp == 31 and read_stats() == cached)
+  local editable = ecs.get('entity', 'Stats'); editable.hp = 100
+  assert(read_stats().hp == 31 and ecs.get('entity', 'Stats').hp == 31)
+  ecs.set_field('entity', 'Stats', 'hp', 32)
+  assert(read_stats().hp == 32 and read_stats() ~= cached)
+  assert(engine.component_reader('entity', 'Nullable')() == ecs.null)
+  assert(engine.component_reader('entity', 'Missing')() == nil)
+  assert(engine.component_reader('entity', 'False')() == false)
   assert(not pcall(function() ecs.set_field('entity', 'Missing', 'hp', 1) end))
   assert(not pcall(function() ecs.set_field('entity', 'Stats', 'bad', 0/0) end))
   -- Non-string arguments still use the validating general encoder.

@@ -62,6 +62,12 @@ script handles them.
   returns a fresh snapshot. The present flag distinguishes a missing component
   from a component whose value is ecs.null. Tokens are scoped to the world,
   entity, and component name.
+- engine.component_reader(id, name) returns a function that caches a
+  change-aware snapshot. Its returned tables (including nested tables) are
+  read-only by contract and may be shared between calls. To edit a component,
+  obtain a separate snapshot with ecs.get and write it with ecs.set. Untracked
+  adapters still return fresh values; missing components return nil and a
+  present JSON null remains ecs.null.
 - ecs.set_field(id, name, field, value) changes one field on an existing
   object-valued component without replacing its other fields. Dynamic objects
   can gain fields; registered adapters apply their usual validation. A missing,

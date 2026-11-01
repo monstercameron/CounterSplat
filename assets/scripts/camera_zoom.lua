@@ -2,31 +2,22 @@
 -- zoom writes only the temporary render FOV of the player camera.
 local ids = assert(ecs.get_resource("scene.entities"))
 local player = assert(ids.player)
+local read_controls = engine.component_reader(player, "PlayerControls")
 engine.export(player, "zoom_factor", {component="PlayerControls", field="zoom_factor", label="Zoom magnification", min=1, max=10})
 engine.export(player, "zoom_response", {component="PlayerControls", field="zoom_response", label="Zoom response", min=1, max=30})
 
 local held = false
 local magnification, lens_blend = 1, 0
 local last_lens = nil
-local lens_cache = {
-    standard = {name="CameraLens"},
-    zoom = {name="CameraZoomLens"},
-}
-local function read_lens(cache)
-    local change = ecs.get_if_changed(player, cache.name, cache.revision)
-    if change then
-        cache.revision = change.revision ~= ecs.null and change.revision or nil
-        cache.value = change.present and change.value or nil
-    end
-    return cache.value
-end
+local read_standard_lens = engine.component_reader(player, "CameraLens")
+local read_zoom_lens = engine.component_reader(player, "CameraZoomLens")
 local lens_numbers = {"aperture_f_number", "shutter_angle_degrees", "shutter_fps", "iso",
     "exposure_compensation_ev", "focus_distance_m", "sensor_height_mm"}
 
 -- The editable components stay independent. Publish only a transient render
 -- snapshot, so entering or leaving zoom never overwrites either profile.
 local function publish_lens(amount)
-    local standard, zoom = read_lens(lens_cache.standard), read_lens(lens_cache.zoom)
+    local standard, zoom = read_standard_lens(), read_zoom_lens()
     if not standard or not zoom then
         if last_lens then ecs.remove_resource("camera.render_lens"); last_lens = nil end
         return
@@ -67,8 +58,7 @@ ecs.on("ui.action", function(action)
 end)
 
 ecs.system("player.camera_zoom", function(dt)
-    local state = ecs.get_many(player, {"PlayerCamera", "PlayerControls"})
-    local camera, controls = state.PlayerCamera, state.PlayerControls
+    local camera, controls = ecs.get(player, "PlayerCamera"), read_controls()
     if not camera or not controls then return end
     dt = math.max(0, math.min(dt, 0.25))
     if dt == 0 then return end

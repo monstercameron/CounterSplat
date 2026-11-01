@@ -2,6 +2,8 @@
 -- The renderer only receives clip/phase requests; all game decisions stay here.
 local ids = assert(ecs.get_resource('scene.entities'))
 local owner, player = assert(ids.first_person), assert(ids.player)
+local read_controls = engine.component_reader(player, 'PlayerControls')
+local read_rig = engine.component_reader(player, 'PlayerRig')
 local clips = assert(ecs.get_resource('first_person_clips'))
 local config = assert(ecs.get(owner,'WeaponConfig'))
 local function setting(name, fallback, low, high)
@@ -288,7 +290,7 @@ ecs.on('input.mouse_button',function(e)
 end)
 -- Camera look remains immediate; only the screen-space weapon lags and settles.
 ecs.on('input.mouse_delta',function(event)
-    local controls=ecs.get(player,'PlayerControls')
+    local controls=read_controls()
     if not controls or not controls.enabled or not controls.mouse_look then return end
     local dx,dy=tonumber(event.dx) or 0,tonumber(event.dy) or 0
     if dx~=dx or dy~=dy then return end
@@ -421,7 +423,7 @@ end
 -- settles the viewmodel. With collision disabled, use the actual camera delta.
 local function update_motion(dt,moving,running,controls)
     local camera=ecs.get(player,'PlayerCamera')
-    local rig=ecs.get(player,'PlayerRig')
+    local rig=read_rig()
     local body=ecs.get(player,'PhysicsBody')
     if not camera or not controls or not rig then return end
     local captured=ecs.get_resource('voxel.capture_movement')==true and body and body.enabled and body.collision_enabled
@@ -506,7 +508,7 @@ ecs.system('player.first_person',function(dt)
     config=ecs.get(owner,'WeaponConfig') or config
     animation=ecs.get(owner,'WeaponAnimation') or animation
     if dt<=0 then present(); return end
-    local controls=ecs.get(player,'PlayerControls')
+    local controls=read_controls()
     local moving,sprint=movement(controls)
     -- Hold the authored idle briefly after an action; breathing has its own
     -- clock and remains alive while the filmed transition settles.

@@ -149,3 +149,8 @@ Tracking is opt-in for component types whose changes pass through the ECS
 world. Untracked or externally mutable adapters return fresh data on every
 change-aware read; a successful mutable borrow conservatively invalidates a
 tracked component even if its value is not changed.
+
+Run `node scripts/benchmark_lua_gameplay_cache.mjs` to compare a batched
+camera/controls/rig read with a fresh camera and cached read-only settings.
+The fixture measures Lua/JavaScript conversion and uses an in-memory host;
+it does not measure Rust execution, rendering, or overall frame rate.

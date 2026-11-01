@@ -2,6 +2,8 @@
 -- generic engine service; this Lua system owns input, stance and transitions.
 local ids = assert(ecs.get_resource('scene.entities'))
 local player = assert(ids.player)
+local read_controls = engine.component_reader(player, 'PlayerControls')
+local read_rig = engine.component_reader(player, 'PlayerRig')
 if not ecs.get(player, 'PlayerPosture') then return end
 
 for _, item in ipairs({
@@ -162,8 +164,8 @@ ecs.on('ui.action',function(action)
 end)
 
 ecs.system('player.posture',function(dt)
-    local state=ecs.get_many(player, {'PlayerPosture','PlayerControls','PhysicsBody'})
-    local posture,controls,body=state.PlayerPosture,state.PlayerControls,state.PhysicsBody
+    local state=ecs.get_many(player, {'PlayerPosture','PhysicsBody'})
+    local posture,controls,body=state.PlayerPosture,read_controls(),state.PhysicsBody
     if not posture or not controls or not body then return end
     local old_amount,old_moving,old_crouched = posture.amount,posture.moving,posture.crouched
     local old_blocked,old_scale,old_eye = posture.blocked,posture.active_units_per_meter,posture.crouch_eye_height_m
@@ -195,7 +197,7 @@ ecs.system('player.posture',function(dt)
     end
     posture.moving=moving(controls)
     if not posture.crouched then
-        local rig=ecs.get(player,'PlayerRig')
+        local rig=read_rig()
         if rig then posture.active_units_per_meter=rig.units_per_meter end
     end
     if old_amount~=posture.amount or old_moving~=posture.moving or old_crouched~=posture.crouched or

@@ -2,6 +2,8 @@
 -- ordered input events and runs this system at the engine's fixed simulation tick.
 local ids = assert(ecs.get_resource("scene.entities"), "gameplay entities are missing")
 local player = assert(ids.player, "player entity is missing")
+local read_controls = engine.component_reader(player, "PlayerControls")
+local read_rig = engine.component_reader(player, "PlayerRig")
 
 -- The host provides a validated level-camera candidate; the player script owns
 -- the spawn policy and reset pose. Other hosts may omit the optional candidate
@@ -350,7 +352,7 @@ ecs.on("ui.action", function(action)
 end)
 
 ecs.system("player.camera", function(dt)
-    local settings = ecs.get(player, "PlayerControls")
+    local settings = read_controls()
     if not settings or not settings.enabled then jump = nil; return end
     if ecs.get_resource("player.stand_probe_pending") == true then return end
     local b = settings.bindings
@@ -374,7 +376,7 @@ ecs.system("player.camera", function(dt)
     end
     if length == 0 and hop == 0 then return end
     local camera = ecs.get(player, "PlayerCamera")
-    local rig = assert(ecs.get(player, "PlayerRig"))
+    local rig = assert(read_rig())
     local posture = ecs.get(player, "PlayerPosture")
     local crouched = posture and (posture.crouched or (posture.amount or 0) > 0.001)
     local multiplier = engine.input.is_down(held, b.sprint) and settings.sprint_multiplier or 1

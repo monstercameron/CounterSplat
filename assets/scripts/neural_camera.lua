@@ -2,6 +2,8 @@
 -- turn-tilt.js. The controller is a scene entity, and all behavior stays in Lua.
 local ids = assert(ecs.get_resource("scene.entities"))
 local owner = assert(ids.camera_controller, "camera controller entity is missing")
+local read_controller = engine.component_reader(owner, "CameraController")
+local read_player_controls = ids.player and engine.component_reader(ids.player, "PlayerControls")
 local initial = assert(ecs.get(owner, "CameraController"))
 ecs.set_resource("camera.look_owner", owner)
 
@@ -42,6 +44,15 @@ end
 local function read_config()
     return ecs.is_alive(owner) and ecs.get(owner, "CameraController") or nil
 end
+-- Config edits use read_config to get a separate writable snapshot.
+local function read_controller_snapshot()
+    return ecs.is_alive(owner) and read_controller() or nil
+end
+local function controls_for(target)
+    if not target then return nil end
+    if target == ids.player and read_player_controls then return read_player_controls() end
+    return ecs.get(target, "PlayerControls")
+end
 local function target_for(config)
     local target = config and ids[config.target]
     return target and ecs.is_alive(target) and ecs.has(target, "PlayerCamera") and target or nil
@@ -57,10 +68,10 @@ ecs.on("input.mouse_button", function(event)
     if event.button == "right" and (event.gameplay or not event.pressed) then aiming = event.pressed == true end
 end)
 ecs.on("input.mouse_delta", function(event)
-    local config = read_config()
+    local config = read_controller_snapshot()
     local target = target_for(config)
     if not config or not config.enabled or not target then return end
-    local controls = ecs.get(target, "PlayerControls")
+    local controls = controls_for(target)
     if not controls or not controls.enabled or not controls.mouse_look then return end
     local dx, dy = tonumber(event.dx) or 0, tonumber(event.dy) or 0
     if dx ~= dx or dy ~= dy then return end
@@ -112,9 +123,9 @@ ecs.on("ui.action", function(action)
 end)
 local ui_elapsed = 0
 ecs.system("camera.neural_controller", function(dt)
-    local config = read_config()
+    local config = read_controller_snapshot()
     local target = target_for(config)
-    local controls = target and ecs.get(target, "PlayerControls")
+    local controls = controls_for(target)
     if not config or not config.enabled or not config.turn_tilt_enabled or not target or
        not controls or not controls.enabled or not controls.mouse_look then
         reset_motion()

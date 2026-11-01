@@ -2,6 +2,9 @@
 -- untouched: only PlayerCamera.view_offset is sent to the renderer.
 local ids = assert(ecs.get_resource("scene.entities"))
 local player = assert(ids.player)
+local read_controls = engine.component_reader(player, "PlayerControls")
+local read_rig = engine.component_reader(player, "PlayerRig")
+local read_controller = ids.camera_controller and engine.component_reader(ids.camera_controller, "CameraController")
 
 -- These exports are ordinary PlayerControls fields, so Entity settings edits
 -- them directly and the existing controls persistence saves them per browser.
@@ -60,8 +63,7 @@ ecs.on("ui.action", function(action)
 end)
 
 ecs.system("player.camera_bob", function(dt)
-    local state = ecs.get_many(player, {"PlayerCamera", "PlayerControls", "PlayerRig"})
-    local camera, controls, rig = state.PlayerCamera, state.PlayerControls, state.PlayerRig
+    local camera, controls, rig = ecs.get(player, "PlayerCamera"), read_controls(), read_rig()
     if not camera or not controls or not rig then return end
     dt = math.max(0, math.min(dt, 0.25))
     if dt == 0 then return end
@@ -83,8 +85,7 @@ ecs.system("player.camera_bob", function(dt)
 
     local grounded = not captured or not body.gravity_enabled or body.grounded
     local moving = controls.enabled and controls.bob_enabled and grounded
-    local profile = ids.camera_controller and ecs.is_alive(ids.camera_controller) and
-        ecs.get(ids.camera_controller, "CameraController")
+    local profile = read_controller and ecs.is_alive(ids.camera_controller) and read_controller()
     if profile and (not profile.enabled or ids[profile.target] ~= player) then profile = nil end
     local posture = ecs.get(player, "PlayerPosture")
     local crouched = posture and (posture.crouched or (posture.amount or 0) > 0.001)

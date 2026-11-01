@@ -324,3 +324,53 @@ fn lens_cache_invalidates_after_removal_and_reinsertion() {
         11.0
     );
 }
+
+#[test]
+fn cached_controls_follow_validated_edits_and_component_lifecycle() {
+    let f = Fixture::new(&["camera_zoom.lua"]);
+    let player = f.ids["player"];
+    // Populate the script's reader, then change its data through normal ECS APIs.
+    f.lua.run_systems(1.0 / 60.0).unwrap();
+    f.lua
+        .execute(
+            r#"
+        local p = ecs.get_resource("scene.entities").player
+        local read = engine.component_reader(p, "PlayerControls")
+        local current = read()
+        local edit = ecs.get(p, "PlayerControls")
+        edit.zoom_factor = -5
+        assert(not pcall(function() ecs.set(p, "PlayerControls", edit) end))
+        assert(read().zoom_factor == current.zoom_factor)
+        ecs.set_field(p, "PlayerControls", "zoom_factor", 7)
+        assert(read().zoom_factor == 7)
+        local removed = ecs.remove(p, "PlayerControls")
+        assert(read() == nil)
+        removed.zoom_factor = 3
+        ecs.set(p, "PlayerControls", removed)
+        assert(read().zoom_factor == 3)
+    "#,
+        )
+        .unwrap();
+    f.lua
+        .dispatch(
+            "input.mouse_button",
+            &json!({
+                "button":"right", "pressed":true, "gameplay":true
+            }),
+        )
+        .unwrap();
+    for _ in 0..100 {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert!((magnification(&f.camera()) - 3.0).abs() < 0.001);
+    // Native mutable access must invalidate the same reader as script edits.
+    f.world
+        .borrow_mut()
+        .get_mut::<PlayerControls>(player)
+        .unwrap()
+        .zoom_factor = 6.0;
+    for _ in 0..100 {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert!((magnification(&f.camera()) - 6.0).abs() < 0.001);
+}

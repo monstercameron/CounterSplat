@@ -1,6 +1,21 @@
 -- Script-neutral scene requests travel through the ordinary ECS event queue.
 -- The host validates and carries them out after the current script pass.
 engine = { scene = {}, physics = {}, input = {} }
+
+-- A reader retains a private snapshot until the ECS reports a change. Treat
+-- returned tables and their children as read-only; use ecs.get before editing.
+-- Untracked adapters automatically return a fresh snapshot on every call.
+function engine.component_reader(entity, name)
+    local revision, value
+    return function()
+        local change = ecs.get_if_changed(entity, name, revision)
+        if change then
+            revision = change.revision ~= ecs.null and change.revision or nil
+            if change.present then value = change.value else value = nil end
+        end
+        return value
+    end
+end
 -- Treat either physical modifier as the default Shift/Ctrl binding. Explicit
 -- non-modifier rebindings still match exactly one physical key.
 function engine.input.is_down(held, code)
