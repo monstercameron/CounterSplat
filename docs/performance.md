@@ -273,6 +273,12 @@ shader with and without visibility counting. It requires timestamp-query
 support and measures only that shader, not the rest of sorting or rendering.
 
 Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render --lib benchmark_final_radix_keys -- --ignored --nocapture
+--test-threads=1` to compare full GPU sorts with and without the final, unused
+key write. It alternates 90 measured pairs after warm-up and requires timestamp
+queries. It excludes scene drawing and presentation.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-render --lib benchmark_uniform_float_bytes -- --ignored
 --nocapture --test-threads=1` to compare allocating and borrowing matrix
 uniform bytes. This isolates CPU encoding and excludes GPU work.

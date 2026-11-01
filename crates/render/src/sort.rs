@@ -303,7 +303,8 @@ impl DepthSorter {
                 &[
                     ("CURRENT_BIT", bit),
                     ("IS_FIRST_PASS", u32::from(pass == 0)),
-                    ("IS_LAST_PASS", 0),
+                    // The next sort regenerates keys; only the final values are consumed.
+                    ("IS_LAST_PASS", u32::from(pass + 1 == PASS_COUNT)),
                 ],
             );
             let histogram_pipeline = pipeline(
@@ -803,6 +804,23 @@ fn pack_depth_uniform(
 mod uniform_tests {
     use super::*;
 
+    // Recreate the previous final pass for paired GPU comparisons.
+    fn use_final_key_write(sorter: &mut DepthSorter, device: &wgpu::Device) {
+        let pass = PASS_COUNT - 1;
+        let src = specialize(
+            REORDER_SRC,
+            &[
+                ("CURRENT_BIT", SKIPPED_KEY_BITS + pass * BITS_PER_PASS),
+                ("IS_FIRST_PASS", u32::from(pass == 0)),
+                ("IS_LAST_PASS", 0),
+            ],
+        );
+        let index = pass as usize;
+        let layout = sorter.reorder_pipelines[index].get_bind_group_layout(0);
+        sorter.reorder_pipelines[index] =
+            pipeline(device, "reference final keys", &layout, &src, "main");
+    }
+
     fn reference(
         view_model: &Mat4,
         clip: &Mat4,
@@ -886,7 +904,9 @@ mod uniform_tests {
             u64::from(count) * 4,
             wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
         );
-        let counted = DepthSorter::new(&device, &queue, count, &centers, &fade_a);
+        // Compare the old final-key write with the optimized direct sorter.
+        let mut counted = DepthSorter::new(&device, &queue, count, &centers, &fade_a);
+        use_final_key_write(&mut counted, &device);
         let direct = DepthSorter::new_for_direct_draw(&device, &queue, count, &centers, &fade_b);
         let matrix = crate::camera::IDENTITY;
         let cut = Cutout {
@@ -944,6 +964,100 @@ mod uniform_tests {
                 "fade values scenario {scenario}"
             );
         }
+    }
+
+    #[test]
+    #[ignore = "manual GPU timestamp benchmark"]
+    fn benchmark_final_radix_keys() {
+        use crate::gpu_timing::{GpuFrameTimer, GpuTiming};
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        else {
+            return;
+        };
+        if !adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            return;
+        }
+        let Ok((device, queue)) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                required_features: wgpu::Features::TIMESTAMP_QUERY,
+                ..Default::default()
+            }))
+        else {
+            return;
+        };
+        let count = 2_550_000u32;
+        let storage = wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC;
+        let buffer = |label: &str, size| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage: storage,
+                mapped_at_creation: false,
+            })
+        };
+        let centers = buffer("sort benchmark centers", u64::from(count) * 12);
+        let points: Vec<[f32; 3]> = (0..count)
+            .map(|i| {
+                [
+                    ((i % 251) as f32 - 125.0) * 0.02,
+                    0.0,
+                    -1.0 - (i % 5000) as f32 * 0.01,
+                ]
+            })
+            .collect();
+        queue.write_buffer(&centers, 0, bytemuck::cast_slice(&points));
+        let fades = [
+            buffer("old fade", u64::from(count) * 4),
+            buffer("new fade", u64::from(count) * 4),
+        ];
+        let outputs = [
+            buffer("old order", u64::from(count) * 4),
+            buffer("new order", u64::from(count) * 4),
+        ];
+        let mut old = DepthSorter::new_for_direct_draw(&device, &queue, count, &centers, &fades[0]);
+        use_final_key_write(&mut old, &device);
+        let sorters = [
+            old,
+            DepthSorter::new_for_direct_draw(&device, &queue, count, &centers, &fades[1]),
+        ];
+        let matrix = crate::camera::IDENTITY;
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..100 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                sorters[mode].invalidate();
+                let timer = GpuFrameTimer::new(&device).unwrap();
+                let mut encoder = device.create_command_encoder(&Default::default());
+                assert!(timer.begin(&mut encoder, round));
+                sorters[mode].encode(&queue, &mut encoder, &matrix, None, None, &outputs[mode]);
+                assert!(timer.end(&mut encoder, "sort"));
+                queue.submit(Some(encoder.finish()));
+                assert!(timer.submitted(&queue));
+                device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+                let GpuTiming::Complete { milliseconds, .. } = timer.timing() else {
+                    panic!("GPU timer failed");
+                };
+                if round >= 10 {
+                    samples[mode].push(milliseconds);
+                }
+            }
+        }
+        let mut paired: Vec<_> = samples[0]
+            .iter()
+            .zip(&samples[1])
+            .map(|(old, new)| new - old)
+            .collect();
+        paired.sort_by(f64::total_cmp);
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        let mid = samples[0].len() / 2;
+        println!(
+            "full sort for {count} splats ({} pairs): previous {:.4} ms, skip final key write {:.4} ms; paired median delta {:.4} ms",
+            samples[0].len(), samples[0][mid], samples[1][mid], paired[mid]
+        );
     }
 
     #[test]
