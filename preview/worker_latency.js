@@ -8,6 +8,8 @@ export class WorkerLatency {
       throw new RangeError('Invalid worker latency bounds');
     this.capacity = capacity; this.pendingLimit = pendingLimit; this.now = now;
     this.pending = new Map(); this.operations = new Map(); this.evicted = 0;
+    this.applied = []; this.appliedEvicted = 0;
+    this.requestToSubmit = []; this.appliedToSubmit = [];
   }
   start(id, operation, batchSize) {
     if (!Number.isSafeInteger(id) || typeof operation !== 'string') return;
@@ -38,9 +40,33 @@ export class WorkerLatency {
       data.worker.push(workerMs);
       if (data.worker.length > this.capacity) data.worker.shift();
     }
+    return entry.started;
   }
+  // Only a result accepted by the ECS can contribute to a subsequent frame.
+  markApplied(started) {
+    const applied = this.now();
+    if (!Number.isFinite(started) || !Number.isFinite(applied) || applied < started) return;
+    if (this.applied.length >= this.pendingLimit) { this.applied.shift(); this.appliedEvicted++; }
+    this.applied.push({started, applied});
+  }
+  markSubmitted() {
+    if (!this.applied.length) return;
+    const submitted = this.now();
+    for (const entry of this.applied) {
+      if (!Number.isFinite(submitted) || submitted < entry.applied) continue;
+      this.requestToSubmit.push(submitted - entry.started);
+      this.appliedToSubmit.push(submitted - entry.applied);
+      if (this.requestToSubmit.length > this.capacity) this.requestToSubmit.shift();
+      if (this.appliedToSubmit.length > this.capacity) this.appliedToSubmit.shift();
+    }
+    this.applied.length = 0;
+  }
+  clearApplied() { this.applied.length = 0; }
   snapshot() {
     return {pending:this.pending.size, evicted:this.evicted,
+      movement_submit:{pending:this.applied.length, evicted:this.appliedEvicted,
+        request_to_submit_ms:summarizeSamples(this.requestToSubmit),
+        applied_to_submit_ms:summarizeSamples(this.appliedToSubmit)},
       operations:Object.fromEntries([...this.operations].map(([name, data]) => [name, {
         completed:data.completed, errors:data.errors,
         round_trip_ms:summarizeSamples(data.roundTrip), worker_ms:summarizeSamples(data.worker),

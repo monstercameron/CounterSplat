@@ -19,6 +19,7 @@ export class VoxelRuntime {
   }
   enableLatencyProfile(now = () => performance.now()) { this.latency = new WorkerLatency({now}); }
   latencyReport() { return this.latency?.snapshot() ?? null; }
+  markFrame() { if (this.isCurrent()) this.latency?.markSubmitted(); }
   send(message) {
     if (this.latency && Number.isSafeInteger(message.id)) {
       this.latency.start(message.id, message.type, message.deltas?.length);
@@ -61,14 +62,15 @@ export class VoxelRuntime {
   suspend() {
     if (!this.isCurrent()) return;
     this.setCapture(false); this.releaseAll(false); this.groundRequests.clear(); this.clearanceRequests.clear();
+    this.latency?.clearApplied();
   }
   stop() {
-    this.worker.terminate();
+    this.worker.terminate(); this.latency?.clearApplied();
     this.bodies.clear(); this.requests.clear(); this.groundRequests.clear(); this.clearanceRequests.clear(); this.traceRequests.clear(); this.debugPending = null;
   }
   fail(error) {
     if (!this.isCurrent()) return;
-    this.setCapture(false); this.releaseAll(true);
+    this.setCapture(false); this.releaseAll(true); this.latency?.clearApplied();
     for (const request of this.traceRequests.values()) this.traceResult(request, 'error');
     this.traceRequests.clear();
     this.visible = false; this.game.clear_voxel_debug(); this.count = 0;
@@ -83,8 +85,8 @@ export class VoxelRuntime {
   }
   onMessage(data) {
     if (!this.isCurrent()) return;
-    if (this.latency && Number.isSafeInteger(data?.id))
-      this.latency.finish(data.id, data.worker_ms, data.type === 'error');
+    const timingStart = this.latency && Number.isSafeInteger(data?.id)
+      ? this.latency.finish(data.id, data.worker_ms, data.type === 'error') : undefined;
     try {
       if (data.type === 'ready') {
         this.resolution = data.resolution; this.setState('ready');
@@ -151,6 +153,7 @@ export class VoxelRuntime {
           const attempted = VoxelRuntime.total(request.deltas);
           const moved = position.map((value, i) => value - request.start[i]);
           pose.position = position; this.set(id, entry.component, pose);
+          this.latency?.markApplied(timingStart);
           this.call({op:'emit', name:'physics.motion_resolved', value:{entity:id, attempted, moved}});
         } else {
           // A teleport, removed body, settings change, or a disabled collider superseded this response.

@@ -50,6 +50,10 @@ the number of movement deltas in a request. The difference between the two
 timings is
 not a pure copy or transport measurement. Timer precision and profiling overhead
 affect short requests; cancelled or evicted requests may not be represented.
+`movement_submit` measures accepted movement updates from posting and from
+applying their result until the next submitted gameplay frame. It excludes time
+before the request, GPU completion, and display scanout; a submitted frame is
+not proof that the update has appeared on screen.
 
 These are CPU wall times and submission intervals, not GPU timestamps or actual
 monitor-present feedback. The optional per-system profiler adds overhead.

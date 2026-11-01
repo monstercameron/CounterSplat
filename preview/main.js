@@ -856,6 +856,7 @@ function tick(timestamp) {
       timedRenderer?.arm_frame_timing();
       const renderStart = frameProfiler ? performance.now() : 0;
       submitted = active.frame(timestamp);
+      if (submitted && frameProfiler && mode === 'gameplay') voxelRuntime?.markFrame();
       if (frameProfiler) renderMs = performance.now() - renderStart;
       const rustTiming = timedRenderer ? JSON.parse(timedRenderer.take_frame_timing()) : null;
       if (active.ui_take_layout_changed()) saveLayout(active, layoutScene());
