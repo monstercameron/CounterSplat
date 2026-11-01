@@ -120,16 +120,31 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
-  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil)
+  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil and __ecs_set_scalar == nil and __ecs_set_vector == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
   assert(ecs.get('entity', 'False') == false)
+  assert(select('#', ecs.get('entity', 'Missing')) == 0)
+  assert(select('#', ecs.get('entity', 'Nullable')) == 1)
+  assert(select('#', ecs.get('entity', 'False')) == 1)
   assert(ecs.get_resource('null-resource') == ecs.null and ecs.get_resource('false-resource') == false)
   assert(ecs.get_resource('missing-resource') == nil)
+  assert(select('#', ecs.get_resource('missing-resource')) == 0)
+  assert(select('#', ecs.get_resource('null-resource')) == 1)
   assert(ecs.get('entity', '__proto__') == 'safe' and not ecs.has('entity', 'Missing'))
   ecs.set_field('entity', 'Stats', 'hp', 25)
   ecs.set_field('entity', 'Stats', 'optional', ecs.null)
+  ecs.set_field('entity', 'Stats', 'position', {1, -2, 3.5})
+  local vector = ecs.array(); vector[1], vector[2], vector[3] = 4, 5, 6
+  ecs.set_field('entity', 'Stats', 'velocity', vector)
+  ecs.set_field('entity', 'Stats', 'flag', false)
+  ecs.set_field('entity', 'Stats', 'label', 'safe')
+  local wrapped = setmetatable({1,2,3}, {__pairs=function() return next, {7,8,9}, nil end})
+  ecs.set_field('entity', 'Stats', 'wrapped', wrapped)
+  ecs.set_field('entity', 'Stats', 'object', {[1]=1, [2]=2, [3]=3, extra=4})
+  local sparse = ecs.array(); sparse[1], sparse[3] = 1, 3
+  assert(not pcall(function() ecs.set_field('entity', 'Stats', 'sparse', sparse) end))
   ecs.set_field('entity', 'Stats', '__proto__', 'safe')
   ecs.set_fields('entity', 'Stats', {hp=30, optional=ecs.null})
   ecs.set_fields('entity', 'Stats', {})
@@ -139,9 +154,13 @@ game.vm.doStringSync(`
   assert(not pcall(function() ecs.set_fields('entity', 'Stats', patch_cycle) end))
   local stats = ecs.get('entity', 'Stats')
   assert(stats.hp == 30 and stats.keep and stats.optional == ecs.null and stats.__proto__ == 'safe')
+  assert(stats.position[2] == -2 and stats.position[3] == 3.5 and stats.velocity[1] == 4)
+  assert(stats.flag == false and stats.label == 'safe' and stats.wrapped[1] == 7)
+  assert(stats.object.extra == 4)
   local changed = ecs.get_if_changed('entity', 'Stats')
   assert(changed.present and changed.value.hp == 30 and type(changed.revision) == 'string')
   assert(ecs.get_if_changed('entity', 'Stats', changed.revision) == nil)
+  assert(select('#', ecs.get_if_changed('entity', 'Stats', changed.revision)) == 0)
   local bad_revision = {}; bad_revision.self = bad_revision
   assert(not pcall(function() ecs.get_if_changed('entity', 'Stats', bad_revision) end))
   ecs.set_field('entity', 'Stats', 'hp', 31)
@@ -165,6 +184,7 @@ game.vm.doStringSync(`
   assert(not pcall(function() ecs.get_if_changed('stale', 'Stats') end))
   assert(not pcall(function() ecs.set_field('entity', 'Missing', 'hp', 1) end))
   assert(not pcall(function() ecs.set_field('entity', 'Stats', 'bad', 0/0) end))
+  assert(not pcall(function() ecs.set_field('entity', 'Stats', 'bad', math.huge) end))
   -- Non-string arguments still use the validating general encoder.
   local cycle = {}; cycle.self = cycle
   assert(not pcall(function() ecs.get(cycle, 'Health') end))
@@ -271,6 +291,7 @@ const queryWorld = {ecs_operation(_layer, encoded) {
   const op = JSON.parse(encoded);
   queryCalls.push(op);
   if (op.op !== 'query' || !Array.isArray(op.components)) throw new Error('invalid query');
+  if (op.components[0] === 'absent') return JSON.stringify({found:false, value:null});
   return JSON.stringify({found:true, value:['entity']});
 }};
 const queryScene = await LuaScene.create(factory, queryWorld, 'gameplay', engineApi, []);
@@ -284,6 +305,7 @@ queryScene.vm.doStringSync(`
   assert(ecs.query(proxy)[1] == 'entity')
   assert(ecs.query({'PhysicsBody', 'Transform'})[1] == 'entity')
   assert(ecs.query(ecs.array())[1] == 'entity')
+  assert(select('#', ecs.query({'absent'})) == 0)
   assert(not pcall(function() ecs.query({[1]='PhysicsBody', extra='invalid'}) end))
   local cycle = {}; cycle.self = cycle
   assert(not pcall(function() ecs.query(cycle) end))

@@ -5,9 +5,12 @@
 const INSTRUCTION_LIMIT = 10_000_000;
 const HOOK_INTERVAL = 1_000;
 const BOOTSTRAP = `
-local call, call_flat, call_changed, call_strings, query_one = __ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings, __ecs_query_one
+local call, call_flat = __ecs_call, __ecs_call_flat
+local call_changed, call_strings, query_one = __ecs_call_changed, __ecs_call_strings, __ecs_query_one
+local set_scalar, set_vector = __ecs_set_scalar, __ecs_set_vector
 local type, pairs, ipairs, next_key, raw_get, get_meta = type, pairs, ipairs, next, rawget, getmetatable
 local profile_now, profile_sample = __profile_now, __profile_sample
+local huge = math.huge
 local set_hook, raw_pcall, raw_xpcall, raise, select_value =
     debug.sethook, pcall, xpcall, error, select
 local exhausted, remaining, budget_depth = {}, 0, 0
@@ -46,7 +49,9 @@ local function bounded(fn, ...)
         raise(result, 0)
     end
 end
-__ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings, __ecs_query_one, __profile_now, __profile_sample = nil, nil, nil, nil, nil, nil, nil
+__ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings = nil, nil, nil, nil
+__ecs_query_one, __ecs_set_scalar, __ecs_set_vector = nil, nil, nil
+__profile_now, __profile_sample = nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
     count.n = count.n + 1
@@ -89,12 +94,18 @@ local function invoke_flat(op, args)
     if result.found then return decode(result.value) end
 end
 local function invoke_one_string(op, key, value)
-    if type(value) == "string" then return decode(call_strings(op, key, value)) end
+    if type(value) == "string" then
+        local result = call_strings(op, key, value)
+        if result ~= nil then return decode(result) end
+        return
+    end
     return invoke(op, {[key] = value})
 end
 local function invoke_two_strings(op, key1, value1, key2, value2)
     if type(value1) == "string" and type(value2) == "string" then
-        return decode(call_strings(op, key1, value1, key2, value2))
+        local result = call_strings(op, key1, value1, key2, value2)
+        if result ~= nil then return decode(result) end
+        return
     end
     return invoke(op, {[key1] = value1, [key2] = value2})
 end
@@ -113,7 +124,9 @@ function ecs.query(components)
     if type(components) == "table" and get_meta(components) == nil then
         local component = raw_get(components, 1)
         if type(component) == "string" and next_key(components) == 1 and next_key(components, 1) == nil then
-            return decode(query_one(component))
+            local result = query_one(component)
+            if result ~= nil then return decode(result) end
+            return
         end
     end
     return invoke("query", { components = components })
@@ -124,14 +137,42 @@ function ecs.get_if_changed(id, name, revision)
         (revision == nil or type(revision) == "string") then
         local result = call_changed(id, name, revision)
         if result ~= false then return decode(result) end
-        return nil
+        return
     end
     return invoke("get_if_changed", {id = id, name = name, revision = revision})
 end
 function ecs.get_many(id, names) return invoke("get_many", { id = id, names = names }) end
 function ecs.has(id, name) return invoke_two_strings("has", "id", id, "name", name) end
 function ecs.set(id, name, value) invoke("set", { id = id, name = name, value = value }) end
-function ecs.set_field(id, name, field, value) invoke("set_field", { id = id, name = name, field = field, value = value }) end
+local function finite_number(value)
+    return type(value) == "number" and value == value and value ~= huge and value ~= -huge
+end
+function ecs.set_field(id, name, field, value)
+    if type(id) == "string" and type(name) == "string" and type(field) == "string" then
+        local kind = type(value)
+        if kind == "string" or kind == "boolean" or finite_number(value) then
+            set_scalar(id, name, field, value)
+            return
+        end
+        -- Physics commonly writes three-number vectors. Only ordinary tables
+        -- containing exactly those three entries can bypass general encoding.
+        if kind == "table" and get_meta(value) == nil then
+            local x, y, z = raw_get(value, 1), raw_get(value, 2), raw_get(value, 3)
+            if finite_number(x) and finite_number(y) and finite_number(z) then
+                local key, count = next_key(value), 0
+                while key ~= nil and (key == 1 or key == 2 or key == 3) do
+                    count = count + 1
+                    key = next_key(value, key)
+                end
+                if key == nil and count == 3 then
+                    set_vector(id, name, field, x, y, z)
+                    return
+                end
+            end
+        end
+    end
+    invoke("set_field", { id = id, name = name, field = field, value = value })
+end
 function ecs.set_fields(id, name, fields) invoke("set_fields", { id = id, name = name, fields = fields }) end
 function ecs.remove(id, name) return invoke_two_strings("remove", "id", id, "name", name) end
 function ecs.get_resource(name) return invoke_one_string("get_resource", "name", name) end
@@ -254,6 +295,14 @@ export class LuaScene {
       vm.global.set('__ecs_query_one', component => {
         const result = host.call({op:'query', components:[component]}, true);
         return result.found ? encodeResult(result.value) : undefined;
+      });
+      // These callbacks receive only primitive values validated by the private
+      // Lua wrappers. All other field values use the general JSON encoder.
+      vm.global.set('__ecs_set_scalar', (id, name, field, value) => {
+        host.call({op:'set_field', id, name, field, value}, true);
+      });
+      vm.global.set('__ecs_set_vector', (id, name, field, x, y, z) => {
+        host.call({op:'set_field', id, name, field, value:[x, y, z]}, true);
       });
       if (profile) {
         vm.global.set('__profile_now', () => performance.now());
