@@ -17,7 +17,8 @@ change; the level panel also reuses revision-tracked settings between changes.
 The player controls panel skips unchanged widget writes while still
 correcting external widget edits, and settled camera/posture systems avoid
 writing unchanged components. The zoom lens also skips interpolation when both
-lens snapshots and the blend are unchanged.
+lens snapshots and the blend are unchanged. Camera bob and movement reuse
+change-tracked posture snapshots until the posture component changes.
 Lua can use `ecs.get_many(entity, {"A", "B"})` to read several
 components through one bridge call. The result maps names to values, omits
 missing components, and preserves present JSON null values as `ecs.null`.

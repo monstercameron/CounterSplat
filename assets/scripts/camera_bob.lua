@@ -4,6 +4,7 @@ local ids = assert(ecs.get_resource("scene.entities"))
 local player = assert(ids.player)
 local read_controls = engine.component_reader(player, "PlayerControls")
 local read_rig = engine.component_reader(player, "PlayerRig")
+local read_posture = engine.component_reader(player, "PlayerPosture")
 local read_controller = ids.camera_controller and engine.component_reader(ids.camera_controller, "CameraController")
 
 -- These exports are ordinary PlayerControls fields, so Entity settings edits
@@ -87,7 +88,7 @@ ecs.system("player.camera_bob", function(dt)
     local moving = controls.enabled and controls.bob_enabled and grounded
     local profile = read_controller and ecs.is_alive(ids.camera_controller) and read_controller()
     if profile and (not profile.enabled or ids[profile.target] ~= player) then profile = nil end
-    local posture = ecs.get(player, "PlayerPosture")
+    local posture = read_posture()
     local crouched = posture and (posture.crouched or (posture.amount or 0) > 0.001)
     local running = profile and not crouched and engine.input.is_down(held, controls.bindings.sprint)
     since_motion = since_motion + dt

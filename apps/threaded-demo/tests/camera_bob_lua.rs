@@ -258,3 +258,80 @@ fn inspector_edits_and_persists_lua_bob_exports() {
         PlayerControls::default()
     );
 }
+
+#[test]
+fn bob_tracks_external_posture_changes_and_removal() {
+    let standing = Fixture::new(&["camera_bob.lua"]);
+    let crouched = Fixture::new(&["camera_bob.lua"]);
+    for fixture in [&standing, &crouched] {
+        let player = fixture.ids["player"];
+        let mut world = fixture.world.borrow_mut();
+        world.set_dynamic_resource("voxel.capture_movement", json!(true));
+        world.get_mut::<PhysicsBody>(player).unwrap().grounded = true;
+    }
+    fn step(fixture: &Fixture) {
+        fixture
+            .lua
+            .dispatch(
+                "physics.motion_resolved",
+                &json!({
+                    "entity":fixture.ids["player"].to_string(), "moved":[0.0,0.0,-0.07]
+                }),
+            )
+            .unwrap();
+        fixture.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    for _ in 0..20 {
+        step(&standing);
+        step(&crouched);
+    }
+    let player = crouched.ids["player"];
+    crouched
+        .world
+        .borrow_mut()
+        .write_component_field(player, "PlayerPosture", "crouched", json!(true))
+        .unwrap();
+    for _ in 0..90 {
+        step(&standing);
+        step(&crouched);
+    }
+    let mut standing_energy = 0.0;
+    let mut crouched_energy = 0.0;
+    for _ in 0..60 {
+        step(&standing);
+        step(&crouched);
+        standing_energy += standing
+            .camera()
+            .view_offset
+            .iter()
+            .map(|x| x * x)
+            .sum::<f32>();
+        crouched_energy += crouched
+            .camera()
+            .view_offset
+            .iter()
+            .map(|x| x * x)
+            .sum::<f32>();
+    }
+    assert!(standing_energy > 0.0);
+    assert!(
+        crouched_energy < standing_energy * 0.3,
+        "crouching should damp bob after an external edit"
+    );
+    crouched
+        .world
+        .borrow_mut()
+        .remove_dynamic(player, "PlayerPosture");
+    for _ in 0..120 {
+        step(&standing);
+        step(&crouched);
+    }
+    let a = standing.camera().view_offset;
+    let b = crouched.camera().view_offset;
+    for i in 0..3 {
+        assert!(
+            (a[i] - b[i]).abs() < 0.0001,
+            "removing posture restores standing bob"
+        );
+    }
+}

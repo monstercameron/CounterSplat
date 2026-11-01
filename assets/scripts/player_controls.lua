@@ -4,6 +4,7 @@ local ids = assert(ecs.get_resource("scene.entities"), "gameplay entities are mi
 local player = assert(ids.player, "player entity is missing")
 local read_controls = engine.component_reader(player, "PlayerControls")
 local read_rig = engine.component_reader(player, "PlayerRig")
+local read_posture = engine.component_reader(player, "PlayerPosture")
 local read_level = ids.active_level and engine.component_reader(ids.active_level, "VoxelCollider")
 local read_level_state = ids.active_level and engine.component_reader(ids.active_level, "VoxelColliderState")
 
@@ -116,7 +117,7 @@ local function apply_rig(preserve_feet)
     if last_rig and last_rig.eye_height_m == rig.eye_height_m and
         last_rig.radius_m == rig.radius_m and last_rig.head_clearance_m == rig.head_clearance_m and
         last_rig.units_per_meter == rig.units_per_meter then return end
-    local posture = ecs.get(player, "PlayerPosture")
+    local posture = read_posture()
     -- Defer size/scale edits while crouched; standing probes the new dimensions.
     if last_rig and posture and posture.crouched then return end
     local body = assert(ecs.get(player, "PhysicsBody"), "player physics is missing")
@@ -394,7 +395,7 @@ ecs.system("player.camera", function(dt)
     if length == 0 and hop == 0 then return end
     local camera = ecs.get(player, "PlayerCamera")
     local rig = assert(read_rig())
-    local posture = ecs.get(player, "PlayerPosture")
+    local posture = read_posture()
     local crouched = posture and (posture.crouched or (posture.amount or 0) > 0.001)
     local multiplier = engine.input.is_down(held, b.sprint) and settings.sprint_multiplier or 1
     if crouched then
