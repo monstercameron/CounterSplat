@@ -9,6 +9,7 @@ engine.export(player, "zoom_response", {component="PlayerControls", field="zoom_
 local held = false
 local magnification, lens_blend = 1, 0
 local last_lens = nil
+local last_standard, last_zoom, last_amount = nil, nil, nil
 local read_standard_lens = engine.component_reader(player, "CameraLens")
 local read_zoom_lens = engine.component_reader(player, "CameraZoomLens")
 local lens_numbers = {"aperture_f_number", "shutter_angle_degrees", "shutter_fps", "iso",
@@ -19,9 +20,13 @@ local lens_numbers = {"aperture_f_number", "shutter_angle_degrees", "shutter_fps
 local function publish_lens(amount)
     local standard, zoom = read_standard_lens(), read_zoom_lens()
     if not standard or not zoom then
+        last_standard, last_zoom, last_amount = nil, nil, nil
         if last_lens then ecs.remove_resource("camera.render_lens"); last_lens = nil end
         return
     end
+    -- Readers return the same read-only table until a lens changes. Once the
+    -- blend settles, neither interpolation nor signature allocation is needed.
+    if standard == last_standard and zoom == last_zoom and amount == last_amount then return end
     local result, parts = {}, {}
     for _, field in ipairs(lens_numbers) do
         result[field] = standard[field] + (zoom[field] - standard[field]) * amount
@@ -38,6 +43,7 @@ local function publish_lens(amount)
         ecs.set_resource("camera.render_lens", result)
         last_lens = signature
     end
+    last_standard, last_zoom, last_amount = standard, zoom, amount
 end
 
 ecs.on("input.mouse_button", function(event)
