@@ -12,6 +12,8 @@ import { preloadChunks } from '/pkg/chunk_preload.js';
 import { loadMetadataInWorker } from '/pkg/metadata_client.js';
 import { LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl } from '/asset_loader.js';
 import { FrameProfiler } from '/pkg/frame_profile.js';
+import { InputFrameLatency } from '/pkg/input_latency.js';
+import { GAMEPLAY_INPUT_CHANNELS, GAMEPLAY_EVENT_CHANNELS } from '/pkg/gameplay_events.js';
 import { FrameStackCapture, summarizeFrameStacks, medianGpuSample } from '/pkg/frame_stack_profile.js';
 
 const canvas = document.getElementById('canvas');
@@ -22,6 +24,7 @@ const metrics = document.getElementById('metrics');
 const profileOptions = new URLSearchParams(location.search);
 const stackRequested = profileOptions.get('stack_profile') === '1';
 const frameProfiler = profileOptions.has('profile') || stackRequested ? new FrameProfiler() : null;
+const inputLatency = frameProfiler ? new InputFrameLatency() : null;
 const stackCapture = stackRequested ? new FrameStackCapture((summary, raw) => {
   const gpu = active && mode === 'gameplay' ? JSON.parse(active.gpu_frame_timing()) : null;
   const selected = medianGpuSample(gpu?.samples);
@@ -173,11 +176,8 @@ function savePlayerControls(settings) {
   try { localStorage.setItem(playerControlsKey, JSON.stringify(settings)); }
   catch (error) { console.warn('Could not save player controls:', error); }
 }
-const gameplayEventChannels = new EventChannels(['input.key', 'input.mouse_delta', 'input.mouse_button', 'input.reset',
-  'ui.action', 'editor.entity_selected', 'physics.ready', 'physics.ground_result',
-  'physics.clearance_result', 'physics.trace_result', 'physics.motion_resolved', 'physics.motion_error',
-  'physics.collision', 'physics.error', 'weapon.trigger', 'weapon.aim', 'weapon.reload',
-  'weapon.equip', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.posture']);
+const gameplayInputChannels = new EventChannels(GAMEPLAY_INPUT_CHANNELS);
+const gameplayEventChannels = new EventChannels(GAMEPLAY_EVENT_CHANNELS);
 const tickEventChannels = new EventChannels(['weapon.shot', 'weapon.dry_fire', 'projectile.spawned',
   'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death']);
 const outputChannels = new EventChannels(['player.controls_changed', 'camera.lens_changed', 'camera.zoom_lens_changed',
@@ -211,6 +211,7 @@ function dispatchGameplayEvents(runtime) {
   runtime.dispatchPending(gameplayEventChannels);
 }
 function closeScripts() {
+  inputLatency?.clearPending();
   gameplayLua?.close(); menuLua?.close();
   gameplayLua = null; menuLua = null; lastScriptTime = null;
 }
@@ -226,7 +227,7 @@ function processSceneRequests(runtime) {
     if (mode === 'gameplay' && request.action === 'push' && sceneAsset(gameplayScene, gameplayUrl, request.scene) === menuUrl.href) {
       gameplayMouse.reset(); gameplayFire.reset();
       runtime.dispatch('input.reset', {});
-      voxelRuntime?.suspend();
+      voxelRuntime?.suspend(); inputLatency?.clearPending();
       releaseMouseLook();
       active.ui_focus(false); active.ui_pointer_gone();
       active.set_menu_visible(true); active.set_paused(true); mode = 'menu';
@@ -579,7 +580,7 @@ async function launchLevel(id, sceneId = '') {
     restoreImageCorrection(pendingGame);
     publishPlayerRigData(pendingGame, selected);
     gameplayScripts = scripts.gameplay; menuScripts = scripts.menu; engineApi = scripts.engine;
-    if (frameProfiler) { frameProfiler.reset(); profileState = null; }
+    if (frameProfiler) { frameProfiler.reset(); inputLatency.reset(); profileState = null; }
     gameplayLua = await LuaScene.create(luaFactory, pendingGame, 'gameplay', engineApi, gameplayScripts, !!frameProfiler);
     menuLua = await LuaScene.create(luaFactory, pendingGame, 'menu', engineApi, menuScripts);
     if (generation !== token) { closeScripts(); pendingGame.free(); pendingGame = null; return; }
@@ -707,8 +708,10 @@ function attachInput() {
       gameplayFire.update(event, startingLeft && gameplayPointer(scene, event));
     });
     if (mode === 'gameplay' && (document.pointerLockElement === canvas || dragLook)) {
-      if (Number.isFinite(event.movementX) && Number.isFinite(event.movementY))
-        gameplayLua?.emit('input.mouse_delta', {dx:event.movementX, dy:event.movementY});
+      if (gameplayLua && Number.isFinite(event.movementX) && Number.isFinite(event.movementY)) {
+        gameplayLua.emit('input.mouse_delta', {dx:event.movementX, dy:event.movementY});
+        inputLatency?.recordInput();
+      }
       return;
     }
     send(scene => { const [x,y] = point(event); scene.ui_pointer_move(x,y); });
@@ -852,11 +855,22 @@ function tick(timestamp) {
           aspectOwner = active; publishedAspect = aspect;
         }
       }
+      let earlyInputMs = 0;
+      if (mode === 'gameplay' && gameplayLua) {
+        const inputStart = frameProfiler ? performance.now() : 0;
+        // Input updates camera and control state before this frame is drawn.
+        // The remaining channels are still visited once, in their original order.
+        gameplayLua.dispatchPending(gameplayInputChannels);
+        inputLatency?.markDispatched();
+        if (frameProfiler) earlyInputMs = performance.now() - inputStart;
+      }
       const timedRenderer = stackFrame?.before ? active : null;
       timedRenderer?.arm_frame_timing();
       const renderStart = frameProfiler ? performance.now() : 0;
       submitted = active.frame(timestamp);
-      if (submitted && frameProfiler && mode === 'gameplay') voxelRuntime?.markFrame();
+      if (submitted && frameProfiler && mode === 'gameplay') {
+        voxelRuntime?.markFrame(); inputLatency.markSubmitted();
+      }
       if (frameProfiler) renderMs = performance.now() - renderStart;
       const rustTiming = timedRenderer ? JSON.parse(timedRenderer.take_frame_timing()) : null;
       if (active.ui_take_layout_changed()) saveLayout(active, layoutScene());
@@ -876,7 +890,7 @@ function tick(timestamp) {
           const dispatchStart = frameProfiler ? performance.now() : 0;
           dispatchGameplayEvents(runtime);
           processSceneRequests(runtime);
-          if (frameProfiler) stages.event_dispatch_ms = performance.now() - dispatchStart;
+          if (frameProfiler) stages.event_dispatch_ms = earlyInputMs + performance.now() - dispatchStart;
           if (mode === 'gameplay' && active) {
             const ticks = active.take_script_ticks();
             for (let i = 0; i < ticks; i++) {
@@ -910,7 +924,7 @@ function tick(timestamp) {
           }
           if (frameProfiler) stages.stream_ms = performance.now() - streamStart;
         }
-        if (frameProfiler) scriptsMs = performance.now() - scriptStart;
+        if (frameProfiler) scriptsMs = earlyInputMs + performance.now() - scriptStart;
       }
       if (timestamp - lastStatus >= 500) {
         if (mode === 'gameplay' && active) {
@@ -961,6 +975,7 @@ function tick(timestamp) {
         if (timestamp - lastProfileReport >= 500) {
           const report = frameProfiler.snapshot(profileState, gameplayLua?.profileReport());
           report.voxel_worker = voxelRuntime?.latencyReport() ?? null;
+          report.mouse_input = inputLatency.snapshot();
           metrics.dataset.profile = JSON.stringify(report);
           lastProfileReport = timestamp;
         }

@@ -54,6 +54,10 @@ affect short requests; cancelled or evicted requests may not be represented.
 applying their result until the next submitted gameplay frame. It excludes time
 before the request, GPU completion, and display scanout; a submitted frame is
 not proof that the update has appeared on screen.
+`mouse_input` measures from when a browser pointer event is queued and from Lua
+dispatch to the first later submitted gameplay frame. It excludes input-device
+and browser delivery delays, GPU completion, and display scanout; it does not
+verify that a handler changed the camera.
 
 These are CPU wall times and submission intervals, not GPU timestamps or actual
 monitor-present feedback. The optional per-system profiler adds overhead.
@@ -109,11 +113,13 @@ cargo build --locked --release --target-dir .artifacts/target -p countersplat-ec
 wasm-bindgen --target web --out-dir .artifacts/ecs-wasm-bench/pkg --out-name ecs_bench .artifacts/target/wasm32-unknown-unknown/release/countersplat_ecs_wasm_bench.wasm
 node scripts/benchmark_lua_wasm_changed.mjs
 node scripts/benchmark_lua_wasm_values.mjs
+node scripts/benchmark_lua_wasm_events.mjs
 ```
 
 The fixture uses a tracked typed component and alternates both paths in the same
 Lua VM. It checks changes and stale handles, then reports the median of 21
-samples of unchanged, liveness, presence, and resource reads. They
+samples of unchanged, liveness, presence, and resource reads. The event fixture
+compares the cost of an empty split versus unsplit dispatch. These benchmarks
 exclude rendering and worker scheduling. The in-scene `?profile=1` report
 includes `lua.bridge_paths` counters so the chosen paths can be checked in a
 live session.

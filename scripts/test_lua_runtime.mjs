@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {Worker} from 'node:worker_threads';
 import {LuaScene, EventChannels} from '../preview/lua_runtime.js';
+import {GAMEPLAY_INPUT_CHANNELS, GAMEPLAY_EVENT_CHANNELS} from '../preview/gameplay_events.js';
 
 const require = createRequire(import.meta.url);
 const {LuaFactory} = require('../third_party/wasmoon/index.js');
@@ -499,6 +500,48 @@ assert.equal(changedScene.profileReport().bridge_paths.resource_field_direct, fi
 if (typeof String.prototype.isWellFormed === 'function') assert(resourceDirectCalls > 0 && fieldDirectCalls > 0);
 assert(changedScene.profileReport().bridge_paths.changed_json >= 3);
 changedScene.close();
+
+// Splitting the gameplay pass around drawing keeps the same channel order.
+// In particular, events emitted for an already visited input channel wait for
+// the next pass, while events for later channels are delivered in this pass.
+const splitSource = `
+  ecs.on('input.key', function(e)
+    ecs.emit('seen',{name='key',id=e.id})
+    if e.initial then ecs.emit('input.mouse_delta',{dx=4}); ecs.emit('input.key',{id='next'}) end
+  end)
+  ecs.on('input.mouse_delta', function(e)
+    ecs.set_resource('test.yaw',e.dx); ecs.emit('seen',{name='mouse',id=e.dx})
+    ecs.emit('input.reset',{id='reset'})
+  end)
+  ecs.on('input.mouse_button', function(e) ecs.emit('seen',{name='button',id=e.id}) end)
+  ecs.on('input.reset', function(e) ecs.emit('seen',{name='reset',id=e.id}) end)
+  ecs.on('ui.action', function(e)
+    ecs.emit('seen',{name='ui',id=e.id}); ecs.emit('input.key',{id='from-ui'})
+    ecs.emit('weapon.trigger',{id='trigger'})
+  end)
+  ecs.on('weapon.trigger', function(e) ecs.emit('seen',{name='weapon',id=e.id}) end)
+`;
+const unsplitWorld = new WorldFixture({}), splitWorld = new WorldFixture({});
+const unsplit = await LuaScene.create(factory,unsplitWorld,'gameplay',engineApi,[splitSource]);
+const split = await LuaScene.create(factory,splitWorld,'gameplay',engineApi,[splitSource]);
+for (const scene of [unsplit,split]) {
+  scene.emit('input.key',{id:'initial',initial:true});
+  scene.emit('input.mouse_button',{id:'button'});
+  scene.emit('ui.action',{id:'ui'});
+}
+const early = new EventChannels(GAMEPLAY_INPUT_CHANNELS), late = new EventChannels(GAMEPLAY_EVENT_CHANNELS);
+unsplit.dispatchPending(new EventChannels([...GAMEPLAY_INPUT_CHANNELS,...GAMEPLAY_EVENT_CHANNELS]));
+split.dispatchPending(early);
+assert.equal(splitWorld.resources.get('test.yaw'),4); // available before drawing
+split.dispatchPending(late);
+assert.deepEqual(split.drain('seen'),unsplit.drain('seen'));
+assert.deepEqual(splitWorld.events.get('input.key'),unsplitWorld.events.get('input.key'));
+assert.deepEqual(splitWorld.events.get('input.reset'),unsplitWorld.events.get('input.reset'));
+unsplit.dispatchPending(new EventChannels([...GAMEPLAY_INPUT_CHANNELS,...GAMEPLAY_EVENT_CHANNELS]));
+split.dispatchPending(early); split.dispatchPending(late);
+assert.deepEqual(split.drain('seen'),unsplit.drain('seen'));
+assert.deepEqual(splitWorld.events.get('input.key'),unsplitWorld.events.get('input.key'));
+unsplit.close(); split.close();
 
 // Dispatching a channel may enqueue events for earlier, current, or later
 // channels. Only later channels are delivered during this pass.
