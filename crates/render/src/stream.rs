@@ -173,6 +173,8 @@ pub struct LevelStream {
     candidates: Vec<usize>,
     /// Reused each frame; sorted by visibility and priority, with leaf order breaking equal-priority ties.
     selection: Vec<SelectionCandidate>,
+    /// Pending upload leaf IDs, reused while chunks arrive and fades complete.
+    upload_order: Vec<usize>,
     free: Vec<(u32, u32)>,
     /// Palette slot → (chunk file, leaves using it).
     palettes: Vec<Option<(usize, u32)>>,
@@ -334,6 +336,7 @@ impl LevelStream {
             leaves,
             candidates: Vec::new(),
             selection,
+            upload_order: Vec::new(),
             palettes,
             distance_scale: 1.0,
             frame: 0,
@@ -831,42 +834,22 @@ impl LevelStream {
                 }
             }
         }
-        let mut order: Vec<usize> = (0..self.leaves.len())
-            .filter(|&i| {
-                self.leaves[i]
-                    .want
-                    .is_some_and(|w| self.leaves[i].have.is_none_or(|h| h.lod != w))
-                    || self.wants_palette(i)
-            })
-            .collect();
-        // Empty leaves first, then those in view, then nearest.
-        order.sort_by(|&a, &b| {
-            let (sa, sb) = (&self.leaves[a], &self.leaves[b]);
-            sb.centered
-                .cmp(&sa.centered)
-                .then(sa.have.is_some().cmp(&sb.have.is_some()))
-                .then(sb.visible.cmp(&sa.visible))
-                .then(sa.distance.total_cmp(&sb.distance))
-        });
+        let mut order = std::mem::take(&mut self.upload_order);
+        self.fill_upload_order(&mut order);
         let mut budget = self.settings.uploads_per_frame;
         let mut uploaded = 0;
-        for i in order {
+        for &i in &order {
             let Some(want) = self.leaves[i].want else {
                 continue;
             };
-            let leaf_lods = self.meta.leaves[i].lods.clone();
-            // A coarse placeholder may cover an empty leaf while detail loads.
-            // A finer-than-selected placeholder can consume far more than the
-            // planned budget and force abrupt evictions when chunks arrive together.
-            let target = if leaf_lods[want].is_some_and(|r| self.chunks.contains_key(&r.file)) {
-                Some(want)
-            } else if self.leaves[i].have.is_none() {
-                loaded_fallback(&leaf_lods, want, |file| self.chunks.contains_key(&file))
-            } else {
-                None
+            let Some((lod, range)) = loaded_range(
+                &self.meta.leaves[i].lods,
+                want,
+                self.leaves[i].have.is_some(),
+                |file| self.chunks.contains_key(&file),
+            ) else {
+                continue;
             };
-            let Some(lod) = target else { continue };
-            let range = leaf_lods[lod].expect("checked above");
             // Do not replace a range halfway through its fade-in. Restarting its
             // fade-out at full opacity produces a visible flash under rapid LOD changes.
             if self.leaves[i]
@@ -972,10 +955,30 @@ impl LevelStream {
             budget = budget.saturating_sub(range.count);
             uploaded += range.count;
         }
+        self.upload_order = order;
         pool.set_active(queue, self.high_water());
         pool.set_fades(queue, &self.fades());
         self.evict();
         uploaded
+    }
+
+    // Preserve the stable priority order while reusing the backing allocation.
+    fn fill_upload_order(&self, order: &mut Vec<usize>) {
+        order.clear();
+        order.extend((0..self.leaves.len()).filter(|&i| {
+            self.leaves[i]
+                .want
+                .is_some_and(|w| self.leaves[i].have.is_none_or(|h| h.lod != w))
+                || self.wants_palette(i)
+        }));
+        order.sort_by(|&a, &b| {
+            let (sa, sb) = (&self.leaves[a], &self.leaves[b]);
+            sb.centered
+                .cmp(&sa.centered)
+                .then(sa.have.is_some().cmp(&sb.have.is_some()))
+                .then(sb.visible.cmp(&sa.visible))
+                .then(sa.distance.total_cmp(&sb.distance))
+        });
     }
 
     /// Whether a resident leaf showing a LOD that gets spherical harmonics went without them (every palette slot was
@@ -1593,6 +1596,24 @@ fn loaded_fallback(
     is_loaded: impl Fn(usize) -> bool,
 ) -> Option<usize> {
     (want..lods.len()).find(|&lod| lods[lod].is_some_and(|range| is_loaded(range.file)))
+}
+
+// A coarse placeholder may cover an empty leaf while detail loads. Do not use
+// a finer fallback, which can overflow the pool and disrupt smooth transitions.
+fn loaded_range(
+    lods: &[Option<Range>],
+    want: usize,
+    has_resident: bool,
+    is_loaded: impl Fn(usize) -> bool,
+) -> Option<(usize, Range)> {
+    let lod = if lods[want].is_some_and(|range| is_loaded(range.file)) {
+        Some(want)
+    } else if !has_resident {
+        loaded_fallback(lods, want, is_loaded)
+    } else {
+        None
+    }?;
+    Some((lod, lods[lod].expect("checked above")))
 }
 
 /// A new range must finish appearing before another transition may replace it.

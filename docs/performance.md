@@ -172,3 +172,8 @@ fixture measures Lua/JavaScript overhead, without Rust, collision, or rendering.
 Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-render benchmark_depth_uniform_packing -- --ignored --nocapture`
 to compare depth-sort uniform packing. This CPU microbenchmark excludes GPU work.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render --lib benchmark_upload_preparation -- --ignored --nocapture`
+to compare pending-upload ordering and loaded-LOD lookup. This measures CPU
+preparation only, without network, encoding, GPU uploads, or rendering.

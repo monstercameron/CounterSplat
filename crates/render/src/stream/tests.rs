@@ -1426,3 +1426,201 @@ fn lower_band_palettes_keep_coefficients_and_pad_with_exact_shared_zero() {
     )
     .is_none());
 }
+
+// The old upload preparation is retained as a reference for ordering and
+// fallback behavior; it intentionally allocates on each call.
+fn upload_order_reference(stream: &LevelStream) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..stream.leaves.len())
+        .filter(|&i| {
+            stream.leaves[i]
+                .want
+                .is_some_and(|w| stream.leaves[i].have.is_none_or(|h| h.lod != w))
+                || stream.wants_palette(i)
+        })
+        .collect();
+    order.sort_by(|&a, &b| {
+        let (sa, sb) = (&stream.leaves[a], &stream.leaves[b]);
+        sb.centered
+            .cmp(&sa.centered)
+            .then(sa.have.is_some().cmp(&sb.have.is_some()))
+            .then(sb.visible.cmp(&sa.visible))
+            .then(sa.distance.total_cmp(&sb.distance))
+    });
+    order
+}
+
+fn loaded_range_reference(
+    lods: &[Option<Range>],
+    want: usize,
+    has_resident: bool,
+    is_loaded: impl Fn(usize) -> bool,
+) -> Option<(usize, Range)> {
+    let copy = lods.to_vec();
+    let lod = if copy[want].is_some_and(|range| is_loaded(range.file)) {
+        Some(want)
+    } else if !has_resident {
+        loaded_fallback(&copy, want, is_loaded)
+    } else {
+        None
+    }?;
+    Some((lod, copy[lod].unwrap()))
+}
+
+#[test]
+fn upload_preparation_preserves_priority_and_loaded_fallbacks() {
+    let mut stream = stream(10_000);
+    for (i, state) in stream.leaves.iter_mut().enumerate() {
+        state.want = if i == 4 { None } else { Some(i % 2) };
+        state.centered = i % 3 == 0;
+        state.visible = i % 2 == 0;
+        state.distance = (i % 3) as f32;
+        if i == 1 || i == 5 {
+            state.have = Some(Resident {
+                lod: 1,
+                start: (i * 100) as u32,
+                count: 10,
+                palette: None,
+                born: 0.0,
+            });
+        }
+    }
+    let expected = upload_order_reference(&stream);
+    let mut scratch = Vec::new();
+    stream.fill_upload_order(&mut scratch);
+    assert_eq!(scratch, expected);
+    let allocation = scratch.as_ptr();
+    stream.fill_upload_order(&mut scratch);
+    assert_eq!(scratch, expected);
+    assert_eq!(
+        scratch.as_ptr(),
+        allocation,
+        "steady-state preparation should reuse its buffer"
+    );
+
+    let lods = [
+        Some(Range {
+            file: 0,
+            offset: 0,
+            count: 40,
+        }),
+        None,
+        Some(Range {
+            file: 2,
+            offset: 5,
+            count: 10,
+        }),
+    ];
+    for want in 0..lods.len() {
+        for has_resident in [false, true] {
+            for mask in 0..8 {
+                let loaded = |file| mask & (1 << file) != 0;
+                assert_eq!(
+                    loaded_range(&lods, want, has_resident, loaded),
+                    loaded_range_reference(&lods, want, has_resident, loaded)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "manual CPU microbenchmark"]
+fn benchmark_upload_preparation() {
+    use std::{hint::black_box, time::Instant};
+    let settings = StreamSettings {
+        capacity: 1_000_000,
+        ..StreamSettings::default()
+    };
+    let mut stream =
+        LevelStream::new(tree(384), &[Some(meta_json()), Some(meta_json())], settings).unwrap();
+    for (i, state) in stream.leaves.iter_mut().enumerate() {
+        state.want = Some(i % 2);
+        state.centered = i % 3 == 0;
+        state.visible = i % 5 != 0;
+        state.distance = (i % 31) as f32;
+    }
+    let mut scratch = Vec::new();
+    stream.fill_upload_order(&mut scratch);
+    let mut old_samples = Vec::new();
+    let mut new_samples = Vec::new();
+    for sample in 0..9 {
+        for old in if sample % 2 == 0 {
+            [true, false]
+        } else {
+            [false, true]
+        } {
+            let start = Instant::now();
+            for _ in 0..1500 {
+                if old {
+                    black_box(upload_order_reference(black_box(&stream)));
+                } else {
+                    stream.fill_upload_order(black_box(&mut scratch));
+                    black_box(&scratch);
+                }
+            }
+            let ns = start.elapsed().as_nanos() as f64 / 1500.0;
+            if old {
+                old_samples.push(ns);
+            } else {
+                new_samples.push(ns);
+            }
+        }
+    }
+    old_samples.sort_by(f64::total_cmp);
+    new_samples.sort_by(f64::total_cmp);
+    println!(
+        "384 pending leaves: old {:.0} ns, reused {:.0} ns",
+        old_samples[4], new_samples[4]
+    );
+
+    let lods: Vec<_> = (0..8)
+        .map(|file| {
+            Some(Range {
+                file,
+                offset: 0,
+                count: 10,
+            })
+        })
+        .collect();
+    old_samples.clear();
+    new_samples.clear();
+    for sample in 0..9 {
+        for old in if sample % 2 == 0 {
+            [true, false]
+        } else {
+            [false, true]
+        } {
+            let start = Instant::now();
+            for i in 0..500_000 {
+                let loaded = |file| black_box(file) == 7;
+                if old {
+                    black_box(loaded_range_reference(
+                        black_box(&lods),
+                        black_box(i % 8),
+                        false,
+                        loaded,
+                    ));
+                } else {
+                    black_box(loaded_range(
+                        black_box(&lods),
+                        black_box(i % 8),
+                        false,
+                        loaded,
+                    ));
+                }
+            }
+            let ns = start.elapsed().as_nanos() as f64 / 500_000.0;
+            if old {
+                old_samples.push(ns);
+            } else {
+                new_samples.push(ns);
+            }
+        }
+    }
+    old_samples.sort_by(f64::total_cmp);
+    new_samples.sort_by(f64::total_cmp);
+    println!(
+        "loaded LOD lookup: old {:.1} ns, borrowed {:.1} ns",
+        old_samples[4], new_samples[4]
+    );
+}
