@@ -37,3 +37,11 @@ monitor-present feedback. The optional per-system profiler adds overhead.
 Compare the same level, view, resolution, viewport, settings and measurement
 duration, and let loading and shader compilation settle before comparing.
 `?profile` is optional; normal play does not collect these detailed samples.
+
+## Browser Lua bridge benchmark
+
+Run `node scripts/benchmark_lua_bridge.mjs` to compare changes to the
+browser Lua value bridge. It warms up Wasmoon and reports nine sorted timings
+for 3,000 reads of a nested component. The fixture includes Lua, JavaScript,
+and JSON conversion, but substitutes a JavaScript ECS response for Rust: use
+the in-browser profiler as well when measuring end-to-end behavior.

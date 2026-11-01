@@ -52,6 +52,13 @@ assert.deepEqual(game.drain('engine.scene'), [{action:'push', scene:'pause_menu'
 game.emit('ui.action', {id:'game-levels', kind:{type:'clicked'}});
 runGameplay();
 assert.deepEqual(game.drain('engine.scene'), [{action:'replace', scene:'level_selector'}]);
+world.resources.set('special-keys', JSON.parse('{"__proto__":{"items":[{},[],null]},"constructor":"safe","kind":"user","entries":"data"}'));
+game.vm.doStringSync(`
+  local special = ecs.get_resource('special-keys')
+  assert(special.__proto__.items[1] ~= nil and #special.__proto__.items[2] == 0)
+  assert(special.__proto__.items[3] == ecs.null)
+  assert(special.constructor == 'safe' and special.kind == 'user' and special.entries == 'data')
+`);
 game.vm.doStringSync(`
   ecs.set_resource('roundtrip', {items = ecs.array(), marker = ecs.null, nested = {1, 2}})
   local tree = ecs.hierarchy()

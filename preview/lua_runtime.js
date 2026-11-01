@@ -24,7 +24,7 @@ local function decode(value)
         arrays[result] = true
         for i, item in ipairs(value.entries) do result[i] = decode(item) end
     elseif value.kind == "object" then
-        for _, entry in ipairs(value.entries) do result[entry.key] = decode(entry.value) end
+        for key, entry in pairs(value.entries) do result[key] = decode(entry) end
     else
         error("invalid ECS bridge value")
     end
@@ -126,9 +126,13 @@ function normalize(value, depth = 0, seen = new Set(), count = {value: 0}) {
 // Preserve JSON arrays (including empty ones) separately from objects across Wasmoon's table bridge.
 function encodeResult(value) {
   if (Array.isArray(value)) return {kind: 'array', entries: value.map(encodeResult)};
-  if (value !== null && typeof value === 'object') return {
-    kind: 'object', entries: Object.entries(value).map(([key, entry]) => ({key, value: encodeResult(entry)})),
-  };
+  if (value !== null && typeof value === 'object') {
+    // Objects keep their keys directly instead of allocating an entry table for
+    // every field. A null prototype also preserves keys such as "__proto__".
+    const entries = Object.create(null);
+    for (const key of Object.keys(value)) entries[key] = encodeResult(value[key]);
+    return {kind: 'object', entries};
+  }
   return value;
 }
 
