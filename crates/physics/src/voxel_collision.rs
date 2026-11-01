@@ -117,6 +117,34 @@ fn for_each_solid_cell_uncached(
     }
 }
 
+// A ray visits adjacent cells in sequence, so several normally share one
+// octree leaf. The trace clips to the grid before calling this cursor.
+struct OccupancyCursor<'a> {
+    tree: &'a Octree,
+    block: [u32; 3],
+    mask: u64,
+}
+impl<'a> OccupancyCursor<'a> {
+    fn new(tree: &'a Octree) -> Self {
+        Self {
+            tree,
+            block: [u32::MAX; 3],
+            mask: 0,
+        }
+    }
+    #[inline]
+    fn contains(&mut self, cell: [i32; 3]) -> bool {
+        let cell = cell.map(|value| value as u32);
+        let block = cell.map(|value| value / LEAF_SIZE);
+        if block != self.block {
+            self.block = block;
+            self.mask = self.tree.block_mask(cell);
+        }
+        let bit = (cell[0] & 3) + 4 * (cell[1] & 3) + 16 * (cell[2] & 3);
+        self.mask & (1_u64 << bit) != 0
+    }
+}
+
 pub struct VoxelCollider {
     tree: Octree,
     // Version 1.0 stores X/Y in the old splat coordinate system. Version 1.1 is world space.
@@ -221,8 +249,15 @@ impl VoxelCollider {
         let mut t = enter;
         // Queries with unusually tiny voxels fail explicitly rather than skipping collision.
         const MAX_TRACE_CELLS: usize = 1_000_000;
-        for _ in 0..MAX_TRACE_CELLS {
-            if self.tree.is_solid(cell) {
+        let mut occupancy = OccupancyCursor::new(&self.tree);
+        for step_index in 0..MAX_TRACE_CELLS {
+            // A one-cell ray avoids setting up a leaf cache it will never reuse.
+            let solid = if step_index == 0 {
+                self.tree.is_solid(cell)
+            } else {
+                occupancy.contains(cell)
+            };
+            if solid {
                 let fraction = t.clamp(0.0, 1.0) as f32;
                 return Ok(Some(VoxelRayHit {
                     fraction,
@@ -652,6 +687,56 @@ mod occupied_scan_tests {
         compare_regions(&tree(&[0, 0x8421_8421, 0x1248_1248], 1, 2));
         compare_regions(&tree(&[0xff00_0000], 1, 0));
         compare_regions(&tree(&[0, 0, 0], 1, 2));
+    }
+
+    #[test]
+    fn ray_cursor_matches_octree_for_adjacent_and_discontinuous_cells() {
+        let mut words = vec![(0b1101_1101_u32 << 24) | 1, 0, 1, 0xff00_0000, 2, 3, 4];
+        for mask in [
+            0x8000_0000_0000_0001_u64,
+            0,
+            u64::MAX,
+            0x5555_aaaa_3333_cccc,
+            0x8421_8421_1248_1248,
+        ] {
+            words.extend([mask as u32, (mask >> 32) as u32]);
+        }
+        let variants = [
+            tree(&words, 7, 10),
+            tree(&[0, 0x8421_8421, 0x1248_1248], 1, 2),
+            tree(&[0xff00_0000], 1, 0),
+            tree(&[0, 0, 0], 1, 2),
+        ];
+        for tree in &variants {
+            let mut cursor = OccupancyCursor::new(tree);
+            // Forward and reverse runs repeatedly cross leaf and partial-grid edges.
+            for reverse in [false, true] {
+                for z in 0..7 {
+                    for y in 0..8 {
+                        for x in 0..8 {
+                            let cell = [if reverse { 7 - x } else { x }, y, z];
+                            assert_eq!(cursor.contains(cell), tree.is_solid(cell), "cell {cell:?}");
+                        }
+                    }
+                }
+            }
+            // Arbitrary jumps model diagonal rays and repeated entries into leaves.
+            let mut seed = 0x1234_5678_u32;
+            for _ in 0..4_000 {
+                let mut next = || {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    seed
+                };
+                let cell = [
+                    (next() % 8) as i32,
+                    (next() % 8) as i32,
+                    (next() % 7) as i32,
+                ];
+                assert_eq!(cursor.contains(cell), tree.is_solid(cell), "cell {cell:?}");
+            }
+        }
     }
 
     #[test]

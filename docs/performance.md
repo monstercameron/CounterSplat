@@ -122,6 +122,12 @@ capsule center, not the camera eye. It reports median times for several body
 sizes and movements plus output checksums to compare builds. This measures
 native collision work only; browser worker and frame timings are separate.
 
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-physics --example voxel_trace_bench` to measure short, nearby,
+long, and open-air voxel rays on the synthetic scene. Append `-- path/to/level
+origin_x origin_y origin_z` to use local level data. The checksums cover hit
+fractions, positions, and normals; timings exclude worker scheduling.
+
 ## Native worker latency benchmark
 
 Run `cargo run --locked --release --target-dir .artifacts/target -p
