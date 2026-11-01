@@ -8,6 +8,9 @@ use std::error::Error;
 const EPSILON: f32 = 1.0e-4;
 const MAX_ITERATIONS: usize = 4;
 const MAX_MOVE_STEPS: usize = 256;
+// Bound temporary storage and avoid cache setup when a query visits few rows.
+const MAX_CACHED_LEAF_BLOCKS: usize = 256;
+const MIN_CACHE_ROWS: u64 = 32;
 
 /// The first occupied voxel reached by a swept world-space segment.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -22,7 +25,78 @@ pub struct VoxelRayHit {
 // Visit only occupied cells in the same z/y/x order as a per-cell scan.
 // The caller clips the inclusive bounds to the grid before invoking this helper.
 // Reading each leaf once per x row avoids retraversing the octree for all four cells.
-fn for_each_solid_cell(tree: &Octree, lo: [i32; 3], hi: [i32; 3], mut visit: impl FnMut([i32; 3])) {
+fn for_each_solid_cell(tree: &Octree, lo: [i32; 3], hi: [i32; 3], visit: impl FnMut([i32; 3])) {
+    // A capsule usually spans only a few dozen leaf blocks per z-slice. Cache
+    // that slice as z advances within one leaf to avoid repeated tree walks.
+    // Small or very large queries use direct leaf reads with bounded memory.
+    let rows = u64::from((hi[1] - lo[1] + 1) as u32) * u64::from((hi[2] - lo[2] + 1) as u32);
+    if rows < MIN_CACHE_ROWS {
+        return for_each_solid_cell_uncached(tree, lo, hi, visit);
+    }
+    let x_first = lo[0] as u32 / LEAF_SIZE;
+    let x_count = hi[0] as u32 / LEAF_SIZE - x_first + 1;
+    let y_first = lo[1] as u32 / LEAF_SIZE;
+    let y_count = hi[1] as u32 / LEAF_SIZE - y_first + 1;
+    if u64::from(x_count) * u64::from(y_count) > MAX_CACHED_LEAF_BLOCKS as u64 {
+        return for_each_solid_cell_uncached(tree, lo, hi, visit);
+    }
+    for_each_solid_cell_cached(tree, lo, hi, visit, [x_first, x_count, y_first, y_count]);
+}
+
+// Keep the cache's stack allocation off the fast path for tiny queries.
+#[inline(never)]
+fn for_each_solid_cell_cached(
+    tree: &Octree,
+    lo: [i32; 3],
+    hi: [i32; 3],
+    mut visit: impl FnMut([i32; 3]),
+    [x_first, x_count, y_first, y_count]: [u32; 4],
+) {
+    let mut cache = [0_u64; MAX_CACHED_LEAF_BLOCKS];
+    let mut cached_z = u32::MAX;
+    for z in lo[2]..=hi[2] {
+        let block_z = z as u32 / LEAF_SIZE;
+        if cached_z != block_z {
+            for by in 0..y_count {
+                for bx in 0..x_count {
+                    let index = (by * x_count + bx) as usize;
+                    cache[index] = tree.block_mask([
+                        (x_first + bx) * LEAF_SIZE,
+                        (y_first + by) * LEAF_SIZE,
+                        z as u32,
+                    ]);
+                }
+            }
+            cached_z = block_z;
+        }
+        for y in lo[1]..=hi[1] {
+            let mut x = lo[0] as u32;
+            let hi_x = hi[0] as u32;
+            while x <= hi_x {
+                let end = (x | 3).min(hi_x);
+                let shift = ((y as u32 & 3) * 4) + ((z as u32 & 3) * 16);
+                let index = ((y as u32 / LEAF_SIZE - y_first) * x_count + (x / LEAF_SIZE - x_first))
+                    as usize;
+                let block = cache[index];
+                let row = (block >> shift) & 0xf;
+                let mut mask = row & (0xf << (x & 3)) & (0xf >> (3 - (end & 3)));
+                while mask != 0 {
+                    let cell_x = (x & !3) + mask.trailing_zeros();
+                    visit([cell_x as i32, y, z]);
+                    mask &= mask - 1;
+                }
+                x = end + 1;
+            }
+        }
+    }
+}
+
+fn for_each_solid_cell_uncached(
+    tree: &Octree,
+    lo: [i32; 3],
+    hi: [i32; 3],
+    mut visit: impl FnMut([i32; 3]),
+) {
     for z in lo[2]..=hi[2] {
         for y in lo[1]..=hi[1] {
             let mut x = lo[0] as u32;
@@ -578,5 +652,57 @@ mod occupied_scan_tests {
         compare_regions(&tree(&[0, 0x8421_8421, 0x1248_1248], 1, 2));
         compare_regions(&tree(&[0xff00_0000], 1, 0));
         compare_regions(&tree(&[0, 0, 0], 1, 2));
+    }
+
+    #[test]
+    fn cache_at_capacity_preserves_mixed_leaf_order_across_z_slices() {
+        let metadata = json!({"version":"1.1", "gridBounds":{"min":[0,0,0],"max":[64,64,8]},
+            "voxelResolution":1.0, "leafSize":4, "treeDepth":4, "nodeCount":1, "leafDataCount":2});
+        let bytes: Vec<_> = [0_u32, 0x5555_aaaa, 0x8421_1248]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect();
+        let tree = Octree::from_json_and_bin(metadata.to_string().as_bytes(), &bytes).unwrap();
+        let lo = [0, 0, 0];
+        let hi = [63, 63, 7];
+        let mut actual = Vec::new();
+        for_each_solid_cell(&tree, lo, hi, |cell| actual.push(cell));
+        let mut expected = Vec::new();
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    if tree.is_solid([x, y, z]) {
+                        expected.push([x, y, z]);
+                    }
+                }
+            }
+        }
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn large_regions_use_the_bounded_fallback_without_losing_cells() {
+        let metadata = json!({"version":"1.1", "gridBounds":{"min":[0,0,0],"max":[68,68,4]},
+            "voxelResolution":1.0, "leafSize":4, "treeDepth":5, "nodeCount":1, "leafDataCount":0});
+        let tree = Octree::from_json_and_bin(
+            metadata.to_string().as_bytes(),
+            &0xff00_0000_u32.to_le_bytes(),
+        )
+        .unwrap();
+        let lo = [0, 0, 1];
+        let hi = [67, 67, 2];
+        let mut actual = Vec::new();
+        for_each_solid_cell(&tree, lo, hi, |cell| actual.push(cell));
+        let mut expected = Vec::new();
+        for z in lo[2]..=hi[2] {
+            for y in lo[1]..=hi[1] {
+                for x in lo[0]..=hi[0] {
+                    if tree.is_solid([x, y, z]) {
+                        expected.push([x, y, z]);
+                    }
+                }
+            }
+        }
+        assert_eq!(actual, expected);
     }
 }

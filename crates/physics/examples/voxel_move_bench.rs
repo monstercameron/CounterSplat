@@ -84,12 +84,15 @@ fn main() {
         )
     };
     let cases = [
-        ("idle", [0.0, -0.005, 0.0], 0.0),
-        ("walk", [0.04, -0.005, 0.02], 0.0),
-        ("air", [0.04, 0.0, 0.02], 1.2),
+        ("idle", [0.0, -0.005, 0.0], 0.0, 0.25, 0.675),
+        ("walk", [0.04, -0.005, 0.02], 0.0, 0.25, 0.675),
+        ("air", [0.04, 0.0, 0.02], 1.2, 0.25, 0.675),
+        ("small sphere", [0.01, -0.005, 0.0], 0.0, 0.05, 0.0),
+        ("crouched", [0.04, -0.005, 0.02], 0.0, 0.25, 0.35),
+        ("wide body", [0.04, -0.005, 0.02], 0.0, 0.5, 0.9),
     ];
     const COUNT: usize = 400;
-    for (name, delta, up) in cases {
+    for (name, delta, up, radius, half_height) in cases {
         let positions: Vec<_> = (0..COUNT)
             .map(|i| {
                 [
@@ -106,7 +109,7 @@ fn main() {
             for &p in &positions {
                 let result = black_box(
                     world
-                        .move_capsule(black_box(p), black_box(delta), 0.25, 0.675)
+                        .move_capsule(black_box(p), black_box(delta), radius, half_height)
                         .unwrap(),
                 );
                 if run == 0 {
