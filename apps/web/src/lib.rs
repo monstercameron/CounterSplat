@@ -564,7 +564,8 @@ impl Viewer {
         let angle = self.ui.angle(seconds);
         let (sin, cos) = angle.sin_cos();
         let player_camera = self.ui.player_camera().map_err(js_error)?;
-        let eye = player_camera.position;
+        // Lua may add visual-only camera motion without moving the player collider.
+        let eye = player_camera.render_position();
         let direction = player_camera.direction();
         let target = [
             eye[0] + direction[0] * cos - direction[2] * sin,
@@ -575,7 +576,7 @@ impl Viewer {
             model: self.model,
             view: camera::look_at(eye, target, [0.0, 1.0, 0.0]),
             projection: camera::perspective(
-                player_camera.fov_degrees.to_radians(),
+                player_camera.render_fov_degrees().to_radians(),
                 self.config.width as f32 / self.config.height as f32,
                 0.05,
                 self.far,
@@ -587,8 +588,11 @@ impl Viewer {
         };
         let inverse =
             camera::inverse(&self.model).ok_or_else(|| js_error("invalid scene transform"))?;
-        let local_eye = camera::transform_point(&inverse, eye);
-        let local_target = camera::transform_point(&inverse, target);
+        // Keep streaming distance anchored to the player, not the bobbing view.
+        let local_eye = camera::transform_point(&inverse, player_camera.position);
+        let base_target =
+            [0, 1, 2].map(|axis| player_camera.position[axis] + target[axis] - eye[axis]);
+        let local_target = camera::transform_point(&inverse, base_target);
         let local_direction = [0, 1, 2].map(|axis| local_target[axis] - local_eye[axis]);
         let clip = camera::mul(&view.projection, &camera::mul(&view.view, &view.model));
         let level_lod = self.ui.level_lod().map_err(js_error)?;

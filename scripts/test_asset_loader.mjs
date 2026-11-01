@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {loadPolicy, levelPolicies, planScripts, LoadingProgress, describeLevelAssets} from '../preview/asset_loader.js';
+import {loadPolicy, levelPolicies, planScripts, LoadingProgress, describeLevelAssets, localSceneUrl } from '../preview/asset_loader.js';
 assert.equal(loadPolicy(), 'preload');
 assert.equal(levelPolicies().splat_chunks, 'streamable');
 assert.equal(levelPolicies({splat_chunks:'preload'}).splat_chunks, 'preload');
@@ -30,3 +30,7 @@ assert.equal(described.files.find(f => f.path === 'scene.voxel.bin').kind, 'coll
 assert.equal(described.files.filter(f => f.path === 'lod-meta.json').length, 1);
 assert.throws(() => describeLevelAssets(example,2,[{means:{files:['../secret']}}],['0_0/meta.json']));
 assert.throws(() => describeLevelAssets(example,2,[{means:{files:[null]}}],['0_0/meta.json']));
+
+assert.equal(localSceneUrl('gameplay.json', base.origin).href, 'http://localhost/assets/scenes/gameplay.json');
+assert.throws(() => localSceneUrl('../secret.json', base.origin));
+assert.throws(() => localSceneUrl('https://evil.test/a.json', base.origin));

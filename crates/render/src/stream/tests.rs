@@ -1367,3 +1367,63 @@ fn compaction_selects_the_cheapest_holes_and_preserves_pool_coverage() {
     assert!(s.check_pool().is_ok());
     assert_eq!(s.allocate(150), Some(160));
 }
+
+#[test]
+fn lower_band_palettes_keep_coefficients_and_pad_with_exact_shared_zero() {
+    let remap = std::array::from_fn(|i| (i as u8).wrapping_add(17));
+    for coefficients in [3usize, 8, 15] {
+        let width = 64 * coefficients;
+        let mut rgba = vec![0; width * 2 * 4];
+        for (i, texel) in rgba.chunks_exact_mut(4).enumerate() {
+            texel.copy_from_slice(&[(i % 199) as u8, 22, 33, 200]);
+        }
+        let texture = sog::Texture {
+            width: width as u32,
+            height: 2,
+            rgba,
+        };
+        let encoded = encode_sh_palette(&texture, &remap, 111).unwrap();
+        assert_eq!(encoded.len(), 2 * 64 * 15 * 4);
+        for row in 0..2 {
+            for centroid in 0..64 {
+                for coefficient in 0..15 {
+                    let out = ((row * 64 + centroid) * 15 + coefficient) * 4;
+                    if coefficient < coefficients {
+                        let input = ((row * 64 + centroid) * coefficients + coefficient) * 4;
+                        assert_eq!(
+                            &encoded[out..out + 4],
+                            &[
+                                remap[texture.rgba[input] as usize],
+                                remap[22],
+                                remap[33],
+                                200,
+                            ]
+                        );
+                    } else {
+                        assert_eq!(&encoded[out..out + 4], &[111, 111, 111, 255]);
+                    }
+                }
+            }
+        }
+    }
+    assert!(encode_sh_palette(
+        &sog::Texture {
+            width: 256,
+            height: 1,
+            rgba: vec![0; 1024]
+        },
+        &remap,
+        0
+    )
+    .is_none());
+    assert!(encode_sh_palette(
+        &sog::Texture {
+            width: 192,
+            height: 1,
+            rgba: vec![0; 10]
+        },
+        &remap,
+        0
+    )
+    .is_none());
+}

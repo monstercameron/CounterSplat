@@ -52,18 +52,28 @@ remain work. The standalone native window currently runs rendering on its window
 
 ## Browser host
 
-`countersplat-web` creates a WebGPU surface directly on the HTML canvas and advances the shared scheduler from
-`requestAnimationFrame`. A dedicated Web Worker fetches and decodes SOG textures. A separate skybox worker decodes
-Radiance HDR panoramas and converts them to cubemap faces. Both transfer decoded bytes to the canvas owner for
-validated GPU uploads. The browser host allows one submitted GPU frame in flight and coalesces
-later requests. The UI's frame-time measurements describe submission intervals, not GPU execution or display
-presentation timestamps.
+`countersplat-web` renders directly to a WebGPU canvas and advances the fixed-step scheduler from
+`requestAnimationFrame`. A short-lived metadata worker fetches and parses level chunk descriptors and builds the
+asset inventory; the original descriptor bytes transfer to the page owner for renderer setup. The worker reports
+coalesced progress and is terminated on completion, failure, or cancellation. Metadata fetch concurrency is bounded,
+and the output preserves file order. Single-scan metadata uses the same path without a network round trip.
 
-The browser host currently owns GPU and scheduling on the browser page thread and uses workers for asset decoding.
-It does not yet compose the native ECS, Lua, and physics workers. Rust's ordinary `wasm32-unknown-unknown` target does
-not provide functioning `std::thread::spawn`; additional browser subsystem threads require a Web Worker/message
-backend. Shared WebAssembly memory additionally needs cross-origin isolation and compatible browser configuration.
-WebGPU availability must be detected, and the current host reports an error when unavailable.
+A pool of one to four dedicated workers fetches and decodes SOG textures based on logical CPU count. Streamed chunks
+are selected by the renderer with no hidden worker queue, so available workers receive current priorities. When a
+level marks splats as preloaded, the same bounded pool decodes multiple chunks concurrently while preserving the
+original chunk order. Preload failure or cancellation terminates the pool. Decoded data is transferred to the canvas
+owner for validated GPU upload; retained preload bytes have a 512 MiB limit, with up to one additional result in
+flight per worker. A separate worker decodes Radiance HDR panoramas, and a voxel worker owns collision queries and
+debug geometry. The browser allows one submitted GPU frame in flight. Frame-time measurements describe CPU submission
+intervals, not GPU execution or display presentation timestamps.
+
+The page thread still owns the browser ECS, Lua VMs, WebGPU orchestration, and the renderer's initial Rust stream
+construction. Physics geometry queries and asset preparation run on workers, but this is not a fully separated browser
+subsystem architecture. Moving Lua and ECS to workers needs a tick-based snapshot and command protocol rather than
+synchronous calls across threads. Rust's ordinary `wasm32-unknown-unknown` target does not provide functioning
+`std::thread::spawn`; additional browser owners need a Web Worker backend. Shared WebAssembly memory additionally
+needs cross-origin isolation and compatible browser configuration. WebGPU availability must be detected, and the
+current host reports an error when unavailable.
 
 ## Evidence
 

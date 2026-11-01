@@ -9,6 +9,7 @@
       "license": null,
       "format": "single_sog",
       "manifest": "assets/levels/58d333ae/meta.json",
+      "thumbnail": "assets/levels/58d333ae/preview.webp",
       "lod_levels": null,
       "lod_counts": null,
       "collision": true,
@@ -30,6 +31,7 @@
       "license": null,
       "format": "streamed_sog",
       "manifest": "assets/levels/9f0f903a/lod-meta.json",
+      "thumbnail": "assets/levels/9f0f903a/preview.webp",
       "lod_levels": 8,
       "lod_counts": [
         9962915,
@@ -60,6 +62,7 @@
       "license": null,
       "format": "streamed_sog",
       "manifest": "assets/levels/947dbaec/lod-meta.json",
+      "thumbnail": "assets/levels/947dbaec/preview.webp",
       "lod_levels": 4,
       "lod_counts": [
         4998469,
@@ -86,6 +89,7 @@
       "license": null,
       "format": "streamed_sog",
       "manifest": "assets/levels/b8262a29/lod-meta.json",
+      "thumbnail": "assets/levels/b8262a29/preview.webp",
       "lod_levels": 4,
       "lod_counts": [
         7417665,
@@ -112,6 +116,7 @@
       "license": null,
       "format": "streamed_sog",
       "manifest": "assets/levels/ff1a8800/lod-meta.json",
+      "thumbnail": "assets/levels/ff1a8800/preview.webp",
       "lod_levels": 4,
       "lod_counts": [
         4999686,
@@ -138,6 +143,7 @@
       "license": null,
       "format": "streamed_sog",
       "manifest": "assets/levels/9649b9e2/lod-meta.json",
+      "thumbnail": "assets/levels/9649b9e2/preview.webp",
       "lod_levels": 4,
       "lod_counts": [
         5960267,
@@ -164,6 +170,7 @@
       "license": "CC BY 4.0",
       "format": "streamed_sog",
       "manifest": "assets/levels/541bac0c/lod-meta.json",
+      "thumbnail": "assets/levels/541bac0c/preview.webp",
       "lod_levels": 3,
       "lod_counts": [
         123569487,
@@ -189,6 +196,7 @@
       "license": "CC BY 4.0",
       "format": "streamed_sog",
       "manifest": "assets/levels/fb3b5ed5/lod-meta.json",
+      "thumbnail": "assets/levels/fb3b5ed5/preview.webp",
       "lod_levels": 6,
       "lod_counts": [
         8759558,
@@ -217,6 +225,7 @@
       "license": null,
       "format": "streamed_sog",
       "manifest": "assets/levels/b0ff3cb9/lod-meta.json",
+      "thumbnail": "assets/levels/b0ff3cb9/preview.webp",
       "lod_levels": 6,
       "lod_counts": [
         11585781,
@@ -245,6 +254,7 @@
       "license": null,
       "format": "streamed_sog",
       "manifest": "assets/levels/9cbaba42/lod-meta.json",
+      "thumbnail": "assets/levels/9cbaba42/preview.webp",
       "lod_levels": 6,
       "lod_counts": [
         15712062,
@@ -273,6 +283,7 @@
       "license": null,
       "format": "streamed_sog",
       "manifest": "assets/levels/fd3083e4/lod-meta.json",
+      "thumbnail": "assets/levels/fd3083e4/preview.webp",
       "lod_levels": 8,
       "lod_counts": [
         63888251,

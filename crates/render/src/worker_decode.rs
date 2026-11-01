@@ -57,7 +57,13 @@ impl StagedChunk {
             }
         } else {
             let rows = self.meta.sh_n_count.div_ceil(64);
-            if width != 960 || height < rows || height > 1024 || self.meta.sh_n_count > 65536 {
+            // SOG stores 64 centroids per row, with 3, 8, or 15 coefficients
+            // for one, two, or three spherical-harmonic bands respectively.
+            if !matches!(width, 192 | 512 | 960)
+                || height < rows
+                || height > 1024
+                || self.meta.sh_n_count > 65536
+            {
                 return Err("invalid SH centroid geometry".into());
             }
         }
@@ -108,6 +114,31 @@ mod tests {
         s.push(6, 960, 1, vec![0; 3840]).unwrap();
         assert_eq!(s.finish().unwrap().0, 1);
         assert!(StagedChunk::new(2, meta(0)).finish().is_err());
+    }
+    #[test]
+    fn accepts_each_supported_spherical_harmonic_band_layout() {
+        for width in [192, 512, 960] {
+            let mut staged = StagedChunk::new(0, meta(64));
+            for index in 0..6 {
+                staged.push(index, 2, 1, vec![0; 8]).unwrap();
+            }
+            staged
+                .push(6, width, 1, vec![0; width as usize * 4])
+                .unwrap();
+            assert_eq!(
+                staged.finish().unwrap().1.textures["sh_centroids"].width,
+                width
+            );
+        }
+    }
+    #[test]
+    fn rejects_unsupported_or_short_centroid_textures() {
+        let mut staged = StagedChunk::new(0, meta(65));
+        for index in 0..6 {
+            staged.push(index, 2, 1, vec![0; 8]).unwrap();
+        }
+        assert!(staged.push(6, 256, 2, vec![0; 256 * 2 * 4]).is_err());
+        assert!(staged.push(6, 192, 1, vec![0; 192 * 4]).is_err());
     }
     #[test]
     fn accepts_missing_sh_and_fills_standard_placeholders() {

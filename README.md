@@ -141,7 +141,7 @@ cargo install wasm-bindgen-cli --version 0.2.127 --locked
 python scripts/preview.py
 ```
 
-Edit the scene JSON files under `assets/scenes` and refresh the browser to apply scene, UI, and resource changes. Open <http://127.0.0.1:18763/>. Cargo outputs are stored in `.artifacts/target` and generated browser bindings in `.artifacts/web/pkg`. Both are ignored by Git. The page renders through
+The selector shows local level thumbnails and a separate **Open a scene** panel. Compatible gameplay scene JSON files in `assets/scenes` are discovered automatically; choose one and open it with the selected level. A compatible scene uses the player, UI, level, and pause-menu resources shown in `gameplay.json`. Edit the scene JSON files and refresh the browser to apply scene, UI, and resource changes. Open <http://127.0.0.1:18763/>. Cargo outputs are stored in `.artifacts/target` and generated browser bindings in `.artifacts/web/pkg`. Both are ignored by Git. The page renders through
 WebGPU into `<canvas>`; the native PNG commands above remain optional offline exports. See
 [timing](docs/timing.md) for what the displayed submitted-frame rate does and does not measure.
 

@@ -3,9 +3,12 @@ import init, { Selector, Viewer } from '/pkg/countersplat_web.js';
 import { LuaScene } from '/lua_runtime.js';
 import { VoxelRuntime } from '/pkg/voxel_runtime.js';
 import { MouseCapture } from '/pkg/mouse_capture.js';
+import { GameplayMouseButtons } from '/pkg/mouse_buttons.js';
 import { publishPlayerRigData, savePlayerRig } from '/pkg/player_rig.js';
 import { ChunkDecoderPool, chunkDecoderCount } from '/pkg/chunk_decoder_pool.js';
-import { LoadingProgress, levelPolicies, loadPolicy, planScripts, describeLevelAssets } from '/asset_loader.js';
+import { preloadChunks } from '/pkg/chunk_preload.js';
+import { loadMetadataInWorker } from '/pkg/metadata_client.js';
+import { LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl } from '/asset_loader.js';
 
 const canvas = document.getElementById('canvas');
 const status = document.getElementById('status');
@@ -21,14 +24,16 @@ let mode = 'boot';
 let generation = 0;
 let lastStatus = 0;
 let stopped = false;
-let selectorBytes, catalogBytes, gameplayBytes, menuBytes, catalog, gameplayScene, menuScene;
-let selectorUrl, gameplayUrl, menuUrl, engineApi, gameplayScripts, menuScripts, luaFactory;
+let selectorBytes, catalogBytes, sceneCatalogBytes, gameplayBytes, menuBytes, catalog, gameplayScene, menuScene;
+let selectorUrl, sceneCatalogUrl, gameplayUrl, defaultGameplayUrl, defaultGameplayBytes, menuUrl, engineApi, gameplayScripts, menuScripts, luaFactory;
 let gameplayLua = null, menuLua = null, lastScriptTime = null;
+const gameplayMouse = new GameplayMouseButtons(pressed => gameplayLua?.emit('input.mouse_button', {button:'right', pressed, gameplay:true}));
 let dragLook = false, lastEscapeTime = -Infinity;
 const playerControlsKey = 'countersplat.player-controls.v1';
 let loadingAbort = null, preloadedSceneAssets = new Map();
 const MAX_PRELOAD_BYTES = 512 * 1024 * 1024;
-let selectedId = '';
+let selectedId = '', selectedSceneId = '';
+const previewImages = new Map();
 let currentLevel = null;
 let levelBase = null;
 let chunkMetas = [];
@@ -53,7 +58,7 @@ function saveLayout(target, scene) {
   catch (error) { console.warn('Could not save UI layout:', error); }
 }
 function layoutScene() { return mode === 'menu' ? 'menu' : mode === 'gameplay' ? 'gameplay' : 'selector'; }
-function resetPlayerInput() { if (gameplayLua) gameplayLua.emit('input.reset', {}); }
+function resetPlayerInput() { gameplayMouse.reset(); if (gameplayLua) gameplayLua.emit('input.reset', {}); }
 function releaseMouseLook() {
   dragLook = false;
   mouseCapture.release();
@@ -72,7 +77,7 @@ function savePlayerControls(settings) {
   catch (error) { console.warn('Could not save player controls:', error); }
 }
 function dispatchGameplayEvents(runtime) {
-  for (const name of ['input.key', 'input.mouse_delta', 'input.reset', 'ui.action', 'physics.ready', 'physics.ground_result', 'physics.motion_resolved', 'physics.motion_error', 'physics.collision', 'physics.error']) {
+  for (const name of ['input.key', 'input.mouse_delta', 'input.mouse_button', 'input.reset', 'ui.action', 'editor.entity_selected', 'physics.ready', 'physics.ground_result', 'physics.motion_resolved', 'physics.motion_error', 'physics.collision', 'physics.error']) {
     for (const event of runtime.drain(name)) runtime.dispatch(name, event);
   }
 }
@@ -90,6 +95,7 @@ function sceneAsset(scene, base, id) {
 function processSceneRequests(runtime) {
   for (const request of runtime.drain('engine.scene')) {
     if (mode === 'gameplay' && request.action === 'push' && sceneAsset(gameplayScene, gameplayUrl, request.scene) === menuUrl.href) {
+      gameplayMouse.reset();
       runtime.dispatch('input.reset', {});
       voxelRuntime?.suspend();
       releaseMouseLook();
@@ -168,9 +174,9 @@ async function preloadSceneAssets(scene, base, cache, signal, tracker, from, to)
   });
   if (!entries.length) tracker.update('Loading scene assets', from, to, 1, 1);
 }
-async function preloadScripts(gameScene, menu, signal, tracker, cache) {
-  const gamePlan = planScripts(gameScene, gameplayUrl, location.origin);
-  const menuPlan = planScripts(menu, menuUrl, location.origin);
+async function preloadScripts(gameScene, gameBase, menu, menuBase, signal, tracker, cache) {
+  const gamePlan = planScripts(gameScene, gameBase, location.origin);
+  const menuPlan = planScripts(menu, menuBase, location.origin);
   const tasks = [...gamePlan.map(item => ({...item, scope:'game'})), ...menuPlan.map(item => ({...item, scope:'menu'})),
     {id:'engine-api', url:new URL('/pkg/engine_api.lua', location.href), scope:'engine', execute:true}];
   let done = 0;
@@ -192,7 +198,7 @@ async function preloadScripts(gameScene, menu, signal, tracker, cache) {
     engine: loaded.find(item => item.scope === 'engine').source,
   };
 }
-async function preloadSkies(scene, cache, signal, tracker) {
+async function preloadSkies(scene, base, cache, signal, tracker) {
   const skies = Object.entries(scene.resources?.assets || {}).filter(([, asset]) => asset.kind === 'radiance_hdr' && loadPolicy(asset.load) === 'preload');
   if (skies.length > 8) throw new Error('The preview supports at most eight skybox assets.');
   tracker.update('Decoding preloaded skies', 0.75, 0.85, 0, Math.max(skies.length, 1));
@@ -201,7 +207,7 @@ async function preloadSkies(scene, cache, signal, tracker) {
   try {
     const prepared = [];
     for (const [id, asset] of skies) {
-      const url = new URL(asset.uri, gameplayUrl);
+      const url = new URL(asset.uri, base);
       const bytes = cache.get(url.href);
       if (!bytes) throw new Error(`Preloaded sky ${id} is missing.`);
       const data = await requestWorker(worker, {request:0, asset:id, select:false, bytes:bytes.slice()}, signal);
@@ -211,30 +217,7 @@ async function preloadSkies(scene, cache, signal, tracker) {
     return prepared;
   } finally { worker.terminate(); }
 }
-async function preloadChunks(metas, filenames, single, base, signal, tracker) {
-  const worker = new Worker('/decoder.js', {type:'module'});
-  const chunks = []; let bytes = 0;
-  tracker.update('Decoding splat chunks', 0.85, 0.96, 0, Math.max(metas.length, 1));
-  try {
-    for (let index = 0; index < metas.length; index++) {
-      const folder = single ? 'single' : filenames[index].split('/')[0];
-      const data = await requestWorker(worker, {index, folder, metadata:metas[index], base:base.href, single}, signal);
-      bytes += data.metadata.byteLength + data.dimensions.byteLength + data.pixels.reduce((sum, pixels) => sum + pixels.byteLength, 0);
-      if (bytes > MAX_PRELOAD_BYTES) throw new Error('Decoded splat preload exceeds 512 MiB. Mark splat chunks streamable.');
-      chunks.push(data);
-      tracker.update('Decoding splat chunks', 0.85, 0.96, chunks.length, metas.length);
-    }
-    return chunks;
-  } finally { worker.terminate(); }
-}
 function parseJson(bytes) { return JSON.parse(new TextDecoder().decode(bytes)); }
-function localLevelPath(relative) {
-  if (typeof relative !== 'string' || !relative || relative.startsWith('/') || relative.includes('\\') ||
-      relative.split('/').some(part => !part || part === '.' || part === '..')) {
-    throw new Error('The level contains an invalid asset path.');
-  }
-  return new URL(relative.split('/').map(encodeURIComponent).join('/'), levelBase).href;
-}
 function retryChunk(index, error, game, token) {
   console.warn(`Chunk ${index} failed:`, error);
   setTimeout(() => {
@@ -338,7 +321,31 @@ async function mapLimit(values, limit, task) {
   await Promise.all(Array.from({length: Math.min(limit, values.length)}, worker));
   return results;
 }
-async function launchLevel(id) {
+// Decode small local level previews once, then upload them to the canvas UI texture registry.
+async function populateSelectorPreviews(selector) {
+  await mapLimit(catalog.levels, 4, async level => {
+    if (!/^[0-9a-f]{8}$/.test(level.id) || level.thumbnail !== `assets/levels/${level.id}/preview.webp`) return;
+    try {
+      let image = previewImages.get(level.id);
+      if (!image) {
+        const bytes = await getBytes(`/${level.thumbnail}`, undefined, true);
+        if (!bytes.length || bytes.length > 4 * 1024 * 1024) return;
+        const bitmap = await createImageBitmap(new Blob([bytes], {type:'image/webp'}),
+          {resizeWidth:320, resizeHeight:320, resizeQuality:'high'});
+        try {
+          const buffer = document.createElement('canvas'); buffer.width = bitmap.width; buffer.height = bitmap.height;
+          const context = buffer.getContext('2d', {willReadFrequently:true});
+          if (!context || !buffer.width || !buffer.height || buffer.width > 1024 || buffer.height > 1024) return;
+          context.drawImage(bitmap, 0, 0);
+          image = {width:buffer.width, height:buffer.height, rgba:new Uint8Array(context.getImageData(0,0,buffer.width,buffer.height).data)};
+          previewImages.set(level.id, image);
+        } finally { bitmap.close(); }
+      }
+      if (active === selector) selector.install_level_preview(level.id, image.width, image.height, image.rgba);
+    } catch (error) { console.warn(`Preview unavailable for ${level.id}:`, error); }
+  });
+}
+async function launchLevel(id, sceneId = '') {
   if (mode !== 'selector' || !active) return;
   const selected = catalog.levels.find(level => level.id === id);
   if (!selected) { active.set_notice('That level is no longer in the catalog.'); return; }
@@ -358,8 +365,13 @@ async function launchLevel(id) {
     // Give the canvas a frame to display its ECS loading overlay before starting work.
     await nextFrame(); await nextFrame();
     if (generation !== token) return;
+    const chosenUrl = sceneId ? localSceneUrl(sceneId, location.origin) : defaultGameplayUrl;
+    const chosenBytes = sceneId ? await getBytes(chosenUrl, signal) : defaultGameplayBytes;
+    const chosenScene = parseJson(chosenBytes);
+    const chosenMenuUrl = new URL(sceneAsset(chosenScene, chosenUrl, 'pause_menu'));
     const policies = levelPolicies(selected.assets);
-    if (loadPolicy(gameplayScene.resources?.assets?.pause_menu?.load) !== 'preload')
+    const decoderCount = chunkDecoderCount(navigator.hardwareConcurrency, chosenScene.resources?.preview?.chunk_decoder_workers);
+    if (loadPolicy(chosenScene.resources?.assets?.pause_menu?.load) !== 'preload')
       throw new Error('The gameplay pause menu must be preloaded by this host.');
     levelBase = new URL(`/assets/levels/${encodeURIComponent(id)}/`, location.href);
     tracker.update('Reading level manifest', 0, 0.1, 0, 4);
@@ -375,45 +387,44 @@ async function launchLevel(id) {
       fetchManifest(new URL('download-inventory.json', levelBase), true),
       fetchManifest(new URL('source.json', levelBase), true),
     ]);
-    let lodBytes = primary, metas, filenames, lodCount;
-    let capacity = gameplayScene.resources?.preview?.capacity;
+    let lodBytes = primary, filenames, lodCount, singleMetadata;
+    let capacity = chosenScene.resources?.preview?.capacity;
     if (!Number.isInteger(capacity) || capacity <= 0) throw new Error('Gameplay scene capacity is invalid.');
     if (selected.format === 'single_sog') {
       const synthetic = singleSogManifest(parseJson(primary));
       lodBytes = new TextEncoder().encode(JSON.stringify(synthetic));
-      metas = [primary]; filenames = synthetic.filenames; lodCount = synthetic.lodLevels;
+      singleMetadata = primary.slice(); filenames = synthetic.filenames; lodCount = synthetic.lodLevels;
       capacity = Math.max(capacity, Math.ceil(synthetic.counts[0] * 100 / 85) + 1);
-      tracker.update('Reading chunk metadata', 0.1, 0.5, 1, 1);
     } else if (selected.format === 'streamed_sog') {
       const lod = parseJson(primary);
       if (!Array.isArray(lod.filenames) || !lod.filenames.length || lod.filenames.length > 10_000)
         throw new Error('The level does not contain a valid chunk list.');
       filenames = lod.filenames; lodCount = lod.lodLevels;
-      let done = 0;
-      tracker.update('Reading chunk metadata', 0.1, 0.5, 0, filenames.length);
-      metas = await mapLimit(filenames, 12, async path => {
-        const bytes = await getBytes(localLevelPath(path), signal);
-        tracker.update('Reading chunk metadata', 0.1, 0.5, ++done, filenames.length);
-        return bytes;
-      });
     } else throw new Error('This level format is not supported.');
+    tracker.update('Reading chunk metadata', 0.1, 0.5, 0, filenames.length);
+    const {metas, levelAssets} = await loadMetadataInWorker(
+      new Worker('/pkg/metadata-worker.js', {type:'module'}),
+      {level:selected, lodCount, filenames, base:levelBase.href, singleMetadata, inventoryBytes,
+        viewerSettings:settings.length > 0, hasSource:sourceBytes.length > 0,
+        source:chosenScene.resources?.preview?.level_asset || 'level',
+        concurrency:chosenScene.resources?.preview?.metadata_fetch_concurrency ?? 12}, signal,
+      (done, total) => tracker.update('Reading chunk metadata', 0.1, 0.5, done, total));
     if (generation !== token) return;
 
-    const levelAssets = describeLevelAssets(selected, lodCount, metas.map(parseJson), filenames, {
-      viewerSettings: settings.length > 0,
-      inventory: inventoryBytes.length ? parseJson(inventoryBytes) : null,
-      source: sourceBytes.length > 0,
-    }, gameplayScene.resources?.preview?.level_asset || 'level');
-    const sceneAssets = new Map([[selectorUrl.href, selectorBytes], [gameplayUrl.href, gameplayBytes]]);
-    await preloadSceneAssets(gameplayScene, gameplayUrl, sceneAssets, signal, tracker, 0.5, 0.6);
-    menuBytes = sceneAssets.get(menuUrl.href);
-    if (!menuBytes) throw new Error('The preloaded pause menu is missing.');
-    menuScene = parseJson(menuBytes);
-    await preloadSceneAssets(menuScene, menuUrl, sceneAssets, signal, tracker, 0.6, 0.65);
-    const scripts = await preloadScripts(gameplayScene, menuScene, signal, tracker, sceneAssets);
-    const skies = await preloadSkies(gameplayScene, sceneAssets, signal, tracker);
+    const sceneAssets = new Map([[selectorUrl.href, selectorBytes], [chosenUrl.href, chosenBytes]]);
+    await preloadSceneAssets(chosenScene, chosenUrl, sceneAssets, signal, tracker, 0.5, 0.6);
+    const chosenMenuBytes = sceneAssets.get(chosenMenuUrl.href);
+    if (!chosenMenuBytes) throw new Error('The preloaded pause menu is missing.');
+    const chosenMenuScene = parseJson(chosenMenuBytes);
+    await preloadSceneAssets(chosenMenuScene, chosenMenuUrl, sceneAssets, signal, tracker, 0.6, 0.65);
+    const scripts = await preloadScripts(chosenScene, chosenUrl, chosenMenuScene, chosenMenuUrl, signal, tracker, sceneAssets);
+    const skies = await preloadSkies(chosenScene, chosenUrl, sceneAssets, signal, tracker);
+    tracker.update('Decoding splat chunks', 0.85, 0.96, 0, 1);
     const chunks = policies.splat_chunks === 'preload'
-      ? await preloadChunks(metas, filenames, selected.format === 'single_sog', levelBase, signal, tracker)
+      ? await preloadChunks({metas, filenames, single:selected.format === 'single_sog', base:levelBase.href, signal,
+          size:decoderCount,
+          createWorker:() => new Worker('/decoder.js', {type:'module'}), maxBytes:MAX_PRELOAD_BYTES,
+          onProgress:(done, total) => tracker.update('Decoding splat chunks', 0.85, 0.96, done, total)})
       : (tracker.update('Splat chunks will stream in the scene', 0.85, 0.96, 1, 1), []);
     if (generation !== token) return;
     tracker.update('Starting renderer', 0.96, 0.99, 0, 1);
@@ -427,7 +438,7 @@ async function launchLevel(id) {
     mode = 'starting';
     active = null;
     selector.free();
-    pendingGame = await Viewer.create(canvas, lodBytes, metas, settings, [gameplayBytes, menuBytes], capacity, selected.rotate_z_180 !== false, policies.splat_chunks === 'preload', JSON.stringify(levelAssets));
+    pendingGame = await Viewer.create(canvas, lodBytes, metas, settings, [chosenBytes, chosenMenuBytes], capacity, selected.rotate_z_180 !== false, policies.splat_chunks === 'preload', JSON.stringify(levelAssets));
     if (generation !== token) { pendingGame.free(); pendingGame = null; return; }
     for (const sky of skies) pendingGame.install_skybox(sky.id, sky.size, sky.pixels);
     for (const chunk of chunks) pendingGame.insert_decoded_chunk(chunk.index, chunk.metadata, chunk.dimensions, chunk.pixels);
@@ -439,6 +450,8 @@ async function launchLevel(id) {
     if (generation !== token) { closeScripts(); pendingGame.free(); pendingGame = null; return; }
     active = pendingGame;
     pendingGame = null;
+    gameplayUrl = chosenUrl; gameplayBytes = chosenBytes; gameplayScene = chosenScene;
+    menuUrl = chosenMenuUrl; menuBytes = chosenMenuBytes; menuScene = chosenMenuScene;
     restoreLayout(active, 'gameplay');
     active.ui_set_arrange_mode(arrangeMode);
     currentLevel = selected;
@@ -448,7 +461,7 @@ async function launchLevel(id) {
     mode = 'gameplay';
     const game = active;
     decoder = new ChunkDecoderPool({
-      size: chunkDecoderCount(navigator.hardwareConcurrency),
+      size: decoderCount,
       createWorker: () => new Worker('/decoder.js', {type: 'module'}),
       onResult: data => {
         if (generation !== token || active !== game || (mode !== 'gameplay' && mode !== 'menu')) return;
@@ -477,7 +490,7 @@ async function launchLevel(id) {
     console.error('Level launch:', error);
     if (active && active !== selector) { active.free(); active = null; }
     if (!active) {
-      try { active = await Selector.create(canvas, selectorBytes, catalogBytes, selectedId); }
+      try { active = await Selector.create(canvas, selectorBytes, catalogBytes, sceneCatalogBytes, selectedId, selectedSceneId); }
       catch (restoreError) { showError(restoreError); return; }
     } else {
       active.finish_loading('failed');
@@ -486,7 +499,8 @@ async function launchLevel(id) {
     restoreLayout(active, 'selector');
     active.ui_set_arrange_mode(arrangeMode);
     active.set_busy(false);
-    active.set_notice(`Could not load level: ${error instanceof Error ? error.message : String(error)}`);
+    active.set_notice(`Could not load scene: ${error instanceof Error ? error.message : String(error)}`);
+    void populateSelectorPreviews(active);
     status.textContent = 'Choose a level';
   }
 }
@@ -503,10 +517,12 @@ async function returnToSelector() {
   game.free();
   message.hidden = true;
   try {
-    active = await Selector.create(canvas, selectorBytes, catalogBytes, selectedId);
+    sceneCatalogBytes = await getBytes(sceneCatalogUrl);
+    active = await Selector.create(canvas, selectorBytes, catalogBytes, sceneCatalogBytes, selectedId, selectedSceneId);
     restoreLayout(active, 'selector');
     active.ui_set_arrange_mode(arrangeMode);
     mode = 'selector';
+    void populateSelectorPreviews(active);
     status.textContent = 'Choose a level';
   } catch (error) { showError(error); }
 }
@@ -532,9 +548,17 @@ function attachInput() {
   const point = event => { const bounds = canvas.getBoundingClientRect(); return [event.clientX - bounds.left, event.clientY - bounds.top]; };
   const button = event => ({0: 0, 1: 2, 2: 1})[event.button];
   const send = action => { if (active) { try { action(active); } catch (error) { console.warn('UI input:', error); } } };
+  const gameplayPointer = (scene, event) => {
+    if (mode !== 'gameplay' || arrangeMode || document.hidden) return false;
+    if (document.pointerLockElement === canvas || dragLook) return true;
+    const [x,y] = point(event);
+    return !scene.ui_hit_test(x,y);
+  };
   canvas.addEventListener('focus', () => send(scene => scene.ui_focus(true)));
   canvas.addEventListener('blur', () => { resetPlayerInput(); send(scene => { scene.ui_focus(false); scene.ui_pointer_gone(); }); });
   canvas.addEventListener('pointermove', event => {
+    const startingRight = event.pointerType === 'mouse' && event.button === 2 && (event.buttons & 2) !== 0;
+    send(scene => gameplayMouse.update(event, startingRight && gameplayPointer(scene, event)));
     if (mode === 'gameplay' && (document.pointerLockElement === canvas || dragLook)) {
       if (Number.isFinite(event.movementX) && Number.isFinite(event.movementY))
         gameplayLua?.emit('input.mouse_delta', {dx:event.movementX, dy:event.movementY});
@@ -546,26 +570,34 @@ function attachInput() {
     const which = button(event); if (which === undefined) return;
     event.preventDefault(); canvas.focus({preventScroll:true});
     const [x,y] = point(event);
-    const world = mode === 'gameplay' && !arrangeMode && !scene.ui_hit_test(x,y) && scene.player_mouse_look_enabled();
+    const gameplay = gameplayPointer(scene, event);
+    if (gameplayMouse.update(event, gameplay)) {
+      if (document.pointerLockElement !== canvas) { canvas.setPointerCapture(event.pointerId); scene.ui_pointer_gone(); }
+      return;
+    }
+    const world = gameplay && scene.player_mouse_look_enabled();
     if (world && which === 0 && event.pointerType === 'mouse' && document.pointerLockElement !== canvas) {
       // Drag-to-look remains available when an embedded browser does not support pointer lock.
       dragLook = true; canvas.setPointerCapture(event.pointerId); scene.ui_pointer_gone();
       mouseCapture.request();
       return;
     }
-    if (world && which === 1 && event.pointerType === 'mouse') { dragLook = true; canvas.setPointerCapture(event.pointerId); return; }
     if (document.pointerLockElement === canvas) return;
     canvas.setPointerCapture(event.pointerId);
     scene.ui_pointer_move(x,y); scene.ui_pointer_button(x,y,which,true,modifiers(event));
   }));
   canvas.addEventListener('pointerup', event => send(scene => {
     const which = button(event); if (which === undefined) return;
+    const zoomWasDown = gameplayMouse.rightDown;
+    gameplayMouse.update(event, false);
+    if (zoomWasDown && which === 1) return;
     if (dragLook) { dragLook = false; return; }
     if (document.pointerLockElement === canvas) return;
     const [x,y] = point(event); scene.ui_pointer_button(x,y,which,false,modifiers(event));
     if (event.pointerType !== 'mouse') scene.ui_pointer_gone();
   }));
   canvas.addEventListener('pointercancel', event => send(scene => {
+    resetPlayerInput();
     dragLook = false;
     const [x,y] = point(event);
     for (const which of [0,1,2]) scene.ui_pointer_button(x,y,which,false,modifiers(event));
@@ -653,7 +685,9 @@ function tick(timestamp) {
         cancelLoading();
       } else if (mode === 'selector') {
         const id = active.take_launch();
+        const open = active.take_open_scene();
         if (id) void launchLevel(id);
+        else if (open) { const request = JSON.parse(open); selectedSceneId = request.scene; void launchLevel(request.level, request.scene); }
       } else if (mode === 'gameplay' || mode === 'menu') {
         const runtime = mode === 'menu' ? menuLua : gameplayLua;
         const dt = lastScriptTime === null ? 0 : Math.max(0, Math.min((timestamp - lastScriptTime) / 1000, 0.25));
@@ -721,20 +755,23 @@ async function start() {
   selectorBytes = await getBytes(selectorUrl);
   const selectorScene = parseJson(selectorBytes);
   const resources = selectorScene.resources?.assets;
-  if (!resources?.catalog?.uri || !resources?.gameplay_scene?.uri) throw new Error('Selector scene resources are missing.');
-  gameplayUrl = new URL(resources.gameplay_scene.uri, selectorUrl);
-  [catalogBytes, gameplayBytes] = await Promise.all([getBytes(new URL(resources.catalog.uri, selectorUrl)), getBytes(gameplayUrl)]);
+  if (!resources?.catalog?.uri || !resources?.gameplay_scene?.uri || !resources?.scene_catalog?.uri)
+    throw new Error('Selector scene resources are missing.');
+  defaultGameplayUrl = new URL(resources.gameplay_scene.uri, selectorUrl);
+  sceneCatalogUrl = new URL(resources.scene_catalog.uri, selectorUrl);
+  [catalogBytes, defaultGameplayBytes, sceneCatalogBytes] = await Promise.all([
+    getBytes(new URL(resources.catalog.uri, selectorUrl)), getBytes(defaultGameplayUrl), getBytes(sceneCatalogUrl)]);
   catalog = parseJson(catalogBytes);
-  gameplayScene = parseJson(gameplayBytes);
-  menuUrl = new URL(sceneAsset(gameplayScene, gameplayUrl, 'pause_menu'));
-  if (loadPolicy(resources.catalog.load) !== 'preload' || loadPolicy(resources.gameplay_scene.load) !== 'preload')
-    throw new Error('The selector catalog and gameplay scene must be preloaded.');
+  if (loadPolicy(resources.catalog.load) !== 'preload' || loadPolicy(resources.gameplay_scene.load) !== 'preload' ||
+      loadPolicy(resources.scene_catalog.load) !== 'preload')
+    throw new Error('The selector catalogs and gameplay scene must be preloaded.');
   if (!globalThis.wasmoon?.LuaFactory) throw new Error('Lua 5.4 runtime did not load.');
   luaFactory = new globalThis.wasmoon.LuaFactory('/pkg/wasmoon/glue.wasm');
   await init();
-  active = await Selector.create(canvas, selectorBytes, catalogBytes, '');
+  active = await Selector.create(canvas, selectorBytes, catalogBytes, sceneCatalogBytes, '', '');
   restoreLayout(active, 'selector');
   mode = 'selector';
+  void populateSelectorPreviews(active);
   attachInput();
   document.addEventListener('visibilitychange', () => { if (document.hidden) resetPlayerInput(); active?.set_paused(document.hidden || mode === 'menu'); });
   message.hidden = true;

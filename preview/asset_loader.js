@@ -16,6 +16,12 @@ export function levelPolicies(value = {}) {
     throw new Error('The level manifest, viewer settings, and chunk metadata must be preloaded.');
   return policies;
 }
+// Scene choices are filenames in the local project scene directory, never arbitrary URLs.
+export function localSceneUrl(filename, origin) {
+  if (typeof filename !== 'string' || !/^[A-Za-z0-9_-]{1,80}\.json$/.test(filename))
+    throw new Error('Invalid scene filename.');
+  return new URL(`/assets/scenes/${filename}`, origin);
+}
 export function planScripts(scene, base, origin) {
   const scripts = scene.resources?.scripts || {};
   const explicit = scene.resources?.preview?.browser_scripts || [];

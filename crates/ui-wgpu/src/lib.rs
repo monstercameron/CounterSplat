@@ -39,6 +39,7 @@ pub struct UiRenderer {
     modifiers: egui::Modifiers,
     textures_to_free: Vec<egui::TextureId>,
     fonts: std::collections::BTreeSet<String>,
+    images: std::collections::BTreeMap<String, egui::TextureHandle>,
     arrange_mode: bool,
 }
 
@@ -58,6 +59,7 @@ impl UiRenderer {
             modifiers: egui::Modifiers::default(),
             textures_to_free: Vec::new(),
             fonts: Default::default(),
+            images: Default::default(),
             arrange_mode: false,
         }
     }
@@ -77,6 +79,37 @@ impl UiRenderer {
         });
         self.fonts.insert(name.to_owned());
         Ok(())
+    }
+
+    /// Register decoded RGBA pixels under an opaque UI image key.
+    /// Replacing a key releases the previous texture when egui no longer needs it.
+    pub fn set_image_rgba(
+        &mut self,
+        key: &str,
+        size: [usize; 2],
+        rgba: &[u8],
+    ) -> Result<(), &'static str> {
+        if key.trim().is_empty()
+            || key.len() > 256
+            || key.chars().any(char::is_control)
+            || size.contains(&0)
+            || size[0] > 4096
+            || size[1] > 4096
+            || size[0].checked_mul(size[1]).and_then(|n| n.checked_mul(4)) != Some(rgba.len())
+        {
+            return Err("invalid UI image key, dimensions, or RGBA bytes");
+        }
+        let image = egui::ColorImage::from_rgba_unmultiplied(size, rgba);
+        let texture = self
+            .context
+            .load_texture(key, image, egui::TextureOptions::LINEAR);
+        self.images.insert(key.to_owned(), texture);
+        Ok(())
+    }
+
+    /// Remove a registered image; elements using it display a placeholder.
+    pub fn remove_image(&mut self, key: &str) {
+        self.images.remove(key);
     }
 
     /// Queue a platform input event. Pointer moves are coalesced; the queue is bounded.
@@ -158,8 +191,14 @@ impl UiRenderer {
         if let Some(viewport) = raw.viewports.get_mut(&egui::ViewportId::ROOT) {
             viewport.native_pixels_per_point = Some(pixels_per_point);
         }
-        let (mut output, events) =
-            build_ui(&self.context, raw, frame, &self.fonts, self.arrange_mode);
+        let (mut output, events) = build_ui(
+            &self.context,
+            raw,
+            frame,
+            &self.fonts,
+            &self.images,
+            self.arrange_mode,
+        );
         for (id, deltas) in &output.textures_delta.set {
             for delta in deltas {
                 self.renderer.update_texture(device, queue, *id, delta);
@@ -370,6 +409,7 @@ fn build_ui(
     raw: egui::RawInput,
     frame: &UiFrame,
     fonts: &std::collections::BTreeSet<String>,
+    images: &std::collections::BTreeMap<String, egui::TextureHandle>,
     arrange_mode: bool,
 ) -> (egui::FullOutput, Vec<UiEvent>) {
     let mut events = Vec::new();
@@ -474,6 +514,30 @@ fn build_ui(
                             }
                         }
                     }
+                }
+                Widget::Image { source } => {
+                    painter.rect_filled(area, rounding, color(style.fill));
+                    if let Some(texture) = images.get(source) {
+                        let size = texture.size_vec2();
+                        let image_ratio = size.x / size.y;
+                        let area_ratio = area.width() / area.height();
+                        let (u, v) = if image_ratio > area_ratio {
+                            (area_ratio / image_ratio, 1.0)
+                        } else {
+                            (1.0, image_ratio / area_ratio)
+                        };
+                        let uv = egui::Rect::from_center_size(Pos2::new(0.5, 0.5), Vec2::new(u, v));
+                        painter.image(texture.id(), area, uv, Color32::WHITE);
+                    } else {
+                        painter.text(
+                            area.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "Preview unavailable",
+                            font(&style.font, style.font_size, fonts),
+                            color(style.text),
+                        );
+                    }
+                    painter.rect_stroke(area, rounding, stroke, StrokeKind::Inside);
                 }
                 Widget::Circle => {
                     painter.circle(
@@ -676,7 +740,14 @@ mod tests {
             time: Some(t),
             ..Default::default()
         };
-        let (output, events) = build_ui(context, raw, &frame(), &Default::default(), false);
+        let (output, events) = build_ui(
+            context,
+            raw,
+            &frame(),
+            &Default::default(),
+            &Default::default(),
+            false,
+        );
         output.drop_without_applying_deltas();
         events
     }
@@ -740,7 +811,14 @@ mod tests {
                 time: Some(time),
                 ..Default::default()
             };
-            let (output, events) = build_ui(context, raw, frame, &Default::default(), false);
+            let (output, events) = build_ui(
+                context,
+                raw,
+                frame,
+                &Default::default(),
+                &Default::default(),
+                false,
+            );
             output.drop_without_applying_deltas();
             events
         };
@@ -803,7 +881,14 @@ mod tests {
             time: Some(time),
             ..Default::default()
         };
-        let (output, events) = build_ui(context, raw, frame, &Default::default(), arrange);
+        let (output, events) = build_ui(
+            context,
+            raw,
+            frame,
+            &Default::default(),
+            &Default::default(),
+            arrange,
+        );
         output.drop_without_applying_deltas();
         events
     }

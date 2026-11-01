@@ -1,5 +1,5 @@
--- One ECS-owned panel can inspect any live entity. The fixed controls edit its
--- PhysicsBody; additional controls come from engine.export declarations.
+-- The ECS entity browser and the right-hand inspector are ordinary scene UI.
+-- Selection, physics controls, and Lua exports all use the standard ECS bridge.
 local ids = assert(ecs.get_resource("scene.entities"))
 local selected = assert(ids.player)
 local page = 1
@@ -7,12 +7,28 @@ local page_size = 4
 local slots = {ids.inspector_export_1, ids.inspector_export_2, ids.inspector_export_3, ids.inspector_export_4}
 local labels = {}
 for name, id in pairs(ids) do labels[id] = name end
+local list_page, list_page_size, list_stamp = 1, 10, nil
+local list_rows = {ids.ecs_row_1, ids.ecs_row_2, ids.ecs_row_3, ids.ecs_row_4, ids.ecs_row_5,
+    ids.ecs_row_6, ids.ecs_row_7, ids.ecs_row_8, ids.ecs_row_9, ids.ecs_row_10}
+local row_index, displayed = {}, {}
+local has_list = ids.ecs_panel and ids.ecs_count and ids.ecs_page_prev and ids.ecs_page_label and ids.ecs_page_next
+for index = 1, list_page_size do
+    local id = list_rows[index]
+    if id then row_index[id] = index else has_list = false end
+end
 
+local function display_name(id)
+    local name = labels[id] or ("Entity " .. id)
+    name = name:gsub("_", " "):gsub("^%l", string.upper)
+    if #name > 31 then name = name:sub(1, 28) .. "..." end
+    return name
+end
 local function sorted_entities()
-    local entities = ecs.entities()
+    local entities, ui = ecs.entities(), {}
+    for _, id in ipairs(ecs.query({"UiElement"})) do ui[id] = true end
     local rank = {}
     for _, id in ipairs(entities) do
-        rank[id] = id == ids.player and 0 or (ecs.has(id, "UiElement") and 2 or 1)
+        rank[id] = id == ids.player and 0 or (ui[id] and 2 or 1)
     end
     table.sort(entities, function(a, b)
         if rank[a] ~= rank[b] then return rank[a] < rank[b] end
@@ -38,9 +54,84 @@ local function slider(id, value, yes, minimum, maximum)
         e.widget.value = math.max(e.widget.min, math.min(e.widget.max, value))
     end)
 end
+-- Only rewrite rows when their contents change; the entity list stays live without
+-- making a separate ECS request for every entity on every frame.
+local function refresh_list(force)
+    if not has_list then return end
+    local entities = sorted_entities()
+    local pages = math.max(1, math.ceil(#entities / list_page_size))
+    list_page = math.max(1, math.min(list_page, pages))
+    local stamp = table.concat(entities, "|") .. ":" .. list_page .. ":" .. tostring(selected)
+    if not force and stamp == list_stamp then return end
+    list_stamp = stamp
+    text(ids.ecs_count, #entities .. (#entities == 1 and " entity" or " entities"))
+    text(ids.ecs_page_label, list_page .. " / " .. pages)
+    available(ids.ecs_page_prev, list_page > 1)
+    available(ids.ecs_page_next, list_page < pages)
+    for index, row in ipairs(list_rows) do
+        local entity = entities[(list_page - 1) * list_page_size + index]
+        displayed[index] = entity
+        change(row, function(element)
+            element.visible = entity ~= nil
+            element.enabled = entity ~= nil
+            if entity then
+                element.widget.label = display_name(entity)
+                local color = element.style.fill
+                if entity == selected then color[1], color[2], color[3] = 46, 88, 85
+                else color[1], color[2], color[3] = 21, 39, 52 end
+            end
+        end)
+    end
+end
+local function publish_selection(entity)
+    selected = entity
+    page = 1
+    if selected then
+        ecs.set_resource("editor.selected_entity", selected)
+        ecs.emit("editor.entity_selected", {entity=selected})
+    else
+        ecs.remove_resource("editor.selected_entity")
+    end
+end
+local function open_selection(entity)
+    if not entity or not ecs.is_alive(entity) then return end
+    -- UI entities expose their ordinary visibility and input flags on demand.
+    -- Keep the editor's own controls available so the browser cannot hide itself.
+    local name = labels[entity] or ""
+    if ecs.has(entity, "UiElement") and name ~= "entity_inspector" and
+        not name:match("^ecs_") and not name:match("^inspector_") then
+        engine.export(entity, "inspector_ui_visible", {component="UiElement", field="visible", label="Visible"})
+        engine.export(entity, "inspector_ui_enabled", {component="UiElement", field="enabled", label="Interaction enabled"})
+    end
+    publish_selection(entity)
+    change(ids.entity_inspector, function(element)
+        element.visible = true
+        element.collapsible.collapsed = false
+    end)
+end
+local function component_lines(entity)
+    local lines = {"Components: ", ""}
+    for _, name in ipairs(ecs.components(entity)) do
+        local line = #lines[1] + #name + 2 <= 43 and 1 or 2
+        local prefix = (lines[line] == "" or lines[line] == "Components: ") and "" or ", "
+        lines[line] = lines[line] .. prefix .. name
+    end
+    if lines[1] == "Components: " then lines[1] = "No components" end
+    if #lines[2] > 43 then lines[2] = lines[2]:sub(1, 40) .. "..." end
+    return lines[1], lines[2]
+end
 local function refresh()
-    if not ecs.is_alive(selected) then selected = ids.player; page = 1 end
-    text(ids.inspector_entity, labels[selected] or selected)
+    if not selected or not ecs.is_alive(selected) then
+        publish_selection(ecs.is_alive(ids.player) and ids.player or nil)
+    end
+    if not selected then
+        change(ids.entity_inspector, function(element) element.visible = false end)
+        return
+    end
+    text(ids.inspector_entity, display_name(selected))
+    local first, second = component_lines(selected)
+    if ids.inspector_components_1 then text(ids.inspector_components_1, first) end
+    if ids.inspector_components_2 then text(ids.inspector_components_2, second) end
     local body = ecs.get(selected, "PhysicsBody")
     local has_body = body ~= nil
     change(ids.inspector_attach, function(e) e.visible = not has_body end)
@@ -79,10 +170,10 @@ local function refresh()
             end
         end)
     end
-    text(ids.inspector_export_page, #exports == 0 and "No Lua exports" or ("Exports " .. page .. " / " .. pages))
+    text(ids.inspector_export_page, #exports == 0 and "No tunable fields" or ("Settings " .. page .. " / " .. pages))
     available(ids.inspector_export_prev, page > 1)
     available(ids.inspector_export_next, page < pages)
-    if not has_body then text(ids.inspector_state, "Attach physics to this entity")
+    if not has_body then text(ids.inspector_state, "No physics body")
     elseif not body.enabled then text(ids.inspector_state, "Physics disabled")
     elseif not body.collision_enabled then text(ids.inspector_state, "Collision disabled")
     else
@@ -99,8 +190,9 @@ local function choose(direction)
     if #entities == 0 then return end
     local current = 1
     for i, id in ipairs(entities) do if id == selected then current = i; break end end
-    selected = entities[((current - 1 + direction) % #entities) + 1]
-    page = 1
+    local index = ((current - 1 + direction) % #entities) + 1
+    open_selection(entities[index])
+    list_page = math.floor((index - 1) / list_page_size) + 1
 end
 local fields = {[ids.inspector_enabled]="enabled", [ids.inspector_collision]="collision_enabled",
     [ids.inspector_gravity]="gravity_enabled", [ids.inspector_radius]="radius", [ids.inspector_gravity_strength]="gravity",
@@ -108,7 +200,13 @@ local fields = {[ids.inspector_enabled]="enabled", [ids.inspector_collision]="co
 
 ecs.on("ui.action", function(action)
     local id, kind = action.id, action.kind
-    if id == ids.inspector_prev and kind.type == "clicked" then choose(-1)
+    if row_index[id] and kind.type == "clicked" then
+        open_selection(displayed[row_index[id]])
+    elseif id == ids.ecs_page_prev and kind.type == "clicked" then list_page = list_page - 1
+    elseif id == ids.ecs_page_next and kind.type == "clicked" then list_page = list_page + 1
+    elseif id == ids.inspector_close and kind.type == "clicked" then
+        change(ids.entity_inspector, function(element) element.visible = false end)
+    elseif id == ids.inspector_prev and kind.type == "clicked" then choose(-1)
     elseif id == ids.inspector_next and kind.type == "clicked" then choose(1)
     elseif id == ids.inspector_export_prev and kind.type == "clicked" then page = page - 1
     elseif id == ids.inspector_export_next and kind.type == "clicked" then page = page + 1
@@ -168,13 +266,18 @@ ecs.on("ui.action", function(action)
         end
     end
     refresh()
+    refresh_list(false)
 end)
 local elapsed = 0
 refresh()
+refresh_list(true)
 ecs.system("inspector.refresh", function(dt)
     elapsed = elapsed + dt
     if elapsed < 0.25 then return end
     elapsed = 0
     local panel = ecs.get(ids.entity_inspector, "UiElement")
-    if panel and not panel.collapsible.collapsed then refresh() end
+    if selected and not ecs.is_alive(selected) then refresh()
+    elseif panel and panel.visible and not panel.collapsible.collapsed then refresh() end
+    local list = has_list and ecs.get(ids.ecs_panel, "UiElement") or nil
+    if list and list.collapsible and not list.collapsible.collapsed then refresh_list(false) end
 end)

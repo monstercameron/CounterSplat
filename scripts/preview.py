@@ -7,6 +7,7 @@ import argparse
 import json
 import mimetypes
 import re
+import unicodedata
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -14,6 +15,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEW = (ROOT / "preview").resolve()
 LEVELS = (ROOT / "assets" / "levels").resolve()
+SCENES = (ROOT / "assets" / "scenes").resolve()
 
 
 def safe_child(root: Path, relative: str):
@@ -40,13 +42,52 @@ def level_resource(root: Path, relative: str):
     return safe_child(level_root, parts[1])
 
 
+def scene_resource(root: Path, filename: str):
+    """Serve only simple JSON filenames from the scenes directory."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}\.json", filename):
+        return None
+    return safe_child(root, filename)
+
+
+def scene_catalog(root: Path):
+    """Discover playable scenes without exposing unrelated files or subdirectories."""
+    scenes = (root / "assets" / "scenes").resolve()
+    entries = []
+    for path in sorted(scenes.glob("*.json"), key=lambda p: (p.name != "gameplay.json", p.name))[:256]:
+        if scene_resource(scenes, path.name) is None:
+            continue
+        try:
+            if path.stat().st_size > 4 * 1024 * 1024:
+                continue
+            scene = json.loads(path.read_text(encoding="utf-8"))
+            resources = scene.get("resources", {})
+            assets = resources.get("assets", {})
+            preview = resources.get("preview", {})
+            level_id = preview.get("level_asset", "level")
+            player = any(e.get("id") == "player" and "PlayerCamera" in e.get("components", {})
+                         for e in scene.get("entities", []) if isinstance(e, dict))
+            name = scene.get("name")
+            if (not player or not isinstance(name, str) or not name.strip() or len(name.encode("utf-8")) > 512
+                    or any(unicodedata.category(c) == "Cc" for c in name)
+                    or assets.get(level_id, {}).get("kind") != "sog_level"
+                    or assets.get("pause_menu", {}).get("kind") != "scene"):
+                continue
+            entries.append({"id": path.name, "name": name})
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue
+    return {"version": 1, "scenes": entries}
+
+
 def declared_scene_resource(root: Path, relative: str):
     """Resolve resources declared by known scenes, confined to their assets directory."""
     requested = (root / relative).resolve()
     assets = (root / "assets").resolve()
-    for name in ("gameplay.json", "menu.json", "level-selector.json"):
+    scenes = (root / "assets" / "scenes").resolve()
+    for candidate in scenes.glob("*.json"):
         try:
-            scene_path = root / "assets" / "scenes" / name
+            scene_path = scene_resource(scenes, candidate.name)
+            if scene_path is None:
+                continue
             scene = json.loads(scene_path.read_text(encoding="utf-8"))
             resources = scene.get("resources", {})
             definitions = list(resources.get("assets", {}).values()) + list(resources.get("scripts", {}).values())
@@ -81,14 +122,25 @@ def main():
                 path = safe_child(PREVIEW, route.removeprefix("/"))
             elif route == "/pkg/scene.json":
                 path = safe_child(ROOT / "assets" / "scenes", "gameplay.json")
-            elif route in ("/assets/scenes/gameplay.json", "/assets/scenes/level-selector.json", "/assets/scenes/menu.json"):
-                path = safe_child(ROOT / "assets" / "scenes", route.rsplit("/", 1)[-1])
+            elif route == "/assets/scenes/catalog.json":
+                content = json.dumps(scene_catalog(ROOT), ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            elif route.startswith("/assets/scenes/"):
+                path = scene_resource(SCENES, route.removeprefix("/assets/scenes/"))
             elif route.startswith("/assets/levels/"):
                 path = level_resource(LEVELS, route.removeprefix("/assets/levels/"))
             elif route.startswith("/assets/"):
                 _, path = declared_scene_resource(ROOT, route.removeprefix("/"))
             elif route.startswith("/levels/"):
                 path = level_resource(LEVELS, route.removeprefix("/levels/"))
+            elif route == "/pkg/engine_api.lua":
+                path = safe_child(ROOT / "crates" / "scripting-lua" / "src", "engine_api.lua")
             elif route.startswith("/pkg/"):
                 relative = route.removeprefix("/pkg/")
                 declared, path = declared_scene_resource(ROOT, relative)

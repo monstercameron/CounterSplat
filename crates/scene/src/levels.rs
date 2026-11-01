@@ -39,6 +39,9 @@ pub struct LevelEntry {
     pub format: LevelFormat,
     /// Project-relative path; checked against the ID and format before use.
     pub manifest: String,
+    /// Optional local preview image, kept with the development level assets.
+    #[serde(default)]
+    pub thumbnail: Option<String>,
     /// Rotate source splats into the viewer camera coordinate system (default: true).
     #[serde(default = "default_splat_rotation")]
     pub rotate_z_180: bool,
@@ -96,6 +99,13 @@ impl LevelCatalog {
             };
             if level.manifest != format!("assets/levels/{}/{filename}", level.id) {
                 return Err(format!("invalid manifest path for `{}`", level.id));
+            }
+            if level
+                .thumbnail
+                .as_ref()
+                .is_some_and(|path| path != &format!("assets/levels/{}/preview.webp", level.id))
+            {
+                return Err(format!("invalid thumbnail path for `{}`", level.id));
             }
             if level.assets.manifest != AssetLoadPolicy::Preload
                 || level.assets.viewer_settings != AssetLoadPolicy::Preload
@@ -172,6 +182,11 @@ mod tests {
                 .unwrap()
                 .rotate_z_180
         );
+        let mut preview = catalog();
+        preview["levels"][0]["thumbnail"] = json!("assets/levels/1234abcd/preview.webp");
+        assert!(parse(preview.clone()).is_ok());
+        preview["levels"][0]["thumbnail"] = json!("assets/levels/ffffffff/preview.webp");
+        assert!(parse(preview).is_err());
         let mut bad = catalog();
         bad["levels"][0]["manifest"] = json!("assets/levels/../../secret");
         assert!(parse(bad).is_err());

@@ -77,6 +77,22 @@ fn draws_shapes_and_fonts_over_the_scene_without_clearing_it() {
     let frame = UiFrame {
         nodes: vec![
             node(
+                "image",
+                Rect::new(0.0, 52.0, 22.0, 12.0),
+                UiElement {
+                    rect: Rect::new(0.0, 52.0, 22.0, 12.0),
+                    widget: Widget::Image {
+                        source: "level".into(),
+                    },
+                    style: Style {
+                        border: Color::TRANSPARENT,
+                        rounding: 0.0,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ),
+            node(
                 "shape",
                 shape,
                 UiElement {
@@ -130,6 +146,16 @@ fn draws_shapes_and_fonts_over_the_scene_without_clearing_it() {
         ],
     };
     let mut renderer = UiRenderer::new(&device, format);
+    assert!(renderer.set_image_rgba("level", [2, 2], &[0; 3]).is_err());
+    renderer
+        .set_image_rgba(
+            "level",
+            [2, 2],
+            &[
+                0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255,
+            ],
+        )
+        .unwrap();
     let output = renderer
         .draw(
             UiTarget {
@@ -186,6 +212,11 @@ fn draws_shapes_and_fonts_over_the_scene_without_clearing_it() {
         "UI rectangle did not composite: shape={:?}, background={:?}",
         pixel(20, 20),
         pixel(2, 2)
+    );
+    assert!(
+        pixel(10, 58)[1] > 200 && pixel(10, 58)[0] < 30,
+        "UI image did not composite: {:?}",
+        pixel(10, 58)
     );
     let text_pixels = (8..40)
         .flat_map(|y| (65..120).map(move |x| (x, y)))

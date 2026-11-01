@@ -99,9 +99,27 @@
         "autoload": false,
         "load": "preload"
       },
+      "camera-bob": {
+        "language": "lua",
+        "uri": "../scripts/camera_bob.lua",
+        "autoload": false,
+        "load": "preload"
+      },
+      "camera-zoom": {
+        "language": "lua",
+        "uri": "../scripts/camera_zoom.lua",
+        "autoload": false,
+        "load": "preload"
+      },
       "entity-inspector": {
         "language": "lua",
         "uri": "../scripts/entity_inspector.lua",
+        "autoload": false,
+        "load": "preload"
+      },
+      "inspector-tuning": {
+        "language": "lua",
+        "uri": "../scripts/inspector_tuning.lua",
         "autoload": false,
         "load": "preload"
       }
@@ -110,6 +128,8 @@
       "level_asset": "level",
       "skybox_entity": "skybox",
       "capacity": 3000000,
+      "chunk_decoder_workers": "auto",
+      "metadata_fetch_concurrency": 12,
       "rotate_z_180": true,
       "ui": {
         "animate": "animate",
@@ -131,6 +151,9 @@
         "level-settings",
         "voxel-settings",
         "physics-system",
+        "camera-bob",
+        "camera-zoom",
+        "inspector-tuning",
         "entity-inspector"
       ],
       "player_spawn": "level",
@@ -1060,6 +1083,13 @@
         "PlayerControls": {
           "jump_speed": 5.0,
           "jump_gravity": 18.0,
+          "bob_enabled": true,
+          "bob_cadence": 2.0,
+          "bob_vertical": 0.035,
+          "bob_horizontal": 0.018,
+          "bob_smoothing": 12.0,
+          "zoom_factor": 5.0,
+          "zoom_response": 12.0,
           "bindings": {
             "jump": "Space"
           }
@@ -2333,10 +2363,10 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 310,
+            "x": 276,
             "y": 20,
             "width": 340,
-            "height": 442
+            "height": 522
           },
           "z": 110,
           "widget": {
@@ -2347,7 +2377,7 @@
               13,
               29,
               37,
-              245
+              255
             ],
             "border": [
               116,
@@ -2361,7 +2391,9 @@
             "title": "Entity settings",
             "collapsed": true,
             "header_height": 34
-          }
+          },
+          "anchor": "top_right",
+          "visible": false
         }
       }
     },
@@ -2434,7 +2466,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 38,
+            "y": 78,
             "width": 308,
             "height": 25
           },
@@ -2454,7 +2486,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 68,
+            "y": 108,
             "width": 150,
             "height": 22
           },
@@ -2475,7 +2507,7 @@
         "UiElement": {
           "rect": {
             "x": 175,
-            "y": 68,
+            "y": 108,
             "width": 145,
             "height": 22
           },
@@ -2496,7 +2528,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 94,
+            "y": 134,
             "width": 150,
             "height": 22
           },
@@ -2517,7 +2549,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 122,
+            "y": 162,
             "width": 308,
             "height": 23
           },
@@ -2540,7 +2572,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 150,
+            "y": 190,
             "width": 308,
             "height": 23
           },
@@ -2563,14 +2595,14 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 210,
+            "y": 250,
             "width": 200,
             "height": 20
           },
           "z": 111,
           "widget": {
             "type": "text",
-            "text": "Lua exports",
+            "text": "Component settings",
             "align": "left"
           }
         }
@@ -2584,7 +2616,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 232,
+            "y": 272,
             "width": 308,
             "height": 23
           },
@@ -2605,7 +2637,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 259,
+            "y": 299,
             "width": 308,
             "height": 23
           },
@@ -2626,7 +2658,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 286,
+            "y": 326,
             "width": 308,
             "height": 23
           },
@@ -2647,7 +2679,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 313,
+            "y": 353,
             "width": 308,
             "height": 23
           },
@@ -2668,7 +2700,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 344,
+            "y": 384,
             "width": 34,
             "height": 24
           },
@@ -2688,14 +2720,14 @@
         "UiElement": {
           "rect": {
             "x": 54,
-            "y": 344,
+            "y": 384,
             "width": 222,
             "height": 24
           },
           "z": 111,
           "widget": {
             "type": "text",
-            "text": "No exports",
+            "text": "No tunable fields",
             "align": "center"
           }
         }
@@ -2709,7 +2741,7 @@
         "UiElement": {
           "rect": {
             "x": 286,
-            "y": 344,
+            "y": 384,
             "width": 34,
             "height": 24
           },
@@ -2729,7 +2761,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 376,
+            "y": 416,
             "width": 308,
             "height": 22
           },
@@ -2750,7 +2782,7 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 178,
+            "y": 218,
             "width": 308,
             "height": 23
           },
@@ -2810,6 +2842,714 @@
           }
         }
       }
+    },
+    {
+      "id": "ecs_panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 310,
+            "y": 20,
+            "width": 260,
+            "height": 430
+          },
+          "z": 100,
+          "widget": {
+            "type": "panel"
+          },
+          "style": {
+            "fill": [
+              13,
+              29,
+              37,
+              245
+            ],
+            "border": [
+              116,
+              157,
+              161,
+              210
+            ],
+            "rounding": 7
+          },
+          "collapsible": {
+            "title": "ECS entities",
+            "collapsed": false,
+            "header_height": 34
+          }
+        }
+      }
+    },
+    {
+      "id": "ecs_count",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 6,
+            "width": 236,
+            "height": 22
+          },
+          "z": 101,
+          "widget": {
+            "type": "text",
+            "text": "Loading entities...",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_1",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 32,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_2",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 63,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_3",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 94,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_4",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 125,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_5",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 156,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_6",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 187,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_7",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 218,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_8",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 249,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_9",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 280,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_row_10",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 311,
+            "width": 236,
+            "height": 27
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": ""
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_page_prev",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 345,
+            "width": 55,
+            "height": 26
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": "Prev"
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_page_label",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 72,
+            "y": 345,
+            "width": 116,
+            "height": 26
+          },
+          "z": 101,
+          "widget": {
+            "type": "text",
+            "text": "1 / 1",
+            "align": "center"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "ecs_page_next",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 193,
+            "y": 345,
+            "width": 55,
+            "height": 26
+          },
+          "z": 101,
+          "widget": {
+            "type": "button",
+            "label": "Next"
+          }
+        }
+      },
+      "parent": "ecs_panel"
+    },
+    {
+      "id": "inspector_components_1",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 38,
+            "width": 308,
+            "height": 18
+          },
+          "z": 111,
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "entity_inspector"
+    },
+    {
+      "id": "inspector_components_2",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 56,
+            "width": 308,
+            "height": 18
+          },
+          "z": 111,
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          },
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              180,
+              205,
+              204,
+              255
+            ],
+            "font_size": 11
+          }
+        }
+      },
+      "parent": "entity_inspector"
+    },
+    {
+      "id": "inspector_close",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 438,
+            "width": 308,
+            "height": 26
+          },
+          "z": 111,
+          "widget": {
+            "type": "button",
+            "label": "Close settings"
+          },
+          "style": {
+            "fill": [
+              21,
+              39,
+              52,
+              235
+            ],
+            "border": [
+              99,
+              139,
+              145,
+              180
+            ],
+            "text": [
+              238,
+              245,
+              241,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          }
+        }
+      },
+      "parent": "entity_inspector"
     }
   ]
 }

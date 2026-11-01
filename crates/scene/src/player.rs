@@ -6,17 +6,23 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct PlayerCamera {
     pub position: [f32; 3],
+    /// World-space visual offset. Physics and the player position remain unchanged.
+    pub view_offset: [f32; 3],
     pub yaw: f32,
     pub pitch: f32,
     pub fov_degrees: f32,
+    /// Optional script-controlled render FOV; the configured base FOV stays unchanged.
+    pub view_fov_degrees: Option<f32>,
 }
 impl Default for PlayerCamera {
     fn default() -> Self {
         Self {
             position: [0.0, 0.0, 0.0],
+            view_offset: [0.0, 0.0, 0.0],
             yaw: 0.0,
             pitch: 0.0,
             fov_degrees: 60.0,
+            view_fov_degrees: None,
         }
     }
 }
@@ -34,16 +40,28 @@ impl PlayerCamera {
         }
         let camera = Self {
             position,
+            view_offset: [0.0; 3],
             yaw: direction[0].atan2(-direction[2]),
             pitch: (direction[1] / length)
                 .clamp(-1.0, 1.0)
                 .asin()
                 .clamp(-1.553_343, 1.553_343),
             fov_degrees,
+            view_fov_degrees: None,
         };
         camera.validate()?;
         Ok(camera)
     }
+    /// Visual eye position; collision and gameplay use `position` directly.
+    pub fn render_position(&self) -> [f32; 3] {
+        std::array::from_fn(|i| self.position[i] + self.view_offset[i])
+    }
+
+    /// Render FOV in degrees, including any script-controlled lens effect.
+    pub fn render_fov_degrees(&self) -> f32 {
+        self.view_fov_degrees.unwrap_or(self.fov_degrees)
+    }
+
     /// Unit view direction in world coordinates.
     pub fn direction(&self) -> [f32; 3] {
         let (sy, cy) = self.yaw.sin_cos();
@@ -55,12 +73,19 @@ impl PlayerCamera {
             .position
             .iter()
             .all(|v| v.is_finite() && v.abs() <= 10_000_000.0)
+            || !self
+                .view_offset
+                .iter()
+                .all(|v| v.is_finite() && v.abs() <= 100.0)
             || !self.yaw.is_finite()
             || self.yaw.abs() > 1_000_000.0
             || !self.pitch.is_finite()
             || self.pitch.abs() > 1.553_343
             || !self.fov_degrees.is_finite()
             || !(1.0..179.0).contains(&self.fov_degrees)
+            || self
+                .view_fov_degrees
+                .is_some_and(|fov| !fov.is_finite() || !(0.01..179.0).contains(&fov))
         {
             return Err("player camera has an invalid position, angle, or field of view");
         }
@@ -174,6 +199,16 @@ pub struct PlayerControls {
     /// Optional user FOV override; None retains the level or scene camera's FOV.
     pub fov_degrees: Option<f32>,
     pub invert_y: bool,
+    /// Lua camera bob settings: steps per second at walking speed, amplitudes in metres,
+    /// and response in inverse seconds. The view offset never moves the collider.
+    pub bob_enabled: bool,
+    pub bob_cadence: f32,
+    pub bob_vertical: f32,
+    pub bob_horizontal: f32,
+    pub bob_smoothing: f32,
+    /// Right-button optical magnification and transition response in inverse seconds.
+    pub zoom_factor: f32,
+    pub zoom_response: f32,
     pub bindings: PlayerBindings,
 }
 impl Default for PlayerControls {
@@ -188,6 +223,13 @@ impl Default for PlayerControls {
             jump_gravity: 18.0,
             fov_degrees: None,
             invert_y: false,
+            bob_enabled: true,
+            bob_cadence: 2.0,
+            bob_vertical: 0.035,
+            bob_horizontal: 0.018,
+            bob_smoothing: 12.0,
+            zoom_factor: 5.0,
+            zoom_response: 12.0,
             bindings: PlayerBindings::default(),
         }
     }
@@ -204,11 +246,23 @@ impl PlayerControls {
             || !(0.5..=15.0).contains(&self.jump_speed)
             || !self.jump_gravity.is_finite()
             || !(2.0..=60.0).contains(&self.jump_gravity)
+            || !self.bob_cadence.is_finite()
+            || !(0.2..=6.0).contains(&self.bob_cadence)
+            || !self.bob_vertical.is_finite()
+            || !(0.0..=0.25).contains(&self.bob_vertical)
+            || !self.bob_horizontal.is_finite()
+            || !(0.0..=0.25).contains(&self.bob_horizontal)
+            || !self.bob_smoothing.is_finite()
+            || !(1.0..=30.0).contains(&self.bob_smoothing)
+            || !self.zoom_factor.is_finite()
+            || !(1.0..=10.0).contains(&self.zoom_factor)
+            || !self.zoom_response.is_finite()
+            || !(1.0..=30.0).contains(&self.zoom_response)
             || self
                 .fov_degrees
                 .is_some_and(|fov| !fov.is_finite() || !(1.0..179.0).contains(&fov))
         {
-            return Err("player movement, jump, or mouse sensitivity is invalid");
+            return Err("player movement, camera, or mouse settings are invalid");
         }
         self.bindings.validate()
     }
@@ -226,6 +280,45 @@ mod tests {
         assert!(PlayerCamera {
             pitch: f32::NAN,
             ..Default::default()
+        }
+        .validate()
+        .is_err());
+    }
+    #[test]
+    fn camera_view_offset_is_visual_only_and_old_settings_get_defaults() {
+        let camera = PlayerCamera {
+            position: [1.0, 2.0, 3.0],
+            view_offset: [0.1, 0.2, -0.3],
+            ..Default::default()
+        };
+        assert_eq!(camera.render_position(), [1.1, 2.2, 2.7]);
+        assert_eq!(camera.position, [1.0, 2.0, 3.0]);
+        assert_eq!(camera.render_fov_degrees(), camera.fov_degrees);
+        let zoomed = PlayerCamera {
+            view_fov_degrees: Some(12.0),
+            ..camera.clone()
+        };
+        assert_eq!(zoomed.render_fov_degrees(), 12.0);
+        assert_eq!(zoomed.fov_degrees, camera.fov_degrees);
+        assert!(PlayerCamera {
+            view_fov_degrees: Some(0.0),
+            ..camera.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(PlayerCamera {
+            view_offset: [f32::NAN, 0.0, 0.0],
+            ..camera
+        }
+        .validate()
+        .is_err());
+        let controls: PlayerControls =
+            serde_json::from_value(serde_json::json!({"move_speed": 6.0})).unwrap();
+        assert!(controls.bob_enabled && controls.bob_cadence == 2.0);
+        assert!(controls.validate().is_ok());
+        assert!(PlayerControls {
+            bob_vertical: 1.0,
+            ..controls
         }
         .validate()
         .is_err());

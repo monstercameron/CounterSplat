@@ -7,7 +7,8 @@ from pathlib import Path
 
 # Importing the preview server should not create bytecode in the source tree.
 sys.dont_write_bytecode = True
-from preview import declared_scene_resource, level_resource, package_resource, safe_child
+from preview import declared_scene_resource, level_resource, package_resource, safe_child, scene_catalog, scene_resource
+from download_previews import preview_url
 
 
 class PreviewPaths(unittest.TestCase):
@@ -76,6 +77,39 @@ class PreviewPaths(unittest.TestCase):
             self.assertEqual(declared_scene_resource(root, "assets/other.txt"), (False, None))
             sky.unlink()
             self.assertEqual(declared_scene_resource(root, "assets/images/sky.hdr"), (True, None))
+
+    def test_playable_scene_discovery_and_scene_path_confinement(self):
+        import json
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            scenes = root / "assets" / "scenes"
+            scenes.mkdir(parents=True)
+            playable = {"name":"My scene", "resources":{"assets":{
+                "level":{"kind":"sog_level"}, "pause_menu":{"kind":"scene"}},
+                "preview":{"level_asset":"level"}},
+                "entities":[{"id":"player", "components":{"PlayerCamera":{}}}]}
+            (scenes / "my-scene.json").write_text(json.dumps(playable), encoding="utf-8")
+            (scenes / "menu.json").write_text(json.dumps({"name":"Menu"}), encoding="utf-8")
+            (scenes / "bad.json").write_text("not json", encoding="utf-8")
+            self.assertEqual(scene_catalog(root)["scenes"], [{"id":"my-scene.json", "name":"My scene"}])
+            self.assertEqual(scene_resource(scenes, "my-scene.json"), scenes / "my-scene.json")
+            self.assertIsNone(scene_resource(scenes, "../secret.json"))
+            self.assertIsNone(scene_resource(scenes, "child/scene.json"))
+            scripts = root / "assets" / "scripts"
+            scripts.mkdir()
+            script = scripts / "custom.lua"
+            script.write_text("return 1", encoding="utf-8")
+            playable["resources"]["scripts"] = {"custom":{"uri":"../scripts/custom.lua"}}
+            (scenes / "my-scene.json").write_text(json.dumps(playable), encoding="utf-8")
+            self.assertEqual(declared_scene_resource(root, "assets/scripts/custom.lua"), (True, script))
+
+    def test_preview_metadata_must_match_the_requested_scene(self):
+        page = '<meta property="og:image" content="https://s3-eu-west-1.amazonaws.com/images.playcanvas.com/splat/1234abcd/v1/xl.webp">'
+        self.assertTrue(preview_url("1234abcd", page).endswith("/1234abcd/v1/xl.webp"))
+        with self.assertRaises(ValueError):
+            preview_url("ffffffff", page)
+        with self.assertRaises(ValueError):
+            preview_url("1234abcd", page.replace("s3-eu-west-1.amazonaws.com", "example.com"))
 
     def test_menu_scripts_are_declared_by_the_menu_scene(self):
         import json

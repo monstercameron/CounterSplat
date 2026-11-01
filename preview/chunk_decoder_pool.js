@@ -1,6 +1,11 @@
 // Bounded CPU workers for streamed chunks. There is no waiting queue: the
 // renderer chooses fresh priorities whenever a worker becomes available.
-export function chunkDecoderCount(logicalCores) {
+export function chunkDecoderCount(logicalCores, configured = 'auto') {
+  if (configured !== 'auto') {
+    if (!Number.isInteger(configured) || configured < 1 || configured > 4)
+      throw new Error('Chunk decoder workers must be auto or an integer from 1 to 4.');
+    return configured;
+  }
   if (!Number.isFinite(logicalCores) || logicalCores < 1) return 2;
   if (logicalCores <= 2) return 1;
   if (logicalCores <= 4) return 2;

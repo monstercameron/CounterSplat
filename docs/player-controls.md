@@ -3,7 +3,7 @@
 The browser game has a grounded first-person player camera when voxel collision is available. Click the canvas to focus it, then use **W/A/S/D** to move,
 **E/Q** to move up/down, **Space** to jump, and **Left Shift** to sprint. In browsers that permit
 pointer lock, clicking the scene captures the mouse for continuous look; press **` / ~** to release it. The Codex
-in-app browser uses drag look when pointer lock is unavailable. **Escape** opens the pause menu. Movement stops on focus loss, pause, or
+in-app browser uses left-drag look when pointer lock is unavailable. Hold **right mouse** for a smooth 5× zoom and release to return to the normal view. **Escape** opens the pause menu. Movement stops on focus loss, pause, or
 when UI arrangement starts, so a missed key release cannot leave the player moving.
 
 Open **Player controls** in the lower right of the canvas to change movement and mouse-look enablement, speed,
@@ -31,6 +31,16 @@ runs Lua systems at the engine's fixed simulation tick. The script normalizes di
 tracks key releases, applies UI changes through ECS, and emits `player.controls_changed` for browser persistence.
 The navigation script receives the same key and UI events, preserving Escape menu behavior. `ecs.on` events are
 host-dispatched copies; they are distinct from the single-consumer ECS queues.
+
+## Camera zoom
+
+[`camera_zoom.lua`](../assets/scripts/camera_zoom.lua) handles right-button zoom with a smooth transition. It computes optical magnification from the tangent of half the field of view, so 5× means five times the focal length at any configured base FOV. The base FOV and player position remain unchanged. Focus loss, pause, and reset release the zoom. **Entity settings → player → Component settings** provides **Zoom magnification** and **Zoom response**; the defaults in `gameplay.json` are 5× and 12 per second.
+
+## Camera bob
+
+[`camera_bob.lua`](../assets/scripts/camera_bob.lua) adds a visual-only sway while the player moves. Open **Entity settings**, select `player`, and use the export-page arrows to tune **View bob**, **Bob steps / sec**, **Bob vertical (m)**, **Bob sideways (m)**, and **Bob response**. The values live in `PlayerControls`, are initialized in `gameplay.json`, and are saved with the other browser control preferences. **Reset controls** restores their scene defaults.
+
+Cadence describes steps per second at normal walk speed and increases with actual travel speed. Amplitudes are in metres and scale with the player rig. Bob starts and settles smoothly, pauses in the air when voxel collision is active, and stops when movement is blocked. The script writes only `PlayerCamera.view_offset`; physics, the collider, spawn position, and streaming distance use the unchanged `PlayerCamera.position`.
 
 The player has a `PhysicsBody` component. Physics, collision and gravity are on by default; the player stands
 on the level voxels and can jump while grounded. With gravity off, Space follows a free-fly jump arc.

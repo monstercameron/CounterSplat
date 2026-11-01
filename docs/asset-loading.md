@@ -57,3 +57,20 @@ controls the gameplay scene's `sog_level` asset. Absent level policies default t
 Scene-resource bytes and decoded preloaded chunks each have a 512 MiB browser limit; larger scans should use
 `streamable`. These are host limits, not restrictions imposed by the scene format. Other engine hosts can implement
 the same policy vocabulary with their own asset stores and thread ownership.
+
+## Browser concurrency
+
+The gameplay scene's `resources.preview` can tune asset work without changing engine code:
+
+```json
+"preview": {
+  "chunk_decoder_workers": "auto",
+  "metadata_fetch_concurrency": 12
+}
+```
+
+`chunk_decoder_workers` selects `"auto"` (one to four workers based on the browser's reported logical cores),
+or an explicit integer from 1 to 4. It applies to both streamed and preloaded splats. Metadata fetch concurrency
+can be 1 to 32; fetch and parsing happen on a dedicated temporary worker. More workers can improve throughput,
+but also use more memory and CPU; profile on the intended device. These settings do not move the browser's Lua,
+ECS, or GPU submission off the page thread. See [thread ownership](threading.md).

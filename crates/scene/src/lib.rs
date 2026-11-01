@@ -8,6 +8,7 @@ mod loading;
 mod manifest;
 mod physics;
 mod player;
+mod scenes;
 mod voxel;
 pub use level::{LevelAssets, LevelFile, LevelFileKind, LevelSettings};
 pub use levels::{LevelAssetPolicies, LevelCatalog, LevelEntry, LevelFormat};
@@ -18,6 +19,7 @@ pub use manifest::{
 };
 pub use physics::{PhysicsBody, Transform};
 pub use player::{PlayerBindings, PlayerCamera, PlayerControls, PlayerRig};
+pub use scenes::{SceneCatalog, SceneChoice};
 pub use voxel::{VoxelCollider, VoxelColliderState, VoxelStatus};
 
 use serde::{Deserialize, Serialize};

@@ -23,6 +23,11 @@
         "kind": "scene",
         "uri": "/assets/scenes/gameplay.json",
         "load": "preload"
+      },
+      "scene_catalog": {
+        "kind": "scene_catalog",
+        "uri": "/assets/scenes/catalog.json",
+        "load": "preload"
       }
     },
     "selector": {
@@ -180,7 +185,7 @@
           },
           "widget": {
             "type": "text",
-            "text": "Select a location, then launch the scene.",
+            "text": "Choose a scan, then launch it or open a scene.",
             "align": "left"
           }
         }
@@ -541,6 +546,384 @@
           }
         }
       }
+    },
+    {
+      "id": "selected_preview",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 12,
+            "width": 180,
+            "height": 100
+          },
+          "z": 4,
+          "draggable": false,
+          "style": {
+            "fill": [
+              13,
+              30,
+              39,
+              255
+            ],
+            "border": [
+              67,
+              104,
+              112,
+              210
+            ],
+            "text": [
+              151,
+              185,
+              187,
+              255
+            ],
+            "font_size": 12,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "image",
+            "source": "level-preview"
+          }
+        }
+      },
+      "parent": "detail_panel"
+    },
+    {
+      "id": "scene_panel",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 280,
+            "height": 200
+          },
+          "z": 1,
+          "draggable": false,
+          "style": {
+            "fill": [
+              22,
+              43,
+              50,
+              250
+            ],
+            "border": [
+              67,
+              104,
+              112,
+              210
+            ],
+            "rounding": 8
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      }
+    },
+    {
+      "id": "scene_title",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 12,
+            "width": 240,
+            "height": 28
+          },
+          "z": 4,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              229,
+              241,
+              239,
+              255
+            ],
+            "font_size": 18
+          },
+          "widget": {
+            "type": "text",
+            "text": "Open a scene",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "scene_panel"
+    },
+    {
+      "id": "scene_help",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 43,
+            "width": 240,
+            "height": 20
+          },
+          "z": 4,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              151,
+              185,
+              187,
+              255
+            ],
+            "font_size": 12
+          },
+          "widget": {
+            "type": "text",
+            "text": "Use the selected level in a scene.",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "scene_panel"
+    },
+    {
+      "id": "scene_name",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 72,
+            "width": 230,
+            "height": 24
+          },
+          "z": 4,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              229,
+              241,
+              239,
+              255
+            ],
+            "font_size": 15
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "scene_panel"
+    },
+    {
+      "id": "scene_info",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 98,
+            "width": 230,
+            "height": 20
+          },
+          "z": 4,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              151,
+              185,
+              187,
+              255
+            ],
+            "font_size": 12
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "scene_panel"
+    },
+    {
+      "id": "scene_previous",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 126,
+            "width": 38,
+            "height": 30
+          },
+          "z": 5,
+          "draggable": false,
+          "style": {
+            "fill": [
+              25,
+              47,
+              55,
+              255
+            ],
+            "border": [
+              67,
+              104,
+              112,
+              210
+            ],
+            "text": [
+              229,
+              241,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "‹"
+          }
+        }
+      },
+      "parent": "scene_panel"
+    },
+    {
+      "id": "scene_next",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 58,
+            "y": 126,
+            "width": 38,
+            "height": 30
+          },
+          "z": 5,
+          "draggable": false,
+          "style": {
+            "fill": [
+              25,
+              47,
+              55,
+              255
+            ],
+            "border": [
+              67,
+              104,
+              112,
+              210
+            ],
+            "text": [
+              229,
+              241,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "›"
+          }
+        }
+      },
+      "parent": "scene_panel"
+    },
+    {
+      "id": "scene_open",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 14,
+            "y": 166,
+            "width": 150,
+            "height": 38
+          },
+          "z": 5,
+          "draggable": false,
+          "style": {
+            "fill": [
+              190,
+              137,
+              70,
+              255
+            ],
+            "border": [
+              235,
+              197,
+              132,
+              255
+            ],
+            "text": [
+              255,
+              252,
+              242,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 6
+          },
+          "widget": {
+            "type": "button",
+            "label": "Open scene"
+          }
+        }
+      },
+      "parent": "scene_panel"
     },
     {
       "id": "loader_overlay",

@@ -45,6 +45,11 @@ fn inspector_edits_independent_bodies_and_lua_exports_drive_real_components() {
         .borrow_mut()
         .get_mut::<UiElement>(ids["entity_inspector"])
         .unwrap()
+        .visible = true;
+    world
+        .borrow_mut()
+        .get_mut::<UiElement>(ids["entity_inspector"])
+        .unwrap()
         .collapsible
         .as_mut()
         .unwrap()

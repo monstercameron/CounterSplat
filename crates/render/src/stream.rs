@@ -52,6 +52,56 @@ fn zero_sh_centroid_row(sh_zero: u8) -> Vec<u8> {
     [sh_zero, sh_zero, sh_zero, 255].repeat(64 * SH_COEFFS)
 }
 
+/// Expand a chunk's 1-, 2-, or 3-band palette into the pool's 3-band layout.
+/// Unprovided coefficients use the shared codebook's exact zero, not the
+/// chunk's nearest-to-zero value, so lower-band assets keep their intended color.
+fn encode_sh_palette(centroids: &sog::Texture, remap: &[u8; 256], zero: u8) -> Option<Vec<u8>> {
+    let source_coeffs = match centroids.width {
+        192 => 3usize,
+        512 => 8,
+        960 => 15,
+        _ => return None,
+    };
+    let rows = centroids.height.min(PALETTE_ROWS) as usize;
+    let source_row_bytes = centroids.width as usize * 4;
+    let source = centroids.rgba.get(..rows.checked_mul(source_row_bytes)?)?;
+    if source_coeffs == SH_COEFFS {
+        return Some(
+            source
+                .chunks_exact(4)
+                .flat_map(|t| {
+                    [
+                        remap[t[0] as usize],
+                        remap[t[1] as usize],
+                        remap[t[2] as usize],
+                        t[3],
+                    ]
+                })
+                .collect(),
+        );
+    }
+    let mut data = zero_sh_centroid_row(zero).repeat(rows);
+    for (source_row, destination_row) in source
+        .chunks_exact(source_row_bytes)
+        .zip(data.chunks_exact_mut(64 * SH_COEFFS * 4))
+    {
+        for (input, output) in source_row
+            .chunks_exact(source_coeffs * 4)
+            .zip(destination_row.chunks_exact_mut(SH_COEFFS * 4))
+        {
+            for (texel, mapped) in input.chunks_exact(4).zip(output.chunks_exact_mut(4)) {
+                mapped.copy_from_slice(&[
+                    remap[texel[0] as usize],
+                    remap[texel[1] as usize],
+                    remap[texel[2] as usize],
+                    texel[3],
+                ]);
+            }
+        }
+    }
+    Some(data)
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Resident {
     lod: usize,
@@ -1377,19 +1427,7 @@ impl LevelStream {
             .iter()
             .position(|p| p.is_none_or(|(_, users)| users == 0))?;
         let centroids = &chunk.bundle.textures["sh_centroids"];
-        let rows = (centroids.height.min(PALETTE_ROWS)) as usize;
-        let bytes = rows * centroids.width as usize * 4;
-        let data: Vec<u8> = centroids.rgba[..bytes.min(centroids.rgba.len())]
-            .chunks_exact(4)
-            .flat_map(|t| {
-                [
-                    remap.sh_n[t[0] as usize],
-                    remap.sh_n[t[1] as usize],
-                    remap.sh_n[t[2] as usize],
-                    t[3],
-                ]
-            })
-            .collect();
+        let data = encode_sh_palette(centroids, &remap.sh_n, self.sh_zero)?;
         pool.write_centroid_rows(queue, 1 + slot as u32 * PALETTE_ROWS, &data);
         self.palettes[slot] = Some((file, 1));
         Some(slot)

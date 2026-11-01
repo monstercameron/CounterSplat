@@ -1,8 +1,8 @@
 # Entity physics and Lua tuning
 
 The gameplay scene attaches `PhysicsBody` to the `player` entity alongside `PlayerCamera`, `PlayerControls`, and `PlayerRig`.
-The player's body is an upright kinematic capsule, resolved against the selected level's voxel collider on its worker. Open
-**Entity settings** in the canvas to select a live gameplay entity with the arrow buttons, including entities from the scene, level, player and UI layers. **Attach physics** adds a body;
+The player's body is an upright kinematic capsule, resolved against the selected level's voxel collider on its worker.
+**ECS entities** in the canvas lists live scene, level, player and UI entities. Select an entity to open **Entity settings** on the right; the list and inspector can both be collapsed, and the inspector's arrows also move between entities. **Attach physics** adds a body;
 if the entity has no `PlayerCamera` or `Transform`, it also adds a default `Transform`. Physics, collision, and
 gravity are independent switches, with sliders for collider radius, vertical collider offset, and gravity strength.
 The player's rig positions its capsule around the camera according to eye height and level scale. **Level collision** in the Level assets
@@ -115,3 +115,18 @@ lets a script reject results that became stale after movement. The player script
 scene-authored spawns and ignores results after movement or when no floor is found.
 `physics_system.lua` handles contact velocity and grounded state; the worker supplies geometry
 results and the browser host reconciles resolved positions.
+
+## Entity selection hooks
+
+The ECS list and settings panel are defined in `assets/scenes/gameplay.json`; their selection and navigation
+behavior lives in `assets/scripts/entity_inspector.lua`. The list updates as entities are spawned or removed,
+and its page controls reach every live entity. The settings panel shows the selected entity's component names,
+physics controls, and fields registered with `engine.export`. The supplied scene exports level draw distance,
+voxel switches, and skybox settings as well as player controls. Selecting a UI entity also exposes its visibility
+and interaction flags, except for the inspector's own controls. Runtime edits use the regular validated ECS
+component adapters; they do not rewrite the scene JSON.
+
+When selection changes, Lua publishes the opaque entity handle in the `editor.selected_entity` ECS resource
+and emits `editor.entity_selected` with `{entity = handle}`. The browser dispatches this event to registered
+Lua handlers. Closing the settings panel retains the selection; selecting another row reopens it. If a selected
+entity is removed, the inspector falls back to the player while that entity is alive.

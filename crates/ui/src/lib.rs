@@ -144,6 +144,10 @@ pub enum Widget {
     #[default]
     Panel,
     Rectangle,
+    /// An image identified by a host-registered resource key, cropped to fill its rectangle.
+    Image {
+        source: String,
+    },
     Circle,
     Line {
         end: [f32; 2],
@@ -277,6 +281,13 @@ impl UiElement {
         let text_valid = |s: &str| s.len() <= 16_384;
         match &self.widget {
             Widget::Text { text, .. } if !text_valid(text) => Err("UI text is too long"),
+            Widget::Image { source }
+                if source.trim().is_empty()
+                    || source.len() > 256
+                    || source.chars().any(char::is_control) =>
+            {
+                Err("UI image source must be a nonempty resource key")
+            }
             Widget::Button { label }
             | Widget::Checkbox { label, .. }
             | Widget::Slider { label, .. }

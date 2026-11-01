@@ -7,12 +7,13 @@ checksums for the downloaded resources.
 
 `58d333ae` is a single unpacked SOG; the public viewer does not publish a separate LOD manifest for it. The other
 ten use streamed SOG with 3–8 published LOD levels. Four are the levels referenced by the Neural-Sight project.
-`catalog.json` maps names and creators to their local manifests. To resume downloads or verify them offline, run from
+`catalog.json` maps names, creators, and optional `preview.webp` thumbnails to their local manifests. The preview images are downloaded development assets and remain ignored with their levels. To resume downloads or verify them offline, run from
 CounterSplat's project root:
 
 ```powershell
 python scripts/download_supersplat.py
 python scripts/download_supersplat.py --verify-only
+python scripts/download_previews.py
 ```
 
 The downloaded scene directories are excluded from version control; this README and the level catalog are tracked. Scene files remain subject to the applicable creator

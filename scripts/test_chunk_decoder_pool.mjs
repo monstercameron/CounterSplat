@@ -16,7 +16,12 @@ const pool = new ChunkDecoderPool({
   onFailure: (index, error) => failures.push([index, String(error)]),
   onFatal: error => fatal.push(error),
 });
-assert.deepEqual([1,2,4,8,16,undefined].map(chunkDecoderCount), [1,1,2,3,4,2]);
+assert.deepEqual([1,2,4,8,16,undefined].map(cores => chunkDecoderCount(cores)), [1,1,2,3,4,2]);
+assert.equal(chunkDecoderCount(16, 1), 1);
+assert.equal(chunkDecoderCount(1, 4), 4);
+assert.throws(() => chunkDecoderCount(8, 0), /workers must/);
+assert.throws(() => chunkDecoderCount(8, 5), /workers must/);
+assert.throws(() => chunkDecoderCount(8, 'many'), /workers must/);
 assert.equal(pool.available, 3);
 assert(pool.submit({index:1}));
 assert(pool.submit({index:2}));
