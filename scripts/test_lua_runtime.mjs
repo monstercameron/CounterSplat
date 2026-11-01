@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
+import {Worker} from 'node:worker_threads';
 import {LuaScene} from '../preview/lua_runtime.js';
 
 const require = createRequire(import.meta.url);
@@ -64,6 +65,11 @@ runGameplay();
 assert.deepEqual(game.drain('engine.scene'), [{action:'replace', scene:'level_selector'}]);
 world.resources.set('special-keys', JSON.parse('{"__proto__":{"items":[{},[],null]},"constructor":"safe","kind":"user","entries":"data"}'));
 game.vm.doStringSync(`
+  local count = select('#', pcall(function() return 1, nil, 3 end))
+  assert(count == 4)
+  local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
+  assert(not ok and value == 'handled')
+  assert(not pcall(function() xpcall(function() end, nil) end))
   local special = ecs.get_resource('special-keys')
   assert(special.__proto__.items[1] ~= nil and #special.__proto__.items[2] == 0)
   assert(special.__proto__.items[3] == ecs.null)
@@ -108,6 +114,36 @@ ordered.dispatchPending(['earlier', 'first', 'later']);
 assert.deepEqual(ordered.drain('seen'), [{name:'earlier'}, {name:'first'}]);
 assert.deepEqual(ordered.drain('later'), []);
 ordered.close();
+
+// Time spent inside an ECS host call must not exhaust a healthy Lua tick.
+const stallSignal = new Int32Array(new SharedArrayBuffer(4));
+const stalledWorld = new WorldFixture({});
+const originalOperation = stalledWorld.ecs_operation.bind(stalledWorld);
+stalledWorld.ecs_operation = (...args) => {
+  Atomics.wait(stallSignal, 0, 0, 80);
+  return originalOperation(...args);
+};
+const stalled = await LuaScene.create(factory, stalledWorld, 'gameplay', engineApi, [
+  "ecs.system('stalled', function() ecs.get_resource('missing'); local n=0; for i=1,100000 do n=n+i end end)"
+]);
+assert.doesNotThrow(() => stalled.run(1/60));
+stalled.close();
+
+// A worker deadline ensures a broken budget cannot hang the test process.
+const budgetWorker = new Worker(new URL('./lua_budget_worker.mjs', import.meta.url));
+let budgetTimer;
+try {
+  const results = await new Promise((resolve, reject) => {
+    budgetTimer = setTimeout(() => reject(new Error('Lua budget worker timed out')), 5000);
+    budgetWorker.once('message', resolve);
+    budgetWorker.once('error', reject);
+  });
+  assert.equal(results.length, 4);
+  for (const result of results) assert.match(result, /Lua instruction budget exceeded/);
+} finally {
+  clearTimeout(budgetTimer);
+  await budgetWorker.terminate();
+}
 
 // Optional profiling must measure real Lua systems and leave its host callbacks private.
 const profiledWorld = new WorldFixture({});

@@ -73,3 +73,14 @@ and event handlers.
 Run `cargo run --locked --release --target-dir .artifacts/target -p
 countersplat-ui-ecs --example layout_bench` to compare CPU layout extraction
 for dense and sparse entity slots. The benchmark excludes GPU rendering and Lua.
+
+## Browser Lua execution budget
+
+Fixed-tick systems and event dispatch use an approximate ten-million-instruction
+budget, checked every 1,000 Lua instructions. It resets for each host call and
+does not count time spent waiting inside JavaScript or Rust callbacks. A runaway
+script raises an error even through protected calls. Scene initialization keeps
+its separate per-script wall-clock deadline.
+
+Run `node scripts/benchmark_lua_tick.mjs` to compare the overhead of the
+browser Lua tick and its ECS bridge using a small fixture.

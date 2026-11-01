@@ -1,8 +1,50 @@
 // Browser Lua 5.4 host. Scripts use the same ECS operation names and scene event API as native Lua.
 // The VM runs only on this browser thread; the ECS world remains owned by the Rust host.
+// Match the native host's default instruction budget without charging time
+// spent waiting inside JavaScript/Rust host calls against a healthy script.
+const INSTRUCTION_LIMIT = 10_000_000;
+const HOOK_INTERVAL = 1_000;
 const BOOTSTRAP = `
 local call = __ecs_call
 local profile_now, profile_sample = __profile_now, __profile_sample
+local set_hook, raw_pcall, raw_xpcall, raise, select_value =
+    debug.sethook, pcall, xpcall, error, select
+local exhausted, remaining, budget_depth = {}, 0, 0
+local function budget_hook()
+    remaining = remaining - ${HOOK_INTERVAL}
+    if remaining <= 0 then raise(exhausted, 0) end
+end
+local function preserve_results(ok, ...)
+    if not ok and select_value(1, ...) == exhausted then raise(exhausted, 0) end
+    return ok, ...
+end
+-- A script may catch ordinary errors, but cannot suppress the budget signal.
+function pcall(fn, ...) return preserve_results(raw_pcall(fn, ...)) end
+function xpcall(fn, handler, ...)
+    if type(handler) ~= "function" then return raw_xpcall(fn, handler, ...) end
+    return preserve_results(raw_xpcall(fn, function(err)
+        if err == exhausted then return exhausted end
+        return handler(err)
+    end, ...))
+end
+local function bounded(fn, ...)
+    local outer = budget_depth == 0
+    if outer then
+        remaining = ${INSTRUCTION_LIMIT}
+        set_hook(budget_hook, "", ${HOOK_INTERVAL})
+    end
+    budget_depth = budget_depth + 1
+    local ok, result = raw_pcall(fn, ...)
+    budget_depth = budget_depth - 1
+    if outer then set_hook() end
+    if not ok then
+        if result == exhausted then
+            if outer then raise("Lua instruction budget exceeded", 0) end
+            raise(exhausted, 0)
+        end
+        raise(result, 0)
+    end
+end
 __ecs_call, __profile_now, __profile_sample = nil, nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
@@ -75,7 +117,7 @@ function ecs.on(name, callback)
     table.insert(handlers[name], callback)
 end
 function ecs.off(name) handlers[name] = nil end
-function __run_systems(dt)
+local function run_systems(dt)
     local snapshot = { table.unpack(order) }
     for _, name in ipairs(snapshot) do
         if systems[name] then
@@ -89,10 +131,12 @@ function __run_systems(dt)
         end
     end
 end
-function __dispatch(name, payload)
+local function dispatch(name, payload)
     local snapshot = { table.unpack(handlers[name] or {}) }
     for _, callback in ipairs(snapshot) do callback(payload) end
 end
+function __run_systems(dt) return bounded(run_systems, dt) end
+function __dispatch(name, payload) return bounded(dispatch, name, payload) end
 -- Match the native host's restricted libraries and filesystem policy.
 io = nil; os = nil; package = nil; debug = nil; coroutine = nil
 require = nil; dofile = nil; loadfile = nil; Promise = nil
@@ -139,7 +183,7 @@ function encodeResult(value) {
 export class LuaScene {
   static async create(factory, target, layer, engineApi, scripts, profile = false) {
     const vm = await factory.createEngine({openStandardLibs: true, enableProxy: false,
-      injectObjects: true, traceAllocations: true, functionTimeout: 50});
+      injectObjects: true, traceAllocations: true});
     try {
       vm.global.setMemoryMax(32 * 1024 * 1024);
       const host = new LuaScene(vm, target, layer, profile);
