@@ -224,3 +224,8 @@ two-field writes. The fixture excludes Rust validation, collision, and rendering
 Run `node scripts/benchmark_lua_get_many.mjs` to compare two-component
 batch reads through the general and scalar-request browser bridges. The
 in-memory fixture excludes Rust component reads and rendering.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-ecs benchmark_component_token_matching -- --ignored --nocapture`
+to compare revision-token matching in isolation. The dynamic revision
+benchmark above measures the surrounding ECS read path.

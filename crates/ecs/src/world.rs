@@ -64,7 +64,9 @@ impl<T> ComponentView<'_, T> {
 /// An ordered, exact-size view of the entities in a component index.
 pub type EntityIndex<'a> = Box<dyn ExactSizeIterator<Item = Entity> + 'a>;
 
-// Compare the scoped token without allocating a new String on an unchanged read.
+// Compare the scoped token without allocating or formatting an intermediate
+// String. Each separator is checked, so noncanonical digits cannot alias a
+// valid token; component names may contain any of the separators.
 fn component_token_matches(
     entity: Entity,
     name: &str,
@@ -72,24 +74,47 @@ fn component_token_matches(
     revision: u64,
     known: &str,
 ) -> bool {
-    use std::fmt::{self, Write};
-    struct Matcher<'a> {
-        remaining: &'a str,
-    }
-    impl Write for Matcher<'_> {
-        fn write_str(&mut self, part: &str) -> fmt::Result {
-            self.remaining = self.remaining.strip_prefix(part).ok_or(fmt::Error)?;
-            Ok(())
+    fn decimal<'a>(remaining: &mut &'a [u8], mut value: u64) -> bool {
+        let mut digits = [0u8; 20];
+        let mut start = digits.len();
+        loop {
+            start -= 1;
+            digits[start] = b'0' + (value % 10) as u8;
+            value /= 10;
+            if value == 0 {
+                break;
+            }
+        }
+        if let Some(rest) = remaining.strip_prefix(&digits[start..]) {
+            *remaining = rest;
+            true
+        } else {
+            false
         }
     }
-    let mut matcher = Matcher { remaining: known };
-    write!(
-        &mut matcher,
-        "{entity}|{}:{name}|{kind}{revision}",
-        name.len()
-    )
-    .is_ok()
-        && matcher.remaining.is_empty()
+    fn literal<'a>(remaining: &mut &'a [u8], bytes: &[u8]) -> bool {
+        if let Some(rest) = remaining.strip_prefix(bytes) {
+            *remaining = rest;
+            true
+        } else {
+            false
+        }
+    }
+    let mut remaining = known.as_bytes();
+    let mut kind_bytes = [0; 4];
+    decimal(&mut remaining, entity.world())
+        && literal(&mut remaining, b":")
+        && decimal(&mut remaining, u64::from(entity.index()))
+        && literal(&mut remaining, b".")
+        && decimal(&mut remaining, u64::from(entity.generation()))
+        && literal(&mut remaining, b"|")
+        && decimal(&mut remaining, name.len() as u64)
+        && literal(&mut remaining, b":")
+        && literal(&mut remaining, name.as_bytes())
+        && literal(&mut remaining, b"|")
+        && literal(&mut remaining, kind.encode_utf8(&mut kind_bytes).as_bytes())
+        && decimal(&mut remaining, revision)
+        && remaining.is_empty()
 }
 
 /// Named field values for an atomic update to an object-valued component.
@@ -1249,6 +1274,120 @@ fn validate_name(name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod revision_tests {
     use super::*;
+    fn token_matches_reference(
+        entity: Entity,
+        name: &str,
+        kind: char,
+        revision: u64,
+        known: &str,
+    ) -> bool {
+        use std::fmt::{self, Write};
+        struct Matcher<'a> {
+            remaining: &'a str,
+        }
+        impl Write for Matcher<'_> {
+            fn write_str(&mut self, part: &str) -> fmt::Result {
+                self.remaining = self.remaining.strip_prefix(part).ok_or(fmt::Error)?;
+                Ok(())
+            }
+        }
+        let mut matcher = Matcher { remaining: known };
+        write!(
+            &mut matcher,
+            "{entity}|{}:{name}|{kind}{revision}",
+            name.len()
+        )
+        .is_ok()
+            && matcher.remaining.is_empty()
+    }
+
+    #[test]
+    fn token_matcher_agrees_with_reference_for_boundaries_and_malformed_tokens() {
+        let mut corpus = Vec::new();
+        for world in [0, 1, 10, 123456789, u64::MAX] {
+            for index in [0, 1, 99, u32::MAX] {
+                for generation in [0, 1, 10, u32::MAX] {
+                    let entity = Entity {
+                        world,
+                        index,
+                        generation,
+                    };
+                    for name in ["", "x", "quoted\\\"|:é", "0:name|x", "longer component"] {
+                        for kind in ['a', 'd', 'é'] {
+                            for revision in [0, 1, 10, 123456789, u64::MAX] {
+                                let token =
+                                    format!("{entity}|{}:{name}|{kind}{revision}", name.len());
+                                for candidate in [
+                                    token.clone(),
+                                    format!("0{token}"),
+                                    format!("{token}0"),
+                                    token.replace('|', "||"),
+                                    token.replace(':', "::"),
+                                ] {
+                                    corpus.push((entity, name, kind, revision, candidate));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (entity, name, kind, revision, token) in corpus {
+            assert_eq!(
+                component_token_matches(entity, name, kind, revision, &token),
+                token_matches_reference(entity, name, kind, revision, &token),
+                "token {token:?}",
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_component_token_matching() {
+        use std::{hint::black_box, time::Instant};
+        let entity = Entity {
+            world: 17,
+            index: 2345,
+            generation: 6,
+        };
+        let name = "PlayerControls";
+        let revision = 123456;
+        let token = format!("{entity}|{}:{name}|a{revision}", name.len());
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..9 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let start = Instant::now();
+                for _ in 0..500_000 {
+                    let result = if mode == 0 {
+                        token_matches_reference(
+                            black_box(entity),
+                            black_box(name),
+                            'a',
+                            revision,
+                            black_box(&token),
+                        )
+                    } else {
+                        component_token_matches(
+                            black_box(entity),
+                            black_box(name),
+                            'a',
+                            revision,
+                            black_box(&token),
+                        )
+                    };
+                    assert!(black_box(result));
+                }
+                samples[mode].push(start.elapsed().as_nanos() as f64 / 500_000.0);
+            }
+        }
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        println!(
+            "reference {:.1} ns, candidate {:.1} ns",
+            samples[0][4], samples[1][4]
+        );
+    }
+
     #[test]
     fn scoped_token_matching_handles_unicode_and_delimiters() {
         let mut world = World::new();
