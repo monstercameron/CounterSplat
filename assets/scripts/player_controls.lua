@@ -54,20 +54,35 @@ local function sync_controls(controls)
         local element = ecs.get(id, "UiElement")
         local value = controls[field]
         if field == "fov_degrees" and value == ecs.null then value = ecs.get(player, "PlayerCamera").fov_degrees end
-        element.widget.value = math.max(element.widget.min, math.min(element.widget.max, value))
-        ecs.set(id, "UiElement", element)
+        value = math.max(element.widget.min, math.min(element.widget.max, value))
+        if element.widget.value ~= value then
+            element.widget.value = value
+            ecs.set(id, "UiElement", element)
+        end
     end
-    local rig = assert(ecs.get(player, "PlayerRig"), "player rig is missing")
+    local rig = assert(read_rig(), "player rig is missing")
     for id, field in pairs(rig_sliders) do
         local element = ecs.get(id, "UiElement")
-        element.widget.value = math.max(element.widget.min, math.min(element.widget.max, rig[field]))
-        ecs.set(id, "UiElement", element)
+        local value = math.max(element.widget.min, math.min(element.widget.max, rig[field]))
+        if element.widget.value ~= value then
+            element.widget.value = value
+            ecs.set(id, "UiElement", element)
+        end
     end
     for id, field in pairs(checks) do
-        local element = ecs.get(id, "UiElement"); element.widget.checked = controls[field]; ecs.set(id, "UiElement", element)
+        local element = ecs.get(id, "UiElement")
+        if element.widget.checked ~= controls[field] then
+            element.widget.checked = controls[field]
+            ecs.set(id, "UiElement", element)
+        end
     end
     for id, field in pairs(keys) do
-        local element = ecs.get(id, "UiElement"); element.widget.label = key_label(controls.bindings[field]); ecs.set(id, "UiElement", element)
+        local element = ecs.get(id, "UiElement")
+        local label = key_label(controls.bindings[field])
+        if element.widget.label ~= label then
+            element.widget.label = label
+            ecs.set(id, "UiElement", element)
+        end
     end
 end
 -- Level calibration and saved preferences are data supplied by the host. Lua
@@ -97,7 +112,7 @@ local last_rig = nil
 -- Keep the camera-to-feet distance, collider and world-unit motion in agreement.
 -- Changes preserve the current foot position; initial setup preserves the source view.
 local function apply_rig(preserve_feet)
-    local rig = assert(ecs.get(player, "PlayerRig"))
+    local rig = assert(read_rig())
     if last_rig and last_rig.eye_height_m == rig.eye_height_m and
         last_rig.radius_m == rig.radius_m and last_rig.head_clearance_m == rig.head_clearance_m and
         last_rig.units_per_meter == rig.units_per_meter then return end
@@ -214,7 +229,7 @@ ecs.system("player.controls_ui_sync", function(dt)
     controls_refresh = 0
     local panel = ecs.get(ids.controls_panel, "UiElement")
     if panel and not panel.collapsible.collapsed and not waiting_for_key then
-        sync_controls(ecs.get(player, "PlayerControls"))
+        sync_controls(read_controls())
     end
 end)
 

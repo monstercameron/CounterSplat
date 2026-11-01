@@ -1,10 +1,14 @@
 //! Exercise the real player Lua system against validated ECS camera and UI components.
 use countersplat_ecs::{World, WorldOperation, WorldOutcome};
-use countersplat_scene::{PlayerCamera, PlayerControls, SceneManifest};
+use countersplat_scene::{PlayerCamera, PlayerControls, PlayerRig, SceneManifest};
 use countersplat_scripting_lua::{LuaRuntime, ScriptOptions, WorldBridge};
 use countersplat_ui::{UiEvent, UiEventKind};
 use serde_json::json;
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    path::PathBuf,
+    rc::Rc,
+};
 
 struct LocalBridge(Rc<RefCell<World>>);
 impl WorldBridge for LocalBridge {
@@ -691,4 +695,101 @@ fn player_waits_for_ground_before_gravity_and_falls_back_if_collision_is_missing
         after[1], before[1],
         "an unavailable collider must not drop the player"
     );
+}
+
+// Observe only script writes to UI components; native edits below simulate other
+// systems or inspector changes without counting them as Lua synchronization.
+struct CountingUiBridge(Rc<RefCell<World>>, Rc<Cell<usize>>);
+impl WorldBridge for CountingUiBridge {
+    fn request(&mut self, op: WorldOperation) -> Result<WorldOutcome, String> {
+        if matches!(&op, WorldOperation::WriteComponent { name, .. } if name == "UiElement") {
+            self.1.set(self.1.get() + 1);
+        }
+        self.0.borrow_mut().apply_operation(op)
+    }
+}
+
+#[test]
+fn controls_panel_skips_unchanged_writes_and_tracks_external_edits() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &manifest,
+        &["ui", "player", "level"],
+    )
+    .unwrap();
+    let player = ids["player"];
+    {
+        let mut w = world.borrow_mut();
+        w.set_dynamic_resource("player.default_controls", json!(PlayerControls::default()));
+        w.set_dynamic_resource("player.spawn_camera", json!(PlayerCamera::default()));
+        w.get_mut::<countersplat_ui::UiElement>(ids["controls_panel"])
+            .unwrap()
+            .collapsible
+            .as_mut()
+            .unwrap()
+            .collapsed = false;
+    }
+    let writes = Rc::new(Cell::new(0));
+    let lua = LuaRuntime::new(
+        CountingUiBridge(world.clone(), writes.clone()),
+        ScriptOptions::default(),
+    )
+    .unwrap();
+    load_player_controller(&lua).unwrap();
+    writes.set(0);
+    lua.run_systems(0.25).unwrap();
+    assert_eq!(
+        writes.get(),
+        0,
+        "an unchanged panel should not rewrite its widgets"
+    );
+
+    {
+        let mut w = world.borrow_mut();
+        let controls = w.get_mut::<PlayerControls>(player).unwrap();
+        controls.move_speed = 7.5;
+        controls.invert_y = true;
+        controls.bindings.forward = "ArrowUp".into();
+        w.get_mut::<PlayerRig>(player).unwrap().eye_height_m = 1.8;
+        w.get_mut::<PlayerCamera>(player).unwrap().fov_degrees = 81.0;
+    }
+    lua.run_systems(0.25).unwrap();
+    let widget = |name: &str| {
+        world
+            .borrow()
+            .read_component_value(ids[name], "UiElement")
+            .unwrap()
+            .unwrap()["widget"]
+            .clone()
+    };
+    assert_eq!(widget("controls_speed")["value"], json!(7.5));
+    assert_eq!(widget("controls_invert")["checked"], json!(true));
+    assert_eq!(widget("key_forward")["label"], json!("ArrowUp"));
+    assert!((widget("controls_eye_height")["value"].as_f64().unwrap() - 1.8).abs() < 0.00001);
+    assert_eq!(widget("controls_fov")["value"], json!(81.0));
+    assert_eq!(writes.get(), 5, "only the five changed widgets need writes");
+
+    writes.set(0);
+    lua.run_systems(0.25).unwrap();
+    assert_eq!(writes.get(), 0);
+    if let countersplat_ui::Widget::Slider { value, .. } = &mut world
+        .borrow_mut()
+        .get_mut::<countersplat_ui::UiElement>(ids["controls_speed"])
+        .unwrap()
+        .widget
+    {
+        *value = 1.0;
+    } else {
+        panic!("speed control is not a slider");
+    }
+    lua.run_systems(0.25).unwrap();
+    assert_eq!(widget("controls_speed")["value"], json!(7.5));
+    assert_eq!(writes.get(), 1, "an externally edited widget is restored");
 }
