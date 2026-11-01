@@ -17,12 +17,15 @@ pub(super) struct SpatialOctree {
     nodes: Vec<Node>,
     // Regions selected last frame, including those that may need a delayed retirement.
     active: Vec<usize>,
+    // Reused traversal stack: level geometry is immutable, so it retains a bounded high-water mark.
+    stack: Vec<usize>,
 }
 impl SpatialOctree {
     pub fn new(leaves: &[Leaf]) -> Self {
         let mut tree = Self {
             nodes: Vec::new(),
             active: (0..leaves.len()).collect(),
+            stack: Vec::new(),
         };
         if !leaves.is_empty() {
             tree.build(leaves, (0..leaves.len()).collect(), 0);
@@ -80,20 +83,21 @@ impl SpatialOctree {
     }
     /// Candidate regions in the wider retention oval, plus previous active regions needing retirement.
     pub fn forward_candidates(
-        &self,
+        &mut self,
         eye: [f32; 3],
         forward: [f32; 3],
         reach: f32,
         rear_fraction: f32,
         side_fraction: f32,
-    ) -> Vec<usize> {
-        let mut out = self.active.clone();
-        let mut stack = if self.nodes.is_empty() {
-            Vec::new()
-        } else {
-            vec![0usize]
-        };
-        while let Some(index) = stack.pop() {
+        out: &mut Vec<usize>,
+    ) {
+        out.clear();
+        out.extend_from_slice(&self.active);
+        self.stack.clear();
+        if !self.nodes.is_empty() {
+            self.stack.push(0);
+        }
+        while let Some(index) = self.stack.pop() {
             let node = &self.nodes[index];
             if !forward_ellipse_intersects(
                 eye,
@@ -108,16 +112,95 @@ impl SpatialOctree {
                 continue;
             }
             out.extend_from_slice(&node.regions);
-            stack.extend(node.children.iter().flatten().copied());
+            self.stack.extend(node.children.iter().flatten().copied());
+        }
+        out.sort_unstable();
+        out.dedup();
+    }
+    pub fn set_active(&mut self, active: impl IntoIterator<Item = usize>) {
+        self.active.clear();
+        self.active.extend(active);
+    }
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The previous allocation-based traversal is kept here as an independent ordering and
+    // retention reference. The production path reuses buffers but must return the same IDs.
+    fn reference(
+        tree: &SpatialOctree,
+        eye: [f32; 3],
+        forward: [f32; 3],
+        reach: f32,
+        rear: f32,
+        side: f32,
+    ) -> Vec<usize> {
+        let mut out = tree.active.clone();
+        let mut stack = if tree.nodes.is_empty() {
+            Vec::new()
+        } else {
+            vec![0]
+        };
+        while let Some(index) = stack.pop() {
+            let node = &tree.nodes[index];
+            if forward_ellipse_intersects(eye, forward, node.min, node.max, reach, rear, side, 1.20)
+            {
+                out.extend_from_slice(&node.regions);
+                stack.extend(node.children.iter().flatten().copied());
+            }
         }
         out.sort_unstable();
         out.dedup();
         out
     }
-    pub fn set_active(&mut self, active: Vec<usize>) {
-        self.active = active;
+
+    fn check_sequence(leaves: &[Leaf]) {
+        let mut tree = SpatialOctree::new(leaves);
+        let mut out = vec![usize::MAX]; // stale buffer contents must never leak into a new query.
+        for frame in 0..256 {
+            let angle = frame as f32 * 0.079;
+            let eye = [
+                (frame % 31) as f32 * 4.0 - 40.0,
+                1.0,
+                (frame % 23) as f32 * 3.0 - 20.0,
+            ];
+            let direction = [angle.cos(), 0.0, angle.sin()];
+            let reach = [0.0, 15.0, 70.0, 300.0][frame % 4];
+            let expected = reference(&tree, eye, direction, reach, 0.3, 0.55);
+            tree.forward_candidates(eye, direction, reach, 0.3, 0.55, &mut out);
+            assert_eq!(out, expected, "frame {frame}");
+            // Change which regions must be revisited, including occasional duplicates and no active regions.
+            let active = out
+                .iter()
+                .copied()
+                .filter(|id| (id + frame) % 4 == 0)
+                .chain((frame % 19 == 0 && !leaves.is_empty()).then_some(0))
+                .collect::<Vec<_>>();
+            tree.set_active(active);
+        }
     }
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
+
+    #[test]
+    fn reused_query_buffers_match_previous_candidate_order_and_retention() {
+        let grid: Vec<_> = (0..400)
+            .map(|i| {
+                let x = (i % 20) as f32 * 8.0 - 80.0;
+                let z = (i / 20) as f32 * 8.0 - 80.0;
+                Leaf {
+                    min: [x, -1.0, z],
+                    max: [x + 7.0, 3.0, z + 7.0],
+                    lods: Vec::new(),
+                }
+            })
+            .collect();
+        check_sequence(&grid);
+        check_sequence(&[]);
+        // Coincident centers cannot subdivide, and still need to use the same retention rules.
+        check_sequence(&vec![grid[0].clone(); 30]);
     }
 }

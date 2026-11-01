@@ -169,6 +169,8 @@ pub struct LevelStream {
     chunks: BTreeMap<usize, Chunk>,
     in_flight: BTreeSet<usize>,
     leaves: Vec<LeafState>,
+    /// Scratch IDs for the current spatial query, reused across frames.
+    candidates: Vec<usize>,
     /// Reused each frame; sorted by visibility and priority, with leaf order breaking equal-priority ties.
     selection: Vec<SelectionCandidate>,
     free: Vec<(u32, u32)>,
@@ -330,6 +332,7 @@ impl LevelStream {
             chunks: BTreeMap::new(),
             in_flight: BTreeSet::new(),
             leaves,
+            candidates: Vec::new(),
             selection,
             palettes,
             distance_scale: 1.0,
@@ -469,7 +472,8 @@ impl LevelStream {
         let mut budget = i64::from(self.settings.capacity) * SELECT_SHARE / 100;
         self.selection.clear();
         // The octree indexes the level regions; active IDs are also revisited so leaving regions can fade out.
-        let candidates: Vec<usize> = match self.settings.draw_region {
+        self.candidates.clear();
+        match self.settings.draw_region {
             DrawRegion::ForwardEllipse {
                 rear_fraction,
                 side_fraction,
@@ -479,10 +483,11 @@ impl LevelStream {
                 self.settings.max_distance_m,
                 rear_fraction,
                 side_fraction,
+                &mut self.candidates,
             ),
-            DrawRegion::Radial => (0..self.leaves.len()).collect(),
+            DrawRegion::Radial => self.candidates.extend(0..self.leaves.len()),
         };
-        for i in candidates {
+        for &i in &self.candidates {
             let state = &mut self.leaves[i];
             let leaf = &self.meta.leaves[i];
             let distance = effective_distance(eye, leaf.min, leaf.max);
@@ -629,12 +634,8 @@ impl LevelStream {
             });
             budget -= leaf_count(leaf, coarse);
         }
-        self.spatial.set_active(
-            self.selection
-                .iter()
-                .map(|candidate| candidate.leaf)
-                .collect(),
-        );
+        self.spatial
+            .set_active(self.selection.iter().map(|candidate| candidate.leaf));
         budget
     }
 

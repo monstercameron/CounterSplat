@@ -103,3 +103,14 @@ browser Lua tick and its ECS bridge using a small fixture.
 Run `cargo run --locked --release --target-dir .artifacts/target -p
 countersplat-ui --example frame_history_bench` to compare fresh and reused
 buffers for a full minute of frame-time history.
+
+
+## Streaming selection benchmark
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-render --example stream_selection_bench` to measure CPU-side LOD
+selection for the checked-in 384-leaf level metadata and synthetic 1,024- and
+10,000-leaf grids, in both radial and forward-ellipse modes. Each case moves and
+turns the camera, warms the selector, and reports the median of five samples.
+It excludes network, decoding, uploads, rendering, and GPU time. Compare builds
+under the same conditions; background load and CPU clock changes affect results.

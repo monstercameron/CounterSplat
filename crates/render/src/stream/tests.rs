@@ -1228,10 +1228,9 @@ fn octree_candidates_include_all_intersecting_and_previously_active_regions() {
     index.set_active(vec![199]);
     for direction in [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]] {
         let eye = [250.0, 0.5, 0.5];
-        let candidates: BTreeSet<_> = index
-            .forward_candidates(eye, direction, 60.0, 0.3, 0.55)
-            .into_iter()
-            .collect();
+        let mut ids = Vec::new();
+        index.forward_candidates(eye, direction, 60.0, 0.3, 0.55, &mut ids);
+        let candidates: BTreeSet<_> = ids.into_iter().collect();
         assert!(
             candidates.contains(&199),
             "previously active regions must be revisited for retirement"
