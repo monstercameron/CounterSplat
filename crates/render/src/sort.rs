@@ -84,6 +84,8 @@ pub struct DepthSorter {
     /// Crossfading slot ranges (`set_fades`) and how many are in use.
     fades: wgpu::Buffer,
     fade_count: Cell<u32>,
+    /// Last uploaded fade bytes, also reused as the next upload buffer.
+    fade_data: std::cell::RefCell<Vec<u8>>,
     depth: wgpu::BindGroup,
     histogram_pipelines: Vec<wgpu::ComputePipeline>,
     reorder_pipelines: Vec<wgpu::ComputePipeline>,
@@ -400,6 +402,7 @@ impl DepthSorter {
             draw_args,
             fades,
             fade_count: Cell::new(0),
+            fade_data: Default::default(),
             depth,
             histogram_pipelines,
             reorder_pipelines,
@@ -435,15 +438,12 @@ impl DepthSorter {
     /// sorts.
     pub fn set_fades(&self, queue: &wgpu::Queue, fades: &[(u32, u32, f32)]) {
         let fades = &fades[..fades.len().min(MAX_FADES as usize)];
-        if fades.is_empty() && self.fade_count.get() == 0 {
+        let mut data = self.fade_data.borrow_mut();
+        if !update_fade_data(&mut data, fades) {
             return;
         }
-        let data: Vec<u32> = fades
-            .iter()
-            .flat_map(|&(start, end, share)| [start, end, share.to_bits(), 0])
-            .collect();
         if !data.is_empty() {
-            queue.write_buffer(&self.fades, 0, &u32s(&data));
+            queue.write_buffer(&self.fades, 0, &data);
         }
         self.fade_count.set(fades.len() as u32);
         *self.sorted_for.borrow_mut() = None;
@@ -693,6 +693,32 @@ fn u32s(values: &[u32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
+// Keep the GPU's little-endian range bytes for change detection and reuse.
+fn update_fade_data(data: &mut Vec<u8>, fades: &[(u32, u32, f32)]) -> bool {
+    if data.len() == fades.len() * 16
+        && data
+            .chunks_exact(16)
+            .zip(fades)
+            .all(|(bytes, &(start, end, share))| {
+                bytes[..4] == start.to_le_bytes()
+                    && bytes[4..8] == end.to_le_bytes()
+                    && bytes[8..12] == share.to_bits().to_le_bytes()
+                    && bytes[12..16] == [0; 4]
+            })
+    {
+        return false;
+    }
+    data.clear();
+    data.reserve(fades.len() * 16);
+    for &(start, end, share) in fades {
+        data.extend_from_slice(&start.to_le_bytes());
+        data.extend_from_slice(&end.to_le_bytes());
+        data.extend_from_slice(&share.to_bits().to_le_bytes());
+        data.extend_from_slice(&[0; 4]);
+    }
+    true
+}
+
 // Match the WGSL layout exactly without allocating temporary byte vectors
 // for every matrix and cutout field on each submitted frame.
 fn pack_depth_uniform(
@@ -813,6 +839,38 @@ mod uniform_tests {
                 assert_eq!(old.as_slice(), new.as_slice());
             }
         }
+    }
+
+    #[test]
+    fn fade_upload_reuses_identical_bytes_and_preserves_float_bits() {
+        let mut bytes = Vec::new();
+        assert!(!update_fade_data(&mut bytes, &[]));
+        let ranges = [(3, 12, -0.0), (25, 30, f32::from_bits(0x7fc0_1234))];
+        assert!(update_fade_data(&mut bytes, &ranges));
+        let expected: Vec<u8> = ranges
+            .iter()
+            .flat_map(|&(start, end, share)| {
+                [start, end, share.to_bits(), 0]
+                    .into_iter()
+                    .flat_map(u32::to_le_bytes)
+            })
+            .collect();
+        assert_eq!(bytes, expected);
+        let allocation = bytes.as_ptr();
+        assert!(!update_fade_data(&mut bytes, &ranges));
+        assert_eq!(bytes.as_ptr(), allocation);
+        let changed = [(3, 12, 0.0), ranges[1]];
+        assert!(
+            update_fade_data(&mut bytes, &changed),
+            "signed zero is bit-distinct"
+        );
+        let changed_nan = [changed[0], (25, 30, f32::from_bits(0x7fc0_1235))];
+        assert!(
+            update_fade_data(&mut bytes, &changed_nan),
+            "NaN payloads are bit-distinct"
+        );
+        assert!(update_fade_data(&mut bytes, &[]));
+        assert!(!update_fade_data(&mut bytes, &[]));
     }
 
     #[test]

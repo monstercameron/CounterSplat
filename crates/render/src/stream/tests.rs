@@ -1624,3 +1624,150 @@ fn benchmark_upload_preparation() {
         old_samples[4], new_samples[4]
     );
 }
+
+fn fades_reference(stream: &LevelStream) -> Vec<(u32, u32, f32)> {
+    let fade_s = stream.settings.fade_s;
+    if fade_s <= 0.0 {
+        return Vec::new();
+    }
+    let progress = |t: f32| (t / fade_s).clamp(0.0, 1.0);
+    let mut out: Vec<_> = stream
+        .leaves
+        .iter()
+        .filter_map(|s| s.have)
+        .filter(|r| stream.now - r.born < fade_s)
+        .map(|r| (r.start, r.start + r.count, progress(stream.now - r.born)))
+        .chain(
+            stream
+                .fading_out
+                .iter()
+                .map(|(r, t0)| (r.start, r.start + r.count, 1.0 - progress(stream.now - t0))),
+        )
+        .collect();
+    out.sort_by_key(|f| f.0);
+    out
+}
+
+#[test]
+fn fade_buffers_preserve_order_values_and_completed_range_order() {
+    let mut s = stream(10_000);
+    s.settings.fade_s = 0.4;
+    s.now = 10.0;
+    for (i, state) in s.leaves.iter_mut().enumerate() {
+        state.have = Some(Resident {
+            lod: 0,
+            start: (i * 30) as u32,
+            count: 10,
+            palette: None,
+            born: if i % 2 == 0 { 9.8 } else { 9.0 },
+        });
+    }
+    for i in 0..8 {
+        s.fading_out.push((
+            Resident {
+                lod: 1,
+                start: 500 + i * 20,
+                count: 10,
+                palette: None,
+                born: 0.0,
+            },
+            if i % 2 == 0 { 9.5 } else { 9.9 },
+        ));
+    }
+    let expected = fades_reference(&s);
+    let mut scratch = Vec::new();
+    s.fill_fades(&mut scratch);
+    assert_eq!(scratch, expected);
+    assert_eq!(s.fade_count(), expected.len());
+    let allocation = scratch.as_ptr();
+    s.fill_fades(&mut scratch);
+    assert_eq!(scratch.as_ptr(), allocation);
+    let original = s.fading_out.clone();
+    let (old_done, old_still): (Vec<_>, Vec<_>) = original
+        .into_iter()
+        .partition(|&(_, t0)| s.now - t0 >= s.settings.fade_s);
+    let mut done = Vec::new();
+    collect_completed_fades(&mut s.fading_out, &mut done, s.now, s.settings.fade_s);
+    assert_eq!(
+        done.iter().map(|r| r.start).collect::<Vec<_>>(),
+        old_done.iter().map(|(r, _)| r.start).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        s.fading_out
+            .iter()
+            .map(|(r, _)| r.start)
+            .collect::<Vec<_>>(),
+        old_still.iter().map(|(r, _)| r.start).collect::<Vec<_>>()
+    );
+    s.settings.fade_s = 0.0;
+    assert!(s.fades().is_empty());
+    assert_eq!(s.fade_count(), 0);
+}
+
+#[test]
+#[ignore = "manual CPU microbenchmark"]
+fn benchmark_fade_preparation() {
+    use std::{hint::black_box, time::Instant};
+    let settings = StreamSettings {
+        capacity: 1_000_000,
+        fade_s: 0.4,
+        ..StreamSettings::default()
+    };
+    let mut stream =
+        LevelStream::new(tree(384), &[Some(meta_json()), Some(meta_json())], settings).unwrap();
+    stream.now = 10.0;
+    for (i, state) in stream.leaves.iter_mut().enumerate() {
+        state.have = Some(Resident {
+            lod: 0,
+            start: (i * 20) as u32,
+            count: 10,
+            palette: None,
+            born: if i % 2 == 0 { 9.8 } else { 9.0 },
+        });
+    }
+    for i in 0..192 {
+        stream.fading_out.push((
+            Resident {
+                lod: 1,
+                start: 10_000 + i * 20,
+                count: 10,
+                palette: None,
+                born: 0.0,
+            },
+            9.8,
+        ));
+    }
+    let mut scratch = Vec::new();
+    stream.fill_fades(&mut scratch);
+    let mut old_samples = Vec::new();
+    let mut new_samples = Vec::new();
+    for sample in 0..9 {
+        for old in if sample % 2 == 0 {
+            [true, false]
+        } else {
+            [false, true]
+        } {
+            let start = Instant::now();
+            for _ in 0..3000 {
+                if old {
+                    black_box(fades_reference(black_box(&stream)));
+                } else {
+                    stream.fill_fades(black_box(&mut scratch));
+                    black_box(&scratch);
+                }
+            }
+            let ns = start.elapsed().as_nanos() as f64 / 3000.0;
+            if old {
+                old_samples.push(ns);
+            } else {
+                new_samples.push(ns);
+            }
+        }
+    }
+    old_samples.sort_by(f64::total_cmp);
+    new_samples.sort_by(f64::total_cmp);
+    println!(
+        "384 leaves and 192 retiring ranges: old {:.0} ns, reused {:.0} ns",
+        old_samples[4], new_samples[4]
+    );
+}

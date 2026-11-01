@@ -177,3 +177,7 @@ Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-render --lib benchmark_upload_preparation -- --ignored --nocapture`
 to compare pending-upload ordering and loaded-LOD lookup. This measures CPU
 preparation only, without network, encoding, GPU uploads, or rendering.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render --lib benchmark_fade_preparation -- --ignored --nocapture`
+to compare CPU preparation of active streaming crossfades.

@@ -185,6 +185,9 @@ pub struct LevelStream {
     now: f32,
     /// Replaced ranges dissolving out, and when they started to.
     fading_out: Vec<(Resident, f32)>,
+    /// Scratch buffers retained across active crossfades.
+    completed_fades: Vec<Resident>,
+    fade_ranges: Vec<(u32, u32, f32)>,
     switches: u64,
     near_switches: u64,
     fades_cut: u64,
@@ -343,6 +346,8 @@ impl LevelStream {
             started: false,
             now: 0.0,
             fading_out: Vec::new(),
+            completed_fades: Vec::new(),
+            fade_ranges: Vec::new(),
             switches: 0,
             near_switches: 0,
             fades_cut: 0,
@@ -818,14 +823,12 @@ impl LevelStream {
         let now = self.now;
         // Ranges done fading out give their slots back.
         let fade_s = self.settings.fade_s;
-        let (done, still): (Vec<_>, Vec<_>) = self
-            .fading_out
-            .drain(..)
-            .partition(|&(_, t0)| now - t0 >= fade_s);
-        self.fading_out = still;
-        for (old, _) in done {
+        let mut done = std::mem::take(&mut self.completed_fades);
+        collect_completed_fades(&mut self.fading_out, &mut done, now, fade_s);
+        for old in done.drain(..) {
             self.free_resident(pool, queue, old);
         }
+        self.completed_fades = done;
         // Leaves past the draw distance fade out.
         for i in 0..self.leaves.len() {
             if self.leaves[i].want.is_none() {
@@ -957,7 +960,10 @@ impl LevelStream {
         }
         self.upload_order = order;
         pool.set_active(queue, self.high_water());
-        pool.set_fades(queue, &self.fades());
+        let mut fades = std::mem::take(&mut self.fade_ranges);
+        self.fill_fades(&mut fades);
+        pool.set_fades(queue, &fades);
+        self.fade_ranges = fades;
         self.evict();
         uploaded
     }
@@ -1009,25 +1015,41 @@ impl LevelStream {
     /// The ranges crossfading now, by start: (first slot, one past the last, opacity share).
     /// Old and new ranges crossfade together to avoid the bright flash of drawing both at full opacity.
     pub fn fades(&self) -> Vec<(u32, u32, f32)> {
+        let mut out = Vec::new();
+        self.fill_fades(&mut out);
+        out
+    }
+
+    fn fill_fades(&self, out: &mut Vec<(u32, u32, f32)>) {
+        out.clear();
         let fade_s = self.settings.fade_s;
         if fade_s <= 0.0 {
-            return Vec::new();
+            return;
         }
         let progress = |t: f32| (t / fade_s).clamp(0.0, 1.0);
-        let mut out: Vec<(u32, u32, f32)> = self
-            .leaves
-            .iter()
-            .filter_map(|s| s.have)
-            .filter(|r| self.now - r.born < fade_s)
-            .map(|r| (r.start, r.start + r.count, progress(self.now - r.born)))
-            .chain(
-                self.fading_out
-                    .iter()
-                    .map(|(r, t0)| (r.start, r.start + r.count, 1.0 - progress(self.now - t0))),
-            )
-            .collect();
+        for state in &self.leaves {
+            if let Some(r) = state.have {
+                if self.now - r.born < fade_s {
+                    out.push((r.start, r.start + r.count, progress(self.now - r.born)));
+                }
+            }
+        }
+        for (r, t0) in &self.fading_out {
+            out.push((r.start, r.start + r.count, 1.0 - progress(self.now - t0)));
+        }
         out.sort_by_key(|f| f.0);
-        out
+    }
+
+    fn fade_count(&self) -> usize {
+        if self.settings.fade_s <= 0.0 {
+            return 0;
+        }
+        self.leaves
+            .iter()
+            .filter_map(|state| state.have)
+            .filter(|resident| self.now - resident.born < self.settings.fade_s)
+            .count()
+            + self.fading_out.len()
     }
 
     /// A range a leaf no longer shows: it fades out, or goes at once when fading is off.
@@ -1255,7 +1277,7 @@ impl LevelStream {
             chunks_loaded: self.chunks.len(),
             chunks_in_flight: self.in_flight.len(),
             leaves_visible: visible,
-            fading: self.fades().len() as u32,
+            fading: self.fade_count() as u32,
             switches: self.switches,
             near_switches: self.near_switches,
             palettes_in_use: self
@@ -1596,6 +1618,24 @@ fn loaded_fallback(
     is_loaded: impl Fn(usize) -> bool,
 ) -> Option<usize> {
     (want..lods.len()).find(|&lod| lods[lod].is_some_and(|range| is_loaded(range.file)))
+}
+
+// Remove completed fades in their original order while keeping both buffers.
+fn collect_completed_fades(
+    fading: &mut Vec<(Resident, f32)>,
+    completed: &mut Vec<Resident>,
+    now: f32,
+    fade_s: f32,
+) {
+    completed.clear();
+    fading.retain(|&(resident, start)| {
+        if now - start >= fade_s {
+            completed.push(resident);
+            false
+        } else {
+            true
+        }
+    });
 }
 
 // A coarse placeholder may cover an empty leaf while detail loads. Do not use

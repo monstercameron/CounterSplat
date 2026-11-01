@@ -219,3 +219,49 @@ fn empty_slots_are_not_drawn() {
         "instances drawn cover only the {real} real splats, not the empty slots"
     );
 }
+
+#[test]
+fn unchanged_fades_reuse_the_sort_and_changed_fades_invalidate_it() {
+    let Some((device, queue)) = try_device() else {
+        return;
+    };
+    let count = 4;
+    let buffer = |label, size, usage| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage,
+            mapped_at_creation: false,
+        })
+    };
+    let centres = buffer(
+        "fade test centres",
+        count * 12,
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    );
+    queue.write_buffer(
+        &centres,
+        0,
+        bytemuck::cast_slice(&[
+            0.0f32, 0.0, -1.0, 0.0, 0.0, -2.0, 0.0, 0.0, -3.0, 0.0, 0.0, -4.0,
+        ]),
+    );
+    let fade = buffer("fade test values", count * 4, wgpu::BufferUsages::STORAGE);
+    let output = buffer("fade test order", count * 4, wgpu::BufferUsages::COPY_DST);
+    let sorter = DepthSorter::new(&device, &queue, count as u32, &centres, &fade);
+    let render = |ranges: &[(u32, u32, f32)]| {
+        sorter.set_fades(&queue, ranges);
+        let mut encoder = device.create_command_encoder(&Default::default());
+        sorter.encode(&queue, &mut encoder, &IDENTITY, None, None, &output);
+        queue.submit(Some(encoder.finish()));
+    };
+    render(&[(0, 4, 0.5)]);
+    render(&[(0, 4, 0.5)]);
+    assert_eq!(sorter.profile_json()["counters"]["sorts"], 1);
+    assert_eq!(sorter.profile_json()["counters"]["cache_hits"], 1);
+    render(&[(0, 4, 0.6)]);
+    render(&[]);
+    render(&[]);
+    assert_eq!(sorter.profile_json()["counters"]["sorts"], 3);
+    assert_eq!(sorter.profile_json()["counters"]["cache_hits"], 2);
+}
