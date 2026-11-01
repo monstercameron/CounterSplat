@@ -162,6 +162,20 @@ impl AsRef<str> for RequestName<'_> {
     }
 }
 
+// Most browser change-aware reads have the operation first and carry only
+// scalar arguments, so deserialize them without the tagged enum buffer.
+#[derive(Deserialize)]
+struct FastGetIfChanged<'a> {
+    #[serde(rename = "op")]
+    _op: serde::de::IgnoredAny,
+    #[serde(borrow)]
+    id: Cow<'a, str>,
+    #[serde(borrow)]
+    name: Cow<'a, str>,
+    #[serde(borrow, default)]
+    revision: Option<Cow<'a, str>>,
+}
+
 // The browser's fixed event-channel lists always send this field order. A
 // direct struct avoids buffering the internally tagged enum's other variants.
 #[derive(Deserialize)]
@@ -312,6 +326,15 @@ impl World {
         if request.len() > MAX_REQUEST_BYTES {
             return Err("ECS script request is too large".into());
         }
+        if request.starts_with(r#"{"op":"get_if_changed","#) {
+            let command: FastGetIfChanged =
+                serde_json::from_str(request).map_err(|e| e.to_string())?;
+            return script_result(self.read_component_if_changed(
+                Entity::from_str(&command.id)?,
+                &command.name,
+                command.revision.as_deref(),
+            )?);
+        }
         if request.starts_with(r#"{"op":"drain_next","#) {
             let command: FastDrainNext =
                 serde_json::from_str(request).map_err(|e| e.to_string())?;
@@ -455,6 +478,160 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fast_change_read_parser_matches_general_protocol() {
+        fn general(text: &str) -> Result<(String, String, Option<String>), String> {
+            match serde_json::from_str::<ScriptOperation<'_>>(text).map_err(|e| e.to_string())? {
+                ScriptOperation::GetIfChanged { id, name, revision } => Ok((
+                    id.into_owned(),
+                    name.into_owned(),
+                    revision.map(Cow::into_owned),
+                )),
+                _ => Err("wrong operation".into()),
+            }
+        }
+        fn fast(text: &str) -> Result<(String, String, Option<String>), String> {
+            let value: FastGetIfChanged<'_> =
+                serde_json::from_str(text).map_err(|e| e.to_string())?;
+            Ok((
+                value.id.into_owned(),
+                value.name.into_owned(),
+                value.revision.map(Cow::into_owned),
+            ))
+        }
+        for text in [
+            r#"{"op":"get_if_changed","id":"1:2.3","name":"PlayerControls"}"#,
+            r#"{"op":"get_if_changed","id":"1:2.3","name":"x","revision":null}"#,
+            r#"{"op":"get_if_changed","id":"1\u003a2.3","name":"quoted\"name","revision":"r"}"#,
+            r#"{"op":"get_if_changed","id":"1:2.3","name":"x","extra":{"a":[1,null]}}"#,
+            r#"{"op":"get_if_changed","id":"1:2.3","name":"x","revision":1}"#,
+            r#"{"op":"get_if_changed","id":null,"name":"x"}"#,
+            r#"{"op":"get_if_changed","id":"1:2.3"}"#,
+            r#"{"op":"get_if_changed","id":"1:2.3","name":"x","name":"y"}"#,
+            r#"{"op":"get_if_changed","id":"1:2.3","name":"x","revision":"a","revision":"b"}"#,
+            r#"{"op":"get_if_changed","id":"1:2.3","name":"x","op":"other"}"#,
+        ] {
+            assert_eq!(general(text).ok(), fast(text).ok(), "{text}");
+        }
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_change_read_parsing() {
+        use std::{hint::black_box, time::Instant};
+        let text = r#"{"op":"get_if_changed","id":"17:2345.6","name":"PlayerControls","revision":"17:2345.6|14:PlayerControls|a123456"}"#;
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..9 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let start = Instant::now();
+                for _ in 0..200_000 {
+                    if mode == 0 {
+                        black_box(
+                            serde_json::from_str::<ScriptOperation<'_>>(black_box(text)).unwrap(),
+                        );
+                    } else {
+                        black_box(
+                            serde_json::from_str::<FastGetIfChanged<'_>>(black_box(text)).unwrap(),
+                        );
+                    }
+                }
+                samples[mode].push(start.elapsed().as_nanos() as f64 / 200_000.0);
+            }
+        }
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        println!(
+            "change-read parser: general {:.0} ns, direct {:.0} ns",
+            samples[0][4], samples[1][4]
+        );
+    }
+
+    #[test]
+    fn fast_and_general_change_reads_match_across_mutations() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        world
+            .set_dynamic(entity, "Settings", serde_json::json!({"enabled":true}))
+            .unwrap();
+        let token = world
+            .read_component_if_changed(entity, "Settings", None)
+            .unwrap()
+            .unwrap()
+            .revision
+            .unwrap();
+        let id = entity.to_string();
+        // serde_json maps use sorted keys, so construct the operation-first form explicitly.
+        let fast = format!(
+            r#"{{"op":"get_if_changed","id":"{}","name":"Settings","revision":"{}"}}"#,
+            id, token
+        );
+        let general = format!(
+            r#"{{"id":"{}","name":"Settings","revision":"{}","op":"get_if_changed"}}"#,
+            id, token
+        );
+        assert_eq!(
+            world.apply_script_json(&fast).unwrap(),
+            world.apply_script_json(&general).unwrap()
+        );
+        world
+            .set_dynamic(entity, "Settings", serde_json::json!({"enabled":false}))
+            .unwrap();
+        assert_eq!(
+            world.apply_script_json(&fast).unwrap(),
+            world.apply_script_json(&general).unwrap()
+        );
+        let invalid_fast = r#"{"op":"get_if_changed","id":"bad","name":"Settings"}"#;
+        let invalid_general = r#"{"id":"bad","name":"Settings","op":"get_if_changed"}"#;
+        assert!(world.apply_script_json(invalid_fast).is_err());
+        assert!(world.apply_script_json(invalid_general).is_err());
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_change_read_bridge() {
+        use std::{hint::black_box, time::Instant};
+        let mut world = World::new();
+        let entity = world.spawn();
+        world
+            .set_dynamic(entity, "Settings", serde_json::json!({"enabled":true}))
+            .unwrap();
+        let token = world
+            .read_component_if_changed(entity, "Settings", None)
+            .unwrap()
+            .unwrap()
+            .revision
+            .unwrap();
+        let fast = format!(
+            r#"{{"op":"get_if_changed","id":"{}","name":"Settings","revision":"{}"}}"#,
+            entity, token
+        );
+        let general = format!(
+            r#"{{"id":"{}","name":"Settings","revision":"{}","op":"get_if_changed"}}"#,
+            entity, token
+        );
+        assert_eq!(
+            world.apply_script_json(&fast).unwrap(),
+            world.apply_script_json(&general).unwrap()
+        );
+        let mut samples = [Vec::new(), Vec::new()];
+        for round in 0..9 {
+            for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let text = if mode == 0 { &general } else { &fast };
+                let start = Instant::now();
+                for _ in 0..200_000 {
+                    black_box(world.apply_script_json(black_box(text)).unwrap());
+                }
+                samples[mode].push(start.elapsed().as_nanos() as f64 / 200_000.0);
+            }
+        }
+        samples[0].sort_by(f64::total_cmp);
+        samples[1].sort_by(f64::total_cmp);
+        println!(
+            "change-read bridge: general {:.0} ns, direct {:.0} ns",
+            samples[0][4], samples[1][4]
+        );
+    }
 
     #[test]
     fn fast_drain_parser_matches_general_protocol_for_valid_and_invalid_requests() {

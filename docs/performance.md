@@ -260,3 +260,8 @@ Run `cargo test --locked --release --target-dir .artifacts/target -p
 countersplat-ecs benchmark_drain_next -- --ignored --nocapture --test-threads=1`
 to compare event-poll parsing and the full Rust bridge path. The benchmark
 excludes Lua callbacks, browser dispatch, and rendering.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-ecs benchmark_change_read -- --ignored --nocapture --test-threads=1`
+to compare the general and direct change-aware read parsers and full Rust
+bridge paths. These measurements exclude Lua and rendering.
