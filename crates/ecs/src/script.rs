@@ -175,13 +175,17 @@ enum ScriptOperation<'a> {
         name: Cow<'a, str>,
     },
     Set {
-        id: String,
-        name: String,
+        #[serde(borrow)]
+        id: Cow<'a, str>,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
         value: Value,
     },
     Remove {
-        id: String,
-        name: String,
+        #[serde(borrow)]
+        id: Cow<'a, str>,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
     },
     GetResource {
         #[serde(borrow)]
@@ -194,11 +198,13 @@ enum ScriptOperation<'a> {
         field: Cow<'a, str>,
     },
     SetResource {
-        name: String,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
         value: Value,
     },
     RemoveResource {
-        name: String,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
     },
     SetParent {
         child: String,
@@ -211,7 +217,8 @@ enum ScriptOperation<'a> {
         id: String,
     },
     Emit {
-        name: String,
+        #[serde(borrow)]
+        name: Cow<'a, str>,
         value: Value,
     },
     Drain {
@@ -266,15 +273,13 @@ impl World {
                     self.has_component_value(Entity::from_str(&id)?, &name)?,
                 ));
             }
-            S::Set { id, name, value } => O::WriteComponent {
-                entity: Entity::from_str(&id)?,
-                name,
-                value,
-            },
-            S::Remove { id, name } => O::RemoveComponent {
-                entity: Entity::from_str(&id)?,
-                name,
-            },
+            S::Set { id, name, value } => {
+                self.write_component_value(Entity::from_str(&id)?, &name, value)?;
+                return script_result::<Value>(None);
+            }
+            S::Remove { id, name } => {
+                return script_result(self.remove_component_value(Entity::from_str(&id)?, &name)?);
+            }
             S::GetResource { name } => return script_result(self.get_dynamic_resource(&name)),
             S::GetResourceField { name, field } => {
                 return script_result(
@@ -283,8 +288,13 @@ impl World {
                         .and_then(|object| object.get(field.as_ref())),
                 );
             }
-            S::SetResource { name, value } => O::WriteResource { name, value },
-            S::RemoveResource { name } => O::RemoveResource { name },
+            S::SetResource { name, value } => {
+                self.set_dynamic_resource(&name, value);
+                return script_result::<Value>(None);
+            }
+            S::RemoveResource { name } => {
+                return script_result(self.remove_dynamic_resource(&name))
+            }
             S::SetParent { child, parent } => O::SetParent {
                 child: Entity::from_str(&child)?,
                 parent: parent.map(|id| Entity::from_str(&id)).transpose()?,
@@ -295,7 +305,10 @@ impl World {
             S::Children { id } => O::Children {
                 entity: Entity::from_str(&id)?,
             },
-            S::Emit { name, value } => O::EmitEvent { name, value },
+            S::Emit { name, value } => {
+                self.emit_event(&name, value);
+                return script_result::<Value>(None);
+            }
             S::Drain { name } => return script_result(Some(self.drain_events(&name))),
             S::DrainNext { names, start } => {
                 return script_result(
@@ -359,8 +372,29 @@ mod tests {
             serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
         assert_eq!(response, json!({"found":true,"value":{"text":"works"}}));
 
+        let set = json!({"op":"set","id":entity.to_string(),"name":name,"value":null});
+        let result: Value =
+            serde_json::from_str(&world.apply_script_json(&set.to_string()).unwrap()).unwrap();
+        assert_eq!(result, json!({"found":false,"value":null}));
+        assert_eq!(world.get_dynamic(entity, name), Some(&Value::Null));
+        let remove = json!({"op":"remove","id":entity.to_string(),"name":name});
+        let result: Value =
+            serde_json::from_str(&world.apply_script_json(&remove.to_string()).unwrap()).unwrap();
+        assert_eq!(result, json!({"found":true,"value":null}));
+        let resource = "quoted\"resource";
+        world
+            .apply_script_json(&json!({"op":"set_resource","name":resource,"value":7}).to_string())
+            .unwrap();
+        assert_eq!(world.get_dynamic_resource(resource), Some(&json!(7)));
+        world
+            .apply_script_json(&json!({"op":"remove_resource","name":resource}).to_string())
+            .unwrap();
+        assert!(world.get_dynamic_resource(resource).is_none());
+
         let channel = "quoted\"channel";
-        world.emit_event(channel, Value::Null);
+        world
+            .apply_script_json(&json!({"op":"emit","name":channel,"value":null}).to_string())
+            .unwrap();
         let request = json!({"op":"drain_next","names":["other",channel],"start":0});
         let response: Value =
             serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();

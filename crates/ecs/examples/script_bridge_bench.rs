@@ -73,6 +73,10 @@ fn main() {
         "items": (0..80).map(|id| json!({"id":id, "name":format!("item-{id}"), "count":10})).collect::<Vec<_>>()
     })).unwrap();
     world.set_dynamic_resource("scene.entities", json!({"player":entity.to_string()}));
+    world
+        .set_dynamic(entity, "State", json!({"x":1,"enabled":true}))
+        .unwrap();
+    world.set_dynamic_resource("state", json!({"x":1,"enabled":true}));
     for (name, request) in [
         (
             "get typed",
@@ -93,6 +97,14 @@ fn main() {
         (
             "get resource field",
             json!({"op":"get_resource_field", "name":"scene.entities", "field":"player"}),
+        ),
+        (
+            "set dynamic",
+            json!({"op":"set", "id":entity.to_string(), "name":"State", "value":{"x":2,"enabled":true}}),
+        ),
+        (
+            "set resource",
+            json!({"op":"set_resource", "name":"state", "value":{"x":2,"enabled":true}}),
         ),
         ("drain empty", json!({"op":"drain", "name":"input.key"})),
         (

@@ -489,12 +489,14 @@ impl World {
         if self.adapters.contains_key(name) {
             return Err(format!("component `{name}` is registered; use its adapter"));
         }
-        let inserted = self
-            .dynamic_components
-            .entry(name.to_owned())
-            .or_default()
-            .insert(entity, value)
-            .is_none();
+        let inserted = if let Some(store) = self.dynamic_components.get_mut(name) {
+            store.insert(entity, value).is_none()
+        } else {
+            let mut store = BTreeMap::new();
+            store.insert(entity, value);
+            self.dynamic_components.insert(name.to_owned(), store);
+            true
+        };
         if inserted {
             self.structure_changed();
         }
@@ -787,7 +789,11 @@ impl World {
 
     /// Dynamic resources are separate from typed Rust resources; applications explicitly choose what scripts see.
     pub fn set_dynamic_resource(&mut self, name: &str, value: Value) {
-        self.dynamic_resources.insert(name.to_owned(), value);
+        if let Some(existing) = self.dynamic_resources.get_mut(name) {
+            *existing = value;
+        } else {
+            self.dynamic_resources.insert(name.to_owned(), value);
+        }
     }
     /// Borrows a script-visible dynamic resource.
     pub fn get_dynamic_resource(&self, name: &str) -> Option<&Value> {
