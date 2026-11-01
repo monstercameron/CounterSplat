@@ -37,6 +37,8 @@ pub const INSTANCE_SIZE: u32 = 128;
 // Reuse up to roughly 3 MiB of retired-centre data per scene. Unusually large
 // releases use a temporary buffer so they do not permanently enlarge the cache.
 const RELEASE_SCRATCH_SPLATS: usize = 262_144;
+// The debug LOD label uses four bytes per slot. Large writes remain temporary.
+const LOD_LABEL_SCRATCH_SPLATS: usize = 262_144;
 
 /// The engine's 32×32 RGBA8 blue-noise texture (`core/math/blue-noise.js`), row-major.
 const BLUE_NOISE_32: &[u8] = include_bytes!("../assets/blue_noise_32_rgba8.bin");
@@ -117,6 +119,7 @@ pub struct GsplatScene {
     textures: BTreeMap<String, wgpu::Texture>,
     centers: wgpu::Buffer,
     release_scratch: std::cell::RefCell<Vec<[f32; 3]>>,
+    lod_label_scratch: std::cell::RefCell<Vec<u32>>,
     splat_width: u32,
     uniform_cache: std::cell::RefCell<BTreeMap<String, Vec<u8>>>,
     io_metrics: std::cell::RefCell<crate::metrics::Metrics>,
@@ -478,6 +481,7 @@ fn assemble(
         textures,
         centers,
         release_scratch: Default::default(),
+        lod_label_scratch: Default::default(),
         splat_width,
         uniform_cache: Default::default(),
         io_metrics: Default::default(),
@@ -619,11 +623,12 @@ impl GsplatScene {
 
     /// Records the level of detail and leaf held by `count` slots from `start` (for the debug colours).
     pub fn write_lod(&self, queue: &wgpu::Queue, start: u32, count: u32, lod: usize, leaf: usize) {
-        let value = ((leaf as u32) << 4 | (lod as u32 + 1).min(15)).to_le_bytes();
-        queue.write_buffer(
-            &self.buffers["splatLod"],
-            u64::from(start) * 4,
-            &value.repeat(count as usize),
+        let value = (leaf as u32) << 4 | (lod as u32 + 1).min(15);
+        with_lod_label_bytes(
+            &mut self.lod_label_scratch.borrow_mut(),
+            count as usize,
+            value,
+            |bytes| queue.write_buffer(&self.buffers["splatLod"], u64::from(start) * 4, bytes),
         );
     }
 
@@ -929,6 +934,27 @@ impl GsplatScene {
     }
 }
 
+/// Prepares the exact little-endian per-slot labels. The queue copies the bytes
+/// before the callback returns, so the bounded staging buffer can be reused.
+fn with_lod_label_bytes(
+    scratch: &mut Vec<u32>,
+    count: usize,
+    value: u32,
+    write: impl FnOnce(&[u8]),
+) {
+    if count > LOD_LABEL_SCRATCH_SPLATS {
+        write(&value.to_le_bytes().repeat(count));
+        return;
+    }
+    if scratch.capacity() < count {
+        scratch.reserve_exact(count - scratch.len());
+    }
+    let existing = count.min(scratch.len());
+    scratch[..existing].fill(value.to_le());
+    scratch.resize(count, value.to_le());
+    write(bytemuck::cast_slice(scratch));
+}
+
 /// Per-axis 0.5th and 99.5th percentiles: a box that ignores stray splats.
 fn robust_bounds(centres: &[[f32; 3]]) -> ([f32; 3], [f32; 3]) {
     let mut lo = [0.0; 3];
@@ -1162,6 +1188,117 @@ mod tests {
             "retired centres: old {:.0} ns, reused {:.0} ns",
             old_samples[4], new_samples[4]
         );
+    }
+
+    #[test]
+    fn lod_label_staging_preserves_bytes_and_bounds_retained_memory() {
+        let mut scratch = Vec::new();
+        for (count, value) in [
+            (4096, 0x12345678u32),
+            (17, 0xfedcba98),
+            (8192, 0),
+            (1, u32::MAX),
+            (0, 42),
+            (LOD_LABEL_SCRATCH_SPLATS, 0x87654321),
+        ] {
+            with_lod_label_bytes(&mut scratch, count, value, |bytes| {
+                assert_eq!(bytes, value.to_le_bytes().repeat(count));
+            });
+        }
+        let capacity = scratch.capacity();
+        with_lod_label_bytes(
+            &mut scratch,
+            LOD_LABEL_SCRATCH_SPLATS + 1,
+            0x13572468,
+            |bytes| {
+                assert_eq!(
+                    bytes,
+                    0x13572468u32
+                        .to_le_bytes()
+                        .repeat(LOD_LABEL_SCRATCH_SPLATS + 1)
+                )
+            },
+        );
+        assert_eq!(scratch.capacity(), capacity);
+    }
+
+    #[test]
+    fn lod_label_staging_uploads_exact_values_at_the_requested_offset() {
+        let Some((device, queue)) = crate::try_device() else {
+            return;
+        };
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("LOD label test target"),
+            size: 64,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("LOD label readback"),
+            size: 64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut scratch = Vec::new();
+        with_lod_label_bytes(&mut scratch, 12, 0x12345678, |bytes| {
+            queue.write_buffer(&buffer, 0, bytes)
+        });
+        with_lod_label_bytes(&mut scratch, 3, 0xaabbccdd, |bytes| {
+            queue.write_buffer(&buffer, 16, bytes)
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(&buffer, 0, &readback, 0, 64);
+        queue.submit(Some(encoder.finish()));
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).unwrap();
+        });
+        device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+        rx.recv().unwrap().unwrap();
+        let bytes = slice.get_mapped_range().unwrap();
+        for (index, word) in bytes.chunks_exact(4).enumerate() {
+            let expected: u32 = if (4..7).contains(&index) {
+                0xaabbccdd
+            } else if index < 12 {
+                0x12345678
+            } else {
+                0
+            };
+            assert_eq!(word, expected.to_le_bytes(), "slot {index}");
+        }
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_lod_label_staging() {
+        use std::{hint::black_box, time::Instant};
+        for count in [512usize, 2_048, 8_192, 32_768] {
+            let mut scratch = Vec::new();
+            let mut samples = [Vec::new(), Vec::new()];
+            for round in 0..9 {
+                for mode in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
+                    let start = Instant::now();
+                    for i in 0..4000u32 {
+                        let value = black_box(i.wrapping_mul(17));
+                        if mode == 0 {
+                            black_box(value.to_le_bytes().repeat(count));
+                        } else {
+                            with_lod_label_bytes(&mut scratch, count, value, |bytes| {
+                                black_box(bytes);
+                            });
+                        }
+                    }
+                    samples[mode].push(start.elapsed().as_nanos() / 4000);
+                }
+            }
+            samples[0].sort();
+            samples[1].sort();
+            println!(
+                "count={count} fresh_ns={} reused_ns={}",
+                samples[0][4], samples[1][4]
+            );
+        }
     }
 
     #[test]

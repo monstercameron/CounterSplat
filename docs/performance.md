@@ -198,3 +198,8 @@ countersplat-render --lib benchmark_reused_upload_buffers -- --ignored
 on a local, separately acquired LOD level. The benchmark compares output bytes
 and excludes decoding, GPU uploads, and rendering. Reuse is limited to typical
 leaf sizes; unusually large uploads use temporary buffers.
+
+Run `cargo test --locked --release --target-dir .artifacts/target -p
+countersplat-render --lib benchmark_lod_label_staging -- --ignored --nocapture
+--test-threads=1` to compare fresh and reused LOD-label preparation. The
+CPU-only benchmark excludes the GPU transfer and rendering.
