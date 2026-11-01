@@ -32,8 +32,8 @@ pub fn register(world: &mut World) -> Result<(), String> {
 /// Select an owned, valid grade without sharing an ECS world with the render thread.
 pub fn extract(world: &World) -> Option<ImageCorrection> {
     world
-        .query::<ImageCorrection>()
-        .into_iter()
+        .component_view::<ImageCorrection>()?
+        .iter()
         .filter(|(_, grade)| grade.enabled && grade.validate().is_ok())
         .max_by(|(a_id, a), (b_id, b)| a.priority.cmp(&b.priority).then_with(|| b_id.cmp(a_id)))
         .map(|(_, grade)| grade.clone())

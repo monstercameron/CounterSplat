@@ -72,19 +72,23 @@ pub struct AudioSnapshot {
     pub emitters: Vec<(Entity, AudioEmitter)>,
 }
 pub fn extract(world: &World) -> AudioSnapshot {
-    let mut layers: Vec<_> = world
-        .query::<AudioLayer>()
-        .into_iter()
-        .filter(|(_, value)| value.validate().is_ok())
-        .map(|(entity, value)| (entity, value.clone()))
-        .collect();
-    let mut emitters: Vec<_> = world
-        .query::<AudioEmitter>()
-        .into_iter()
-        .filter(|(_, value)| value.validate().is_ok())
-        .map(|(entity, value)| (entity, value.clone()))
-        .collect();
-    layers.sort_by_key(|(entity, _)| *entity);
-    emitters.sort_by_key(|(entity, _)| *entity);
+    let layers = world
+        .component_view::<AudioLayer>()
+        .map(|view| {
+            view.iter()
+                .filter(|(_, value)| value.validate().is_ok())
+                .map(|(entity, value)| (entity, value.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let emitters = world
+        .component_view::<AudioEmitter>()
+        .map(|view| {
+            view.iter()
+                .filter(|(_, value)| value.validate().is_ok())
+                .map(|(entity, value)| (entity, value.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
     AudioSnapshot { layers, emitters }
 }

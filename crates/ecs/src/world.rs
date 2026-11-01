@@ -365,10 +365,22 @@ impl World {
     }
     /// Joins two typed component stores in deterministic entity order.
     pub fn query2<A: Send + 'static, B: Send + 'static>(&self) -> Vec<(Entity, &A, &B)> {
-        self.query::<A>()
-            .into_iter()
-            .filter_map(|(entity, a)| self.get::<B>(entity).map(|b| (entity, a, b)))
-            .collect()
+        let (Some(a), Some(b)) = (self.typed::<A>(), self.typed::<B>()) else {
+            return Vec::new();
+        };
+        // Both stores are entity-ordered. Iterating the smaller one preserves
+        // result order while avoiding a full scan and repeated store lookups.
+        if a.values.len() <= b.values.len() {
+            a.values
+                .iter()
+                .filter_map(|(entity, a)| b.values.get(entity).map(|b| (*entity, a, b)))
+                .collect()
+        } else {
+            b.values
+                .iter()
+                .filter_map(|(entity, b)| a.values.get(entity).map(|a| (*entity, a, b)))
+                .collect()
+        }
     }
     /// Returns entities containing a typed component in deterministic order.
     pub fn with<T: Send + 'static>(&self) -> Vec<Entity> {

@@ -362,6 +362,29 @@ fn sparse_queries_match_live_entities_across_components_and_reused_slots() {
             "{names:?}"
         );
     }
+    let expected_join = world.query_components(&["Position", "Marker"]).unwrap();
+    let forward = world
+        .query2::<Position, Marker>()
+        .into_iter()
+        .map(|(entity, _, _)| entity)
+        .collect::<Vec<_>>();
+    let reverse = world
+        .query2::<Marker, Position>()
+        .into_iter()
+        .map(|(entity, _, _)| entity)
+        .collect::<Vec<_>>();
+    assert_eq!(forward, expected_join);
+    assert_eq!(reverse, expected_join);
+    assert!(world.query2::<Position, u64>().is_empty());
+    assert_eq!(
+        world
+            .query2::<Position, Position>()
+            .into_iter()
+            .map(|(entity, _, _)| entity)
+            .collect::<Vec<_>>(),
+        world.with::<Position>()
+    );
+
     assert_eq!(
         world.query_dynamic(&["Tag", "Rare"]),
         world

@@ -66,8 +66,8 @@ pub fn spawn(world: &mut World, skybox: Skybox) -> Result<Entity, String> {
 /// Invalid components inserted directly through Rust are ignored. The result owns its data.
 pub fn extract(world: &World) -> Option<SkyboxSnapshot> {
     world
-        .query::<Skybox>()
-        .into_iter()
+        .component_view::<Skybox>()?
+        .iter()
         .filter(|(_, sky)| sky.enabled && sky.validate().is_ok())
         .max_by(|(a_id, a), (b_id, b)| a.priority.cmp(&b.priority).then_with(|| b_id.cmp(a_id)))
         .map(|(entity, skybox)| SkyboxSnapshot {

@@ -114,11 +114,7 @@ pub fn update_frame_counters(
     if let Some(value) = measurement {
         value.validate()?;
     }
-    let entities: Vec<_> = world
-        .query::<FrameCounter>()
-        .into_iter()
-        .map(|(entity, _)| entity)
-        .collect();
+    let entities = world.with::<FrameCounter>();
     for entity in entities {
         if let Some(counter) = world.get_mut::<FrameCounter>(entity) {
             counter.measurement = measurement;
