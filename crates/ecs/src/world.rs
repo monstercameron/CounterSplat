@@ -464,6 +464,19 @@ impl World {
             Ok(self.get_dynamic(entity, name).cloned())
         }
     }
+    /// Checks script-visible presence without serializing or cloning the component.
+    pub fn has_component_value(&self, entity: Entity, name: &str) -> Result<bool, String> {
+        self.require_alive(entity)?;
+        validate_name(name)?;
+        Ok(if let Some(adapter) = self.adapters.get(name) {
+            adapter.contains(self, entity)
+        } else {
+            self.dynamic_components
+                .get(name)
+                .is_some_and(|store| store.contains_key(&entity))
+        })
+    }
+
     /// Writes a dynamic or registered native component after validating its handle and name.
     pub fn write_component_value(
         &mut self,

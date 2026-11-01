@@ -67,6 +67,11 @@ pub enum WorldOperation {
         entity: Entity,
         name: String,
     },
+    /// Test presence without reading or serializing the component value.
+    HasComponent {
+        entity: Entity,
+        name: String,
+    },
     WriteComponent {
         entity: Entity,
         name: String,
@@ -195,6 +200,9 @@ impl World {
             }
             Op::ReadComponent { entity, name } => {
                 Ok(Out::Value(self.read_component_value(entity, &name)?))
+            }
+            Op::HasComponent { entity, name } => {
+                Ok(Out::Bool(self.has_component_value(entity, &name)?))
             }
             Op::WriteComponent {
                 entity,

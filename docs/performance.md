@@ -52,3 +52,11 @@ Run `cargo run --locked --release --target-dir .artifacts/target -p
 countersplat-ecs --example query_bench` to compare named component queries
 against sparse, dense, missing, and native component sets at two world sizes.
 The example warms up each query and reports the median of seven samples.
+
+## Rust scripting transport benchmark
+
+Run `cargo run --locked --release --target-dir .artifacts/target -p
+countersplat-ecs --example script_bridge_bench` to measure JSON bridge reads,
+presence checks, resource fields, and empty event drains. The benchmark uses
+both typed components and a larger dynamic component. It does not include Lua,
+JavaScript, or rendering costs.

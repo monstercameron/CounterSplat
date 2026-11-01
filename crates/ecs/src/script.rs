@@ -3,11 +3,17 @@
 //! Hosts can use this boundary when the caller cannot exchange Rust values directly. All
 //! operations still execute on the world owner and use the same component adapters as native Lua.
 use crate::{Entity, World, WorldOperation, WorldOutcome};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::str::FromStr;
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+
+#[derive(Serialize)]
+struct ScriptResult {
+    found: bool,
+    value: Option<Value>,
+}
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -90,7 +96,6 @@ impl World {
         let command: ScriptOperation = serde_json::from_str(request).map_err(|e| e.to_string())?;
         use ScriptOperation as S;
         use WorldOperation as O;
-        let mut is_has = false;
         let operation = match command {
             S::Spawn => O::Spawn,
             S::Despawn { id, recursive } => O::Despawn {
@@ -112,13 +117,10 @@ impl World {
                 entity: Entity::from_str(&id)?,
                 name,
             },
-            S::Has { id, name } => {
-                is_has = true;
-                O::ReadComponent {
-                    entity: Entity::from_str(&id)?,
-                    name,
-                }
-            }
+            S::Has { id, name } => O::HasComponent {
+                entity: Entity::from_str(&id)?,
+                name,
+            },
             S::Set { id, name, value } => O::WriteComponent {
                 entity: Entity::from_str(&id)?,
                 name,
@@ -151,7 +153,6 @@ impl World {
             WorldOutcome::Spawned(id) => Some(json!(id.to_string())),
             WorldOutcome::Bool(value) => Some(json!(value)),
             WorldOutcome::Count(value) => Some(json!(value)),
-            WorldOutcome::Value(value) if is_has => Some(json!(value.is_some())),
             WorldOutcome::Value(value) => value,
             WorldOutcome::Names(value) => Some(json!(value)),
             WorldOutcome::Entity(value) => value.map(|id| json!(id.to_string())),
@@ -170,8 +171,11 @@ impl World {
             })),
             WorldOutcome::Applied => None,
         };
-        serde_json::to_string(&json!({"found": value.is_some(), "value": value}))
-            .map_err(|e| e.to_string())
+        serde_json::to_string(&ScriptResult {
+            found: value.is_some(),
+            value,
+        })
+        .map_err(|e| e.to_string())
     }
 }
 

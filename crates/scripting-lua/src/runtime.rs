@@ -426,12 +426,12 @@ fn install_ecs_api(
         "has",
         |_, bridge, (id, name): (String, String)| match request(
             bridge,
-            WorldOperation::ReadComponent {
+            WorldOperation::HasComponent {
                 entity: entity(id)?,
                 name,
             },
         )? {
-            WorldOutcome::Value(value) => Ok(value.is_some()),
+            WorldOutcome::Bool(value) => Ok(value),
             _ => Err(unexpected()),
         },
     )?;

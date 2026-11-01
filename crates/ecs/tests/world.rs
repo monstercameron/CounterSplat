@@ -130,6 +130,58 @@ fn custom_adapter_controls_script_access_without_copying_native_state() {
     assert_eq!(world.get::<u32>(entity), Some(&30));
 }
 
+struct PresenceOnly;
+impl ComponentAdapter for PresenceOnly {
+    fn read(&self, _: &World, _: Entity) -> Result<Option<Value>, String> {
+        Err("value cannot be serialized".into())
+    }
+    fn write(&self, _: &mut World, _: Entity, _: Value) -> Result<(), String> {
+        Err("read only".into())
+    }
+    fn remove(&self, _: &mut World, _: Entity) -> Result<Option<Value>, String> {
+        Err("read only".into())
+    }
+    fn contains(&self, world: &World, entity: Entity) -> bool {
+        world.has::<u16>(entity)
+    }
+}
+
+#[test]
+fn component_presence_does_not_copy_or_serialize_values() {
+    let mut world = World::new();
+    world
+        .register_component_adapter("Native", PresenceOnly)
+        .unwrap();
+    let entity = world.spawn();
+    world.insert(entity, 7_u16).unwrap();
+    world.set_dynamic(entity, "Nullable", Value::Null).unwrap();
+
+    assert!(world.has_component_value(entity, "Native").unwrap());
+    assert!(world.read_component_value(entity, "Native").is_err());
+    assert!(world.has_component_value(entity, "Nullable").unwrap());
+    assert!(!world.has_component_value(entity, "Missing").unwrap());
+    assert!(world.has_component_value(entity, "").is_err());
+    assert_eq!(
+        world
+            .apply_operation(WorldOperation::HasComponent {
+                entity,
+                name: "Native".into(),
+            })
+            .unwrap(),
+        WorldOutcome::Bool(true)
+    );
+    let request = json!({"op": "has", "id": entity.to_string(), "name": "Nullable"});
+    assert_eq!(
+        world.apply_script_json(&request.to_string()).unwrap(),
+        r#"{"found":true,"value":true}"#
+    );
+
+    world.remove_dynamic(entity, "Nullable");
+    assert!(!world.has_component_value(entity, "Nullable").unwrap());
+    assert!(world.despawn(entity));
+    assert!(world.has_component_value(entity, "Native").is_err());
+}
+
 #[test]
 fn sparse_queries_match_live_entities_across_components_and_reused_slots() {
     #[derive(Serialize, Deserialize)]
