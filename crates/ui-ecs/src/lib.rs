@@ -30,6 +30,18 @@ impl ComponentAdapter for Adapter {
             .transpose()
             .map_err(|e| e.to_string())
     }
+    fn write_json(
+        &self,
+        world: &World,
+        entity: Entity,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        let Some(value) = world.get::<UiElement>(entity) else {
+            return Ok(false);
+        };
+        serde_json::to_writer(output, value).map_err(|error| error.to_string())?;
+        Ok(true)
+    }
     fn write(&self, world: &mut World, entity: Entity, value: Value) -> Result<(), String> {
         let element: UiElement = serde_json::from_value(value).map_err(|e| e.to_string())?;
         element.validate().map_err(str::to_owned)?;
@@ -56,6 +68,18 @@ impl ComponentAdapter for FrameCounterAdapter {
             .map(serde_json::to_value)
             .transpose()
             .map_err(|e| e.to_string())
+    }
+    fn write_json(
+        &self,
+        world: &World,
+        entity: Entity,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        let Some(value) = world.get::<FrameCounter>(entity) else {
+            return Ok(false);
+        };
+        serde_json::to_writer(output, value).map_err(|error| error.to_string())?;
+        Ok(true)
     }
     fn write(&self, world: &mut World, entity: Entity, value: Value) -> Result<(), String> {
         let counter: FrameCounter = serde_json::from_value(value).map_err(|e| e.to_string())?;

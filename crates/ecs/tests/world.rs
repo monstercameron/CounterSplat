@@ -173,6 +173,25 @@ fn borrowed_component_reads_preserve_adapter_and_json_semantics() {
         .unwrap();
     assert!(matches!(native, Cow::Owned(_)));
     assert_eq!(*native, json!({"x": 1.0, "y": 2.0}));
+
+    // Direct JSON output agrees with the standard adapter and dynamic reads.
+    for name in ["Position", "Inventory"] {
+        let expected = world.read_component_value(entity, name).unwrap().unwrap();
+        let mut bytes = Vec::new();
+        assert!(world
+            .write_component_json(entity, name, &mut bytes)
+            .unwrap());
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), expected);
+        let request = json!({"op":"get", "id":entity.to_string(), "name":name});
+        let response: Value =
+            serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+        assert_eq!(response, json!({"found":true, "value":expected}));
+    }
+    let mut unchanged = b"prefix".to_vec();
+    assert!(!world
+        .write_component_json(entity, "Missing", &mut unchanged)
+        .unwrap());
+    assert_eq!(unchanged, b"prefix");
     assert!(world
         .borrow_component_value(entity, "Missing")
         .unwrap()
@@ -202,6 +221,11 @@ fn component_presence_does_not_copy_or_serialize_values() {
 
     assert!(world.has_component_value(entity, "Native").unwrap());
     assert!(world.read_component_value(entity, "Native").is_err());
+    assert!(world
+        .write_component_json(entity, "Native", &mut Vec::new())
+        .is_err());
+    let request = json!({"op":"get", "id":entity.to_string(), "name":"Native"});
+    assert!(world.apply_script_json(&request.to_string()).is_err());
     assert!(world.has_component_value(entity, "Nullable").unwrap());
     assert!(!world.has_component_value(entity, "Missing").unwrap());
     assert!(world.has_component_value(entity, "").is_err());

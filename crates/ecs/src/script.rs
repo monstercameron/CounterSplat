@@ -23,6 +23,19 @@ fn script_result<T: Serialize>(value: Option<T>) -> Result<String, String> {
     .map_err(|error| error.to_string())
 }
 
+fn script_component_result(world: &World, entity: Entity, name: &str) -> Result<String, String> {
+    if !world.is_adapted_component(name) {
+        return script_result(world.borrow_component_value(entity, name)?);
+    }
+    let mut output = Vec::with_capacity(128);
+    output.extend_from_slice(br#"{"found":true,"value":"#);
+    if !world.write_component_json(entity, name, &mut output)? {
+        return script_result::<Value>(None);
+    }
+    output.push(b'}');
+    String::from_utf8(output).map_err(|error| error.to_string())
+}
+
 #[derive(Deserialize)]
 struct RequestName<'a>(#[serde(borrow)] Cow<'a, str>);
 
@@ -151,7 +164,7 @@ impl World {
             },
             S::Query { components } => O::Query { components },
             S::Get { id, name } => {
-                return script_result(self.borrow_component_value(Entity::from_str(&id)?, &name)?);
+                return script_component_result(self, Entity::from_str(&id)?, &name);
             }
             S::Has { id, name } => {
                 return script_result(Some(

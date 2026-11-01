@@ -38,6 +38,21 @@ pub type EntityIndex<'a> = Box<dyn ExactSizeIterator<Item = Entity> + 'a>;
 pub trait ComponentAdapter: Send + Sync + 'static {
     /// Returns the exposed value, or None when the component is absent.
     fn read(&self, world: &World, entity: Entity) -> Result<Option<Value>, String>;
+    /// Writes the same JSON value exposed by read, returning false when absent.
+    /// The default uses read; typed adapters may serialize directly to avoid an
+    /// intermediate value. On error, the writer may contain partial output.
+    fn write_json(
+        &self,
+        world: &World,
+        entity: Entity,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        let Some(value) = self.read(world, entity)? else {
+            return Ok(false);
+        };
+        serde_json::to_writer(output, &value).map_err(|error| error.to_string())?;
+        Ok(true)
+    }
     /// Validates and writes a value; return an error to reject the operation.
     fn write(&self, world: &mut World, entity: Entity, value: Value) -> Result<(), String>;
     /// Removes the component and returns its previous exposed value.
@@ -63,6 +78,18 @@ impl<T: Serialize + DeserializeOwned + Send + 'static> ComponentAdapter for Serd
             .map(serde_json::to_value)
             .transpose()
             .map_err(|error| error.to_string())
+    }
+    fn write_json(
+        &self,
+        world: &World,
+        entity: Entity,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        let Some(value) = world.get::<T>(entity) else {
+            return Ok(false);
+        };
+        serde_json::to_writer(output, value).map_err(|error| error.to_string())?;
+        Ok(true)
     }
     fn write(&self, world: &mut World, entity: Entity, value: Value) -> Result<(), String> {
         let component = serde_json::from_value::<T>(value).map_err(|error| error.to_string())?;
@@ -481,6 +508,34 @@ impl World {
                 .map(Cow::Borrowed))
         }
     }
+    pub(crate) fn is_adapted_component(&self, name: &str) -> bool {
+        self.adapters.contains_key(name)
+    }
+
+    /// Writes a script-visible component as JSON without materializing a copy.
+    /// Returns false when absent; errors may leave partial bytes in the writer.
+    pub fn write_component_json(
+        &self,
+        entity: Entity,
+        name: &str,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        self.require_alive(entity)?;
+        validate_name(name)?;
+        if let Some(adapter) = self.adapters.get(name) {
+            adapter.write_json(self, entity, output)
+        } else if let Some(value) = self
+            .dynamic_components
+            .get(name)
+            .and_then(|store| store.get(&entity))
+        {
+            serde_json::to_writer(output, value).map_err(|error| error.to_string())?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Checks script-visible presence without serializing or cloning the component.
     pub fn has_component_value(&self, entity: Entity, name: &str) -> Result<bool, String> {
         self.require_alive(entity)?;

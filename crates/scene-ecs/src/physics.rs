@@ -13,6 +13,18 @@ macro_rules! adapter {
                     .transpose()
                     .map_err(|e| e.to_string())
             }
+            fn write_json(
+                &self,
+                world: &World,
+                entity: Entity,
+                output: &mut Vec<u8>,
+            ) -> Result<bool, String> {
+                let Some(value) = world.get::<$component>(entity) else {
+                    return Ok(false);
+                };
+                serde_json::to_writer(output, value).map_err(|error| error.to_string())?;
+                Ok(true)
+            }
             fn write(&self, world: &mut World, entity: Entity, value: Value) -> Result<(), String> {
                 let component: $component =
                     serde_json::from_value(value).map_err(|e| e.to_string())?;
