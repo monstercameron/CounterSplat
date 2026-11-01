@@ -9,6 +9,7 @@ local call, call_flat = __ecs_call, __ecs_call_flat
 local call_changed, call_strings, query_one, get_pair = __ecs_call_changed, __ecs_call_strings, __ecs_query_one, __ecs_get_pair
 local set_scalar, set_vector = __ecs_set_scalar, __ecs_set_vector
 local set_pair, set_vector_pair, set_vector_triplet = __ecs_set_pair, __ecs_set_vector_pair, __ecs_set_vector_triplet
+local emit_vector_triplet = __ecs_emit_vector_triplet
 local type, pairs, ipairs, next_key, raw_get, get_meta = type, pairs, ipairs, next, rawget, getmetatable
 local profile_now, profile_sample = __profile_now, __profile_sample
 local huge = math.huge
@@ -52,6 +53,7 @@ local function bounded(fn, ...)
 end
 __ecs_call, __ecs_call_flat, __ecs_call_changed, __ecs_call_strings = nil, nil, nil, nil
 __ecs_query_one, __ecs_get_pair, __ecs_set_scalar, __ecs_set_vector, __ecs_set_pair, __ecs_set_vector_pair, __ecs_set_vector_triplet = nil, nil, nil, nil, nil, nil, nil
+__ecs_emit_vector_triplet = nil
 __profile_now, __profile_sample = nil, nil
 local arrays = setmetatable({}, { __mode = "k" })
 local function encode(value, seen, depth, count)
@@ -178,6 +180,21 @@ local function vector3(value)
     end
     if key == nil and count == 3 then return x, y, z end
 end
+-- Return scalar bridge arguments only for an ordinary object containing
+-- exactly one finite vector and two scalars. The caller checks the keys.
+local function vector_triplet(fields, first, second, third, a, b, a_scalar, b_scalar)
+    local c = raw_get(fields, third)
+    local vector, key, other1, value1, other2, value2, position
+    if b_scalar and scalar_value(c) then
+        vector, key, other1, value1, other2, value2, position = a, first, second, b, third, c, 1
+    elseif a_scalar and scalar_value(c) then
+        vector, key, other1, value1, other2, value2, position = b, second, first, a, third, c, 2
+    elseif a_scalar and b_scalar then
+        vector, key, other1, value1, other2, value2, position = c, third, first, a, second, b, 3
+    end
+    local x, y, z = vector3(vector)
+    if x ~= nil then return key, x, y, z, other1, value1, other2, value2, position end
+end
 function ecs.set_field(id, name, field, value)
     if type(id) == "string" and type(name) == "string" and type(field) == "string" then
         if scalar_value(value) then
@@ -225,18 +242,9 @@ function ecs.set_fields(id, name, fields)
                 elseif type(third) == "string" and third ~= "__countersplat_array" and next_key(fields, third) == nil then
                     -- An atomic vector plus two scalars is common for visual
                     -- transforms. Keep original key order for host consumers.
-                    local c = raw_get(fields, third)
-                    local vector, other1, value1, other2, value2, position
-                    if b_scalar and scalar_value(c) then
-                        vector, other1, value1, other2, value2, position = a, second, b, third, c, 1
-                    elseif a_scalar and scalar_value(c) then
-                        vector, other1, value1, other2, value2, position = b, first, a, third, c, 2
-                    elseif a_scalar and b_scalar then
-                        vector, other1, value1, other2, value2, position = c, first, a, second, b, 3
-                    end
-                    local x, y, z = vector3(vector)
-                    if x ~= nil then
-                        local key = position == 1 and first or (position == 2 and second or third)
+                    local key, x, y, z, other1, value1, other2, value2, position =
+                        vector_triplet(fields, first, second, third, a, b, a_scalar, b_scalar)
+                    if key ~= nil then
                         set_vector_triplet(id, name, key, x, y, z, other1, value1, other2, value2, position)
                         return
                     end
@@ -254,7 +262,30 @@ function ecs.remove_resource(name) return invoke_one_string("remove_resource", "
 function ecs.set_parent(child, parent) invoke("set_parent", { child = child, parent = parent }) end
 function ecs.parent(id) return invoke_one_string("parent", "id", id) end
 function ecs.children(id) return invoke_one_string("children", "id", id) end
-function ecs.emit(name, value) invoke("emit", { name = name, value = value }) end
+function ecs.emit(name, value)
+    -- Preserve the general path for arrays, metatables, extra keys, and all
+    -- other values; this shortcut never exposes tables to the host callback.
+    if type(name) == "string" and type(value) == "table" and
+        get_meta(value) == nil and not arrays[value] then
+        local first = next_key(value)
+        if type(first) == "string" and first ~= "__countersplat_array" then
+            local second = next_key(value, first)
+            if type(second) == "string" and second ~= "__countersplat_array" then
+                local third = next_key(value, second)
+                if type(third) == "string" and third ~= "__countersplat_array" and next_key(value, third) == nil then
+                    local a, b = raw_get(value, first), raw_get(value, second)
+                    local key, x, y, z, other1, value1, other2, value2, position =
+                        vector_triplet(value, first, second, third, a, b, scalar_value(a), scalar_value(b))
+                    if key ~= nil then
+                        emit_vector_triplet(name, key, x, y, z, other1, value1, other2, value2, position)
+                        return
+                    end
+                end
+            end
+        end
+    end
+    invoke("emit", { name = name, value = value })
+end
 function ecs.drain(name) return invoke_one_string("drain", "name", name) end
 function ecs.snapshot() return invoke_flat("snapshot", {}) end
 local systems, order, handlers = {}, {}, {}
@@ -413,14 +444,20 @@ export class LuaScene {
         else { fields[other] = value; fields[vector] = [x, y, z]; }
         host.call({op:'set_fields', id, name, fields}, true);
       });
-      vm.global.set('__ecs_set_vector_triplet', (id, name, vector, x, y, z, first, a, second, b, position) => {
+      const vectorTriplet = (vector, x, y, z, first, a, second, b, position) => {
         const fields = Object.create(null);
         if (position === 1) fields[vector] = [x, y, z];
         fields[first] = a;
         if (position === 2) fields[vector] = [x, y, z];
         fields[second] = b;
         if (position === 3) fields[vector] = [x, y, z];
-        host.call({op:'set_fields', id, name, fields}, true);
+        return fields;
+      };
+      vm.global.set('__ecs_set_vector_triplet', (id, name, vector, x, y, z, first, a, second, b, position) => {
+        host.call({op:'set_fields', id, name, fields:vectorTriplet(vector, x, y, z, first, a, second, b, position)}, true);
+      });
+      vm.global.set('__ecs_emit_vector_triplet', (name, vector, x, y, z, first, a, second, b, position) => {
+        host.call({op:'emit', name, value:vectorTriplet(vector, x, y, z, first, a, second, b, position)}, true);
       });
       if (profile) {
         vm.global.set('__profile_now', () => performance.now());

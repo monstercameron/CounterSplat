@@ -8,7 +8,7 @@ const {LuaFactory} = require('../third_party/wasmoon/index.js');
 const api = await readFile(new URL('../crates/scripting-lua/src/engine_api.lua', import.meta.url), 'utf8');
 const target = {ecs_operation(_layer, raw) {
   const op = JSON.parse(raw);
-  if (op.op !== 'set_field' && op.op !== 'set_fields') throw new Error('invalid operation');
+  if (op.op !== 'set_field' && op.op !== 'set_fields' && op.op !== 'emit') throw new Error('invalid operation');
   return JSON.stringify({found:false, value:null});
 }};
 const scene = await LuaScene.create(new LuaFactory(), target, 'gameplay', api, []);
@@ -39,12 +39,33 @@ scene.vm.doStringSync(`
     local args = {op='set_fields', id=id, name=name, fields=fields}
     old_call(encode(args, {}, 0, {n=0}))
   end
+  local function old_emit(name, value)
+    local args = {op='emit', name=name, value=value}
+    old_call(encode(args, {}, 0, {n=0}))
+  end
   local old_vector = {1,2,3}; arrays[old_vector] = true
   local new_vector = ecs.array(); new_vector[1],new_vector[2],new_vector[3] = 1,2,3
   local old_fields = {velocity=old_vector, grounded=true}
   local new_fields = {velocity=new_vector, grounded=true}
   local old_three = {view_offset=old_vector, view_bob_pitch=0.2, view_bob_roll=-0.1}
   local new_three = {view_offset=new_vector, view_bob_pitch=0.2, view_bob_roll=-0.1}
+  local old_event = {entity='entity', component='PlayerCamera', delta=old_vector}
+  local new_event = {entity='entity', component='PlayerCamera', delta=new_vector}
+  local large_event = {clip='idle', index=12, visible=true, opacity=1, key_threshold=.5,
+    key_softness=.1, despill=.2, vertical_offset=0, motion_x=0, motion_y=0,
+    motion_roll=0, direction=1, loop=true, transition_seconds=.1, loop_blend_seconds=.1}
+  function benchmark_old_emit()
+    for i=1,2000 do old_emit('physics.move',old_event) end
+  end
+  function benchmark_new_emit()
+    for i=1,2000 do ecs.emit('physics.move',new_event) end
+  end
+  function benchmark_old_large_emit()
+    for i=1,2000 do old_emit('first_person.frame',large_event) end
+  end
+  function benchmark_new_large_emit()
+    for i=1,2000 do ecs.emit('first_person.frame',large_event) end
+  end
   function benchmark_old_vector()
     for i=1,2000 do old_set('entity','PhysicsBody','velocity',old_vector) end
   end
@@ -70,7 +91,7 @@ scene.vm.doStringSync(`
     for i=1,2000 do ecs.set_fields('entity','PhysicsBody',new_fields) end
   end
 `);
-for (const kind of ['vector','scalar','pair','three']) {
+for (const kind of ['vector','scalar','pair','three','emit','large_emit']) {
   const fns = {old:scene.vm.global.get('benchmark_old_'+kind), current:scene.vm.global.get('benchmark_new_'+kind)};
   for (let i=0; i<3; i++) {fns.old(); fns.current();}
   const samples = {old:[], current:[]};

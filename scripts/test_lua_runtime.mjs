@@ -77,7 +77,7 @@ class WorldFixture {
         value = found ? resource[op.field] : null; break;
       }
       case 'set_resource': this.resources.set(op.name, op.value); found = false; break;
-      case 'emit': this.events.set(op.name, [...(this.events.get(op.name) || []), op.value]); found = false; break;
+      case 'emit': if (op.name === 'reject') throw new Error('rejected event'); this.events.set(op.name, [...(this.events.get(op.name) || []), op.value]); found = false; break;
       case 'drain': value = this.events.get(op.name) || []; this.events.delete(op.name); break;
       case 'drain_next': {
         found = false;
@@ -122,7 +122,7 @@ game.vm.doStringSync(`
   local ok, value = xpcall(function() error('ordinary') end, function() return 'handled' end)
   assert(not ok and value == 'handled')
   assert(not pcall(function() xpcall(function() end, nil) end))
-  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil and __ecs_get_pair == nil and __ecs_set_scalar == nil and __ecs_set_vector == nil and __ecs_set_pair == nil and __ecs_set_vector_pair == nil and __ecs_set_vector_triplet == nil)
+  assert(__ecs_call == nil and __ecs_call_flat == nil and __ecs_call_changed == nil and __ecs_call_strings == nil and __ecs_query_one == nil and __ecs_get_pair == nil and __ecs_set_scalar == nil and __ecs_set_vector == nil and __ecs_set_pair == nil and __ecs_set_vector_pair == nil and __ecs_set_vector_triplet == nil and __ecs_emit_vector_triplet == nil)
   assert(ecs.is_alive('entity') and not ecs.is_alive('missing'))
   assert(ecs.get('entity', 'Health') == 50 and ecs.has('entity', 'Health'))
   assert(ecs.get('entity', 'Nullable') == ecs.null and ecs.get('entity', 'Missing') == nil)
@@ -189,6 +189,36 @@ game.vm.doStringSync(`
   assert(not pcall(function() ecs.set_fields('entity', 'Stats', {x={1,2,3}, y=0/0, z=1}) end))
   assert(not pcall(function() ecs.set_fields('entity', 'Missing', {x={1,2,3}, y=0, z=1}) end))
   ecs.set_field('entity', 'Stats', '__proto__', 'paired-safe')
+  -- Each traversal position uses the same event fast path, with stable
+  -- snapshots and special keys. Unsupported values retain normal encoding.
+  local event = {left='entity', right=false, ['__proto__']=true}
+  keys, key = {}, next(event)
+  while key do keys[#keys+1], key = key, next(event, key) end
+  for i=1,3 do
+    event[keys[1]], event[keys[2]], event[keys[3]] = 'entity', false, true
+    event[keys[i]] = {i, i+1, i+2}
+    ecs.emit('triplet', event)
+    local result = ecs.drain('triplet')[1]
+    assert(result[keys[i]][1] == i and result[keys[i]][3] == i+2)
+    for j=1,3 do if j ~= i then assert(result[keys[j]] == event[keys[j]]) end end
+  end
+  local event_vector = ecs.array(); event_vector[1], event_vector[2], event_vector[3] = 4,5,6
+  ecs.emit('triplet', {vector=event_vector, text='safe', flag=false})
+  event_vector[1] = 99
+  local event_result = ecs.drain('triplet')[1]
+  assert(event_result.vector[1] == 4 and event_result.text == 'safe' and not event_result.flag)
+  ecs.emit('fallback', {vector=wrapped_vector, one=1, two=2})
+  ecs.emit('fallback', {vector={1,2,3, extra=4}, one=ecs.null, two=false})
+  ecs.emit('fallback', {one=1, two=2, three=3, four=4})
+  ecs.emit('fallback', triple_proxy)
+  local fallback = ecs.drain('fallback')
+  assert(fallback[1].vector[1] == 8 and fallback[2].vector.extra == 4)
+  assert(fallback[2].one == ecs.null and fallback[3].four == 4)
+  assert(fallback[4].a[1] == 9 and fallback[4].b == 2)
+  assert(select('#', ecs.emit('triplet', {v={1,2,3}, a=1, b=false})) == 0)
+  assert(not pcall(function() ecs.emit('reject', {v={1,2,3}, a=1, b=false}) end))
+  assert(not pcall(function() ecs.emit('bad', {v={1,2,3}, a=0/0, b=1}) end))
+  assert(not pcall(function() ecs.emit('bad', {__countersplat_array=true, a=1, b=2}) end))
   local fields_proxy = setmetatable({hp=999, keep=false}, {
     __pairs = function() return next, {hp=30, keep=true}, nil end
   })
