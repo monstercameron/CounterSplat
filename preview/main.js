@@ -156,10 +156,15 @@ function savePlayerControls(settings) {
   try { localStorage.setItem(playerControlsKey, JSON.stringify(settings)); }
   catch (error) { console.warn('Could not save player controls:', error); }
 }
+const gameplayEventChannels = ['input.key', 'input.mouse_delta', 'input.mouse_button', 'input.reset',
+  'ui.action', 'editor.entity_selected', 'physics.ready', 'physics.ground_result',
+  'physics.clearance_result', 'physics.trace_result', 'physics.motion_resolved', 'physics.motion_error',
+  'physics.collision', 'physics.error', 'weapon.trigger', 'weapon.aim', 'weapon.reload',
+  'weapon.equip', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.posture'];
+const tickEventChannels = ['weapon.shot', 'weapon.dry_fire', 'projectile.spawned',
+  'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death'];
 function dispatchGameplayEvents(runtime) {
-  for (const name of ['input.key', 'input.mouse_delta', 'input.mouse_button', 'input.reset', 'ui.action', 'editor.entity_selected', 'physics.ready', 'physics.ground_result', 'physics.clearance_result', 'physics.trace_result', 'physics.motion_resolved', 'physics.motion_error', 'physics.collision', 'physics.error', 'weapon.trigger', 'weapon.aim', 'weapon.reload', 'weapon.equip', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.posture']) {
-    for (const event of runtime.drain(name)) runtime.dispatch(name, event);
-  }
+  runtime.dispatchPending(gameplayEventChannels);
 }
 function closeScripts() {
   gameplayLua?.close(); menuLua?.close();
@@ -830,9 +835,7 @@ function tick(timestamp) {
               if (frameProfiler) stages.lua_systems_ms = (stages.lua_systems_ms || 0) + performance.now() - luaStart;
               const tickEventsStart = frameProfiler ? performance.now() : 0;
               // Deliver shots between fixed ticks so a burst never waits for the next frame.
-              for (const name of ['weapon.shot', 'weapon.dry_fire', 'projectile.spawned',
-                  'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death'])
-                for (const event of runtime.drain(name)) runtime.dispatch(name, event);
+              runtime.dispatchPending(tickEventChannels);
               if (frameProfiler) stages.tick_events_ms = (stages.tick_events_ms || 0) + performance.now() - tickEventsStart;
             }
             const outputStart = frameProfiler ? performance.now() : 0;

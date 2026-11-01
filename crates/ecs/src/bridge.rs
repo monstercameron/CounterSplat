@@ -113,6 +113,11 @@ pub enum WorldOperation {
     DrainEvents {
         name: String,
     },
+    /// Drain the first nonempty channel at or after start, preserving the rest.
+    DrainNextEvents {
+        names: Vec<String>,
+        start: usize,
+    },
     Snapshot,
 }
 
@@ -251,6 +256,10 @@ impl World {
                 Ok(Out::Applied)
             }
             Op::DrainEvents { name } => Ok(Out::Events(self.drain_events(&name))),
+            Op::DrainNextEvents { names, start } => Ok(Out::Value(
+                self.drain_next_events(&names, start)
+                    .map(|(index, events)| serde_json::json!({ "index": index, "events": events })),
+            )),
             Op::Snapshot => Ok(Out::Snapshot(self.snapshot()?)),
         }
     }

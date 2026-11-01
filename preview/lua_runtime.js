@@ -184,6 +184,17 @@ export class LuaScene {
   }
   emit(name, value) { this.call({op: 'emit', name, value}); }
   drain(name) { return this.call({op: 'drain', name}).value; }
+  // Drain and dispatch one channel at a time: a handler can emit an event for
+  // a later channel and it will still be delivered in this pass.
+  dispatchPending(names) {
+    let start = 0;
+    while (start < names.length) {
+      const batch = this.call({op: 'drain_next', names, start}).value;
+      if (batch === null) return;
+      start = batch.index + 1;
+      for (const event of batch.events) this.dispatch(names[batch.index], event);
+    }
+  }
   run(dt) { this.runSystems(dt); }
   dispatch(name, payload) { this.dispatchEvent(name, payload); }
   close() { if (this.vm) { this.vm.global.close(); this.vm = null; } }

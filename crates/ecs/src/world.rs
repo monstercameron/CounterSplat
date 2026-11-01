@@ -656,6 +656,25 @@ impl World {
             .remove(name)
             .map_or_else(Vec::new, |events| events.into_iter().collect())
     }
+    /// Drains the first nonempty channel at or after start in caller-supplied
+    /// order. Other channels remain queued, so callers can dispatch this batch
+    /// before checking later channels and observe events emitted by handlers.
+    pub fn drain_next_events<S: AsRef<str>>(
+        &mut self,
+        names: &[S],
+        start: usize,
+    ) -> Option<(usize, Vec<Value>)> {
+        names
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find_map(|(index, name)| {
+                self.events
+                    .remove(name.as_ref())
+                    .map(|events| (index, events.into_iter().collect()))
+            })
+    }
+
     /// Number of events awaiting consumption on a channel.
     pub fn event_count(&self, name: &str) -> usize {
         self.events.get(name).map_or(0, VecDeque::len)

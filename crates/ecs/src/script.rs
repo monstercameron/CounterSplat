@@ -91,6 +91,11 @@ enum ScriptOperation {
     Drain {
         name: String,
     },
+    DrainNext {
+        names: Vec<String>,
+        #[serde(default)]
+        start: usize,
+    },
     Snapshot,
 }
 
@@ -159,6 +164,7 @@ impl World {
             },
             S::Emit { name, value } => O::EmitEvent { name, value },
             S::Drain { name } => O::DrainEvents { name },
+            S::DrainNext { names, start } => O::DrainNextEvents { names, start },
             S::Snapshot => O::Snapshot,
         };
         let result = self.apply_operation(operation)?;

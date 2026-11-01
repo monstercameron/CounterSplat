@@ -30,6 +30,16 @@ class WorldFixture {
       case 'set_resource': this.resources.set(op.name, op.value); found = false; break;
       case 'emit': this.events.set(op.name, [...(this.events.get(op.name) || []), op.value]); found = false; break;
       case 'drain': value = this.events.get(op.name) || []; this.events.delete(op.name); break;
+      case 'drain_next': {
+        found = false;
+        for (let index = op.start || 0; index < op.names.length; index++) {
+          const events = this.events.get(op.names[index]);
+          if (events?.length) {
+            value = {index, events}; this.events.delete(op.names[index]); found = true; break;
+          }
+        }
+        break;
+      }
       default: throw new Error(`Unexpected ECS operation ${op.op}`);
     }
     return JSON.stringify({found, value: value ?? null});
@@ -74,6 +84,30 @@ game.vm.doStringSync(`
 `);
 assert.deepEqual(world.resources.get('again'), {items:[], marker:null, nested:[1, 2]});
 game.close();
+
+// Dispatching a channel may enqueue events for earlier, current, or later
+// channels. Only later channels are delivered during this pass.
+const orderedWorld = new WorldFixture({});
+const ordered = await LuaScene.create(factory, orderedWorld, 'gameplay', engineApi, [`
+  ecs.on('earlier', function() ecs.emit('seen', {name='earlier'}) end)
+  ecs.on('first', function(event)
+    if event.initial then
+      ecs.emit('earlier', {})
+      ecs.emit('first', {initial=false})
+      ecs.emit('later', {name='later'})
+    else
+      ecs.emit('seen', {name='first'})
+    end
+  end)
+  ecs.on('later', function(event) ecs.emit('seen', event) end)
+`]);
+ordered.emit('first', {initial:true});
+ordered.dispatchPending(['earlier', 'first', 'later']);
+assert.deepEqual(ordered.drain('seen'), [{name:'later'}]);
+ordered.dispatchPending(['earlier', 'first', 'later']);
+assert.deepEqual(ordered.drain('seen'), [{name:'earlier'}, {name:'first'}]);
+assert.deepEqual(ordered.drain('later'), []);
+ordered.close();
 
 // Optional profiling must measure real Lua systems and leave its host callbacks private.
 const profiledWorld = new WorldFixture({});

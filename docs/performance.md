@@ -60,3 +60,10 @@ countersplat-ecs --example script_bridge_bench` to measure JSON bridge reads,
 presence checks, resource fields, and empty event drains. The benchmark uses
 both typed components and a larger dynamic component. It does not include Lua,
 JavaScript, or rendering costs.
+
+## Event dispatch benchmark
+
+Run `node scripts/benchmark_event_dispatch.mjs` to compare repeated empty
+channel checks with ordered batched checks. The fixture measures host-side JSON
+transport only; use the browser profiler to measure the actual Rust/WASM path
+and event handlers.

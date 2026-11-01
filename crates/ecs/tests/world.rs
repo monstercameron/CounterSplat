@@ -351,6 +351,50 @@ fn hierarchy_rejects_cycles_and_defines_despawn_behavior() {
 }
 
 #[test]
+fn ordered_event_batches_preserve_later_and_reentrant_events() {
+    let mut world = World::new();
+    let names = ["earlier", "first", "later"];
+    world.emit_event("first", json!(1));
+    world.emit_event("first", json!(2));
+    assert_eq!(
+        world.drain_next_events(&names, 0),
+        Some((1, vec![json!(1), json!(2)]))
+    );
+
+    // Events emitted while handling first are considered only if their channel
+    // occurs later in this dispatch pass.
+    world.emit_event("earlier", json!("next pass"));
+    world.emit_event("first", json!("next pass"));
+    world.emit_event("later", json!("same pass"));
+    assert_eq!(
+        world.drain_next_events(&names, 2),
+        Some((2, vec![json!("same pass")]))
+    );
+    assert_eq!(world.drain_next_events(&names, 3), None);
+    assert_eq!(
+        world.drain_next_events(&names, 0),
+        Some((0, vec![json!("next pass")]))
+    );
+    assert_eq!(
+        world.drain_next_events(&names, 1),
+        Some((1, vec![json!("next pass")]))
+    );
+    assert_eq!(world.drain_next_events(&names, 0), None);
+
+    world.emit_event("later", Value::Null);
+    let request = json!({"op":"drain_next", "names":names, "start":1});
+    let result: Value =
+        serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+    assert_eq!(
+        result,
+        json!({"found":true, "value":{"index":2, "events":[null]}})
+    );
+    let result: Value =
+        serde_json::from_str(&world.apply_script_json(&request.to_string()).unwrap()).unwrap();
+    assert_eq!(result, json!({"found":false, "value":null}));
+}
+
+#[test]
 fn snapshots_are_owned_and_events_preserve_order() {
     let mut world = World::new();
     world
