@@ -629,6 +629,8 @@ impl State {
                 vignette: grade.vignette,
                 grain: grade.grain,
                 sharpness: grade.sharpness,
+                peripheral_blur: 0.0,
+                tunnel_vision: 0.0,
             })
             .unwrap_or_default();
         self.postprocess

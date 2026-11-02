@@ -90,6 +90,15 @@ local function finish(p, reason)
     end
 end
 
+-- Cancel in-flight shots on a gameplay reset; late worker replies become harmless.
+ecs.on('combat.reset',function(event)
+    local owner=type(event)=='table' and event.owner or nil
+    for id,projectile in pairs(active) do
+        if owner==nil or projectile.owner==owner then finish(projectile) end
+    end
+    trails={}; publish_visuals()
+end)
+
 -- The shared Lua hitbox API returns the closest zone for each target.
 local function entity_hit(p, a, b)
     local best=nil
@@ -191,7 +200,7 @@ local function apply_damage(p, target, hit)
     health.current=math.max(0,before-(p.damage-absorbed))
     ecs.set(target,'Health',health)
     ecs.emit('combat.damage',{target=target,source=p.source,owner=p.owner,amount=before-health.current+absorbed,
-        health_damage=before-health.current,armor_absorbed=absorbed,armor_remaining=type(armor)=='table' and armor.current or nil,
+        health_damage=before-health.current,damage=p.damage,armor_absorbed=absorbed,armor_remaining=type(armor)=='table' and armor.current or nil,
         remaining=health.current,position=hit.position,shot=p.shot,zone=hit.zone})
     if before>0 and health.current<=0 then
         ecs.emit('combat.death',{target=target,source=p.source,owner=p.owner,shot=p.shot})

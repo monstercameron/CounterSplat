@@ -401,6 +401,37 @@ impl SceneUi {
     pub fn image_correction(&self) -> Option<ImageCorrection> {
         countersplat_scene_ecs::extract_image_correction(&self.world)
     }
+    /// Lua owns the sprint effect; the renderer only reads a bounded snapshot.
+    pub fn peripheral_blur(&self) -> f32 {
+        self.world
+            .get_dynamic_resource("camera.peripheral_blur")
+            .and_then(|value| value.as_f64())
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0) as f32
+    }
+    /// Sustained-fire presentation is authored by Lua, not the renderer.
+    pub fn combat_vision(&self) -> f32 {
+        self.world
+            .get_dynamic_resource("camera.combat_vision")
+            .and_then(|value| value.as_f64())
+            .filter(|value| value.is_finite())
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0) as f32
+    }
+    /// Renderer-neutral, Lua-authored directional span for the weapon layer.
+    pub fn weapon_motion_blur(&self) -> [f32; 2] {
+        let value = self.world.get_dynamic_resource("render.weapon_motion_blur");
+        let axis = |name: &str| {
+            value
+                .and_then(|v| v.get(name))
+                .and_then(|v| v.as_f64())
+                .filter(|v| v.is_finite())
+                .unwrap_or(0.0)
+                .clamp(-0.04, 0.04) as f32
+        };
+        [axis("x"), axis("y")]
+    }
     pub fn skybox(&self) -> Option<&Skybox> {
         self.world.get::<Skybox>(self.skybox)
     }

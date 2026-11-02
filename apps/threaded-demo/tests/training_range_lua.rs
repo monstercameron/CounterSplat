@@ -135,6 +135,11 @@ fn dojo_spawns_three_targets_with_shared_world_space_hitboxes() {
         box.units_per_meter=2
         edges=engine.hitbox.visual_segments(id,box,2)
         assert(#edges==24)
+        local boxes=engine.hitbox.visual_boxes(id,box,2)
+        assert(#boxes==2 and boxes[1].zone=='head')
+        assert(math.abs(boxes[1].center[1]-p[1])<.0001 and math.abs(boxes[1].center[2]-(p[2]+3.36))<.0001)
+        assert(math.abs(boxes[1].half_extents[1]-.24)<.0001 and math.abs(boxes[1].half_extents[3]-.22)<.0001)
+        assert(math.abs(boxes[1].rotation[1])<.0001 and math.abs(boxes[1].rotation[2]-1)<.0001)
         assert(math.abs(edges[1].start[1]-(p[1]+.22))<.0001)
         assert(math.abs(edges[1].start[2]-(p[2]+3.12))<.0001)
         assert(math.abs(edges[1].start[3]-(p[3]-.24))<.0001)
@@ -374,4 +379,62 @@ fn late_level_collision_probes_already_spawned_targets() {
         f.events("physics.ground_request").is_empty(),
         "the probes are not repeated every tick"
     );
+}
+
+#[test]
+fn unchanged_targets_do_not_republish_but_transform_edits_refresh_geometry() {
+    let f = Fixture::new("58d333ae");
+    f.tick(0.25);
+    let initial = f
+        .events("hitbox.visuals")
+        .pop()
+        .expect("initial target geometry");
+    // Each initial placement changes the shared Hitbox store revision;
+    // allow the other target readers to observe the final placement once.
+    f.tick(1.0 / 60.0);
+    f.events("hitbox.visuals");
+    for _ in 0..30 {
+        f.tick(1.0 / 60.0);
+    }
+    assert!(
+        f.events("hitbox.visuals").is_empty(),
+        "unchanged targets must not rebuild or republish their geometry every tick"
+    );
+    let target = f.ids["training_target_left"];
+    f.world
+        .borrow_mut()
+        .get_mut::<Transform>(target)
+        .unwrap()
+        .position[0] += 1.0;
+    f.tick(1.0 / 60.0);
+    let updated = f
+        .events("hitbox.visuals")
+        .pop()
+        .expect("moving a target must refresh its geometry");
+    assert_ne!(
+        initial["segments"], updated["segments"],
+        "updated geometry must reflect the moved target"
+    );
+    f.tick(1.0 / 60.0);
+    assert!(
+        f.events("hitbox.visuals").is_empty(),
+        "geometry should settle again after the edit"
+    );
+    let mut hitbox = f
+        .world
+        .borrow()
+        .get_dynamic(target, "Hitbox")
+        .unwrap()
+        .clone();
+    hitbox["zones"][0]["half_extents"][0] = json!(0.3);
+    f.world
+        .borrow_mut()
+        .set_dynamic(target, "Hitbox", hitbox)
+        .unwrap();
+    f.tick(1.0 / 60.0);
+    let changed = f
+        .events("hitbox.visuals")
+        .pop()
+        .expect("editing a hitbox must refresh geometry");
+    assert_ne!(updated["segments"], changed["segments"]);
 }

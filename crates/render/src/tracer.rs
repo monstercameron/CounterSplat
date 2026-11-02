@@ -21,7 +21,7 @@ impl TracerRenderer {
         });
         let vertices = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("projectile trace vertices"),
-            size: (MAX_TRACE_SEGMENTS * 2 * 4 * 4) as u64,
+            size: (MAX_TRACE_SEGMENTS * 2 * 7 * 4) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -55,11 +55,18 @@ impl TracerRenderer {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let attributes = [wgpu::VertexAttribute {
-            format: wgpu::VertexFormat::Float32x4,
-            offset: 0,
-            shader_location: 0,
-        }];
+        let attributes = [
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: 12,
+                shader_location: 1,
+            },
+        ];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("projectile trace pipeline"),
             layout: Some(&pipeline_layout),
@@ -68,7 +75,7 @@ impl TracerRenderer {
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 16,
+                    array_stride: 28,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &attributes,
                 })],
@@ -119,15 +126,49 @@ impl TracerRenderer {
         {
             return Err("invalid world-space line snapshot");
         }
-        let mut vertices = Vec::with_capacity(segments.len() / 7 * 8);
+        let mut vertices = Vec::with_capacity(segments.len() / 7 * 14);
         for s in segments.chunks_exact(7) {
-            vertices.extend_from_slice(&[s[0], s[1], s[2], s[6], s[3], s[4], s[5], s[6]]);
+            let color = [3.2, 1.55, 0.35, s[6] * 0.9];
+            vertices.extend_from_slice(&s[0..3]);
+            vertices.extend_from_slice(&color);
+            vertices.extend_from_slice(&s[3..6]);
+            vertices.extend_from_slice(&color);
         }
-        if !vertices.is_empty() {
-            queue.write_buffer(&self.vertices, 0, bytemuck::cast_slice(&vertices));
-        }
-        self.vertex_count = (vertices.len() / 4) as u32;
+        self.upload(queue, &vertices);
         Ok(())
+    }
+    /// Replace a snapshot packed as start XYZ, end XYZ, linear RGB, alpha.
+    pub fn set_colored(
+        &mut self,
+        queue: &wgpu::Queue,
+        segments: &[f32],
+    ) -> Result<(), &'static str> {
+        if !segments.len().is_multiple_of(10)
+            || segments.len() / 10 > MAX_TRACE_SEGMENTS
+            || !segments.iter().all(|v| v.is_finite())
+            || segments.chunks_exact(10).any(|s| {
+                s[..6].iter().any(|v| v.abs() > 10_000_000.0)
+                    || s[6..9].iter().any(|v| !(0.0..=8.0).contains(v))
+                    || !(0.0..=1.0).contains(&s[9])
+            })
+        {
+            return Err("invalid colored world-space line snapshot");
+        }
+        let mut vertices = Vec::with_capacity(segments.len() / 10 * 14);
+        for s in segments.chunks_exact(10) {
+            vertices.extend_from_slice(&s[0..3]);
+            vertices.extend_from_slice(&s[6..10]);
+            vertices.extend_from_slice(&s[3..6]);
+            vertices.extend_from_slice(&s[6..10]);
+        }
+        self.upload(queue, &vertices);
+        Ok(())
+    }
+    fn upload(&mut self, queue: &wgpu::Queue, vertices: &[f32]) {
+        if !vertices.is_empty() {
+            queue.write_buffer(&self.vertices, 0, bytemuck::cast_slice(vertices));
+        }
+        self.vertex_count = (vertices.len() / 7) as u32;
     }
     pub fn draw(
         &self,

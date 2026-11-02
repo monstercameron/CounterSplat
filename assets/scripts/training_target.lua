@@ -218,8 +218,12 @@ ecs.system('training.range',function(dt)
                 end
             end
             local transform,hitbox=target.read_transform(),target.read_hitbox()
-            if transform~=target.last_transform or hitbox~=target.last_hitbox then
-                target.last_transform,target.last_hitbox=transform,hitbox
+            -- Transform is an untracked native adapter and may return a fresh
+            -- table every tick. Compare its actual position, not table identity.
+            local position=transform and transform.position
+            local x,y,z=position and position[1],position and position[2],position and position[3]
+            if x~=target.last_x or y~=target.last_y or z~=target.last_z or hitbox~=target.last_hitbox then
+                target.last_x,target.last_y,target.last_z,target.last_hitbox=x,y,z,hitbox
                 dirty=true
             end
         end

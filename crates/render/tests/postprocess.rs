@@ -33,6 +33,7 @@ fn render_to_viewport(
   return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
 }
 @fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {
+  if p.x < 5.0 && p.y < 16.0 { return vec4f(0.8, 0.8, 0.8, 1.0); }
   if abs(p.x - 32.0) < 2.0 && abs(p.y - 32.0) < 2.0 { return vec4f(4.0, 3.0, 2.0, 1.0); }
   if p.y < 20.0 && p.x > 40.0 { return vec4f(0.65, 0.65, 0.65, 1.0); }
   if p.y < 20.0 { return vec4f(0.30, 0.10, 0.05, 1.0); }
@@ -268,8 +269,8 @@ fn sharpening_increases_edge_contrast_and_preserves_flat_regions_and_bypass() {
         "dark edge should get sharper: {lower:?} {lower_sharp:?}"
     );
     assert_eq!(
-        pixel(&unsharpened, 64, 5, 5),
-        pixel(&sharpened, 64, 5, 5),
+        pixel(&unsharpened, 64, 10, 5),
+        pixel(&sharpened, 64, 10, 5),
         "flat regions stay unchanged"
     );
     let bypass = render(&device, &queue, &post, Settings::default(), 64, 64);
@@ -341,6 +342,8 @@ fn pixel_perfect_replicates_texels_and_crops_oversized_scenes_without_filtering(
         grain: 0.04,
         vignette: 0.2,
         sharpness: 0.3,
+        peripheral_blur: 0.6,
+        tunnel_vision: 0.45,
         ..Default::default()
     };
     let image = render_to_viewport(
@@ -427,5 +430,110 @@ fn split_toning_cools_shadows_and_warms_highlights() {
     assert!(
         warm[0] > highlight[0] && warm[2] < highlight[2],
         "highlight: {highlight:?} {warm:?}"
+    );
+}
+
+#[test]
+fn sprint_peripheral_blur_softens_edge_detail_without_blurring_center() {
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let post = PostProcess::new(&device, countersplat_render::COLOR_FORMAT, 64, 64);
+    let base = render(&device, &queue, &post, Settings::default(), 64, 64);
+    let blurred = render(
+        &device,
+        &queue,
+        &post,
+        Settings {
+            peripheral_blur: 1.0,
+            ..Default::default()
+        },
+        64,
+        64,
+    );
+    for (x, y) in [(31, 31), (32, 32), (30, 32), (33, 32)] {
+        assert_eq!(
+            pixel(&base, 64, x, y),
+            pixel(&blurred, 64, x, y),
+            "center must remain sharp"
+        );
+    }
+    let changed = (1..15)
+        .flat_map(|y| (2..8).map(move |x| (x, y)))
+        .filter(|&(x, y)| pixel(&base, 64, x, y) != pixel(&blurred, 64, x, y))
+        .count();
+    assert!(
+        changed > 0,
+        "blur should soften a high-contrast peripheral edge"
+    );
+}
+
+#[test]
+fn sustained_fire_vision_grows_at_the_edges_and_blends_with_sprint() {
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let post = PostProcess::new(&device, countersplat_render::COLOR_FORMAT, 64, 64);
+    let base = render(&device, &queue, &post, Settings::default(), 64, 64);
+    let light = render(
+        &device,
+        &queue,
+        &post,
+        Settings {
+            tunnel_vision: 0.2,
+            ..Default::default()
+        },
+        64,
+        64,
+    );
+    let strong = render(
+        &device,
+        &queue,
+        &post,
+        Settings {
+            tunnel_vision: 0.8,
+            ..Default::default()
+        },
+        64,
+        64,
+    );
+    let combined = render(
+        &device,
+        &queue,
+        &post,
+        Settings {
+            tunnel_vision: 0.8,
+            peripheral_blur: 0.5,
+            ..Default::default()
+        },
+        64,
+        64,
+    );
+    for (x, y) in [(30, 31), (31, 31), (32, 32), (33, 32)] {
+        assert_eq!(
+            pixel(&base, 64, x, y),
+            pixel(&strong, 64, x, y),
+            "tunnel vision must keep the aiming center clear"
+        );
+        assert_eq!(pixel(&base, 64, x, y), pixel(&combined, 64, x, y));
+    }
+    let difference = |image: &[u8]| -> u64 {
+        (0..16)
+            .flat_map(|y| (0..12).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let a = pixel(&base, 64, x, y);
+                let b = pixel(image, 64, x, y);
+                (0..3).map(|i| a[i].abs_diff(b[i]) as u64).sum::<u64>()
+            })
+            .sum()
+    };
+    let weak = difference(&light);
+    let high = difference(&strong);
+    let blended = difference(&combined);
+    assert!(
+        weak > 0 && high > weak && blended > high,
+        "edge response: weak={weak} high={high} combined={blended}"
     );
 }

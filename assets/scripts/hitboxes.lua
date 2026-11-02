@@ -100,6 +100,30 @@ function engine.hitbox.visual_segments(entity,h,max_zones)
     return segments
 end
 
+-- Compact world-space boxes describe the same geometry as visual_segments,
+-- without serializing twelve individual edges across the script bridge.
+function engine.hitbox.visual_boxes(entity,h,max_zones)
+    local boxes=ecs.array()
+    local frame=engine.hitbox.frame(entity,h)
+    if not frame or type(h.zones)~='table' then return boxes end
+    local count=finite(max_zones) and math.max(0,math.min(21,math.floor(max_zones))) or 21
+    for i=1,math.min(#h.zones,count) do
+        local zone=h.zones[i]
+        if valid_zone(zone) then
+            local center,half=zone.center,zone.half_extents
+            local x,z=center[1]*frame.units,center[3]*frame.units
+            boxes[#boxes+1]={
+                center=vec(frame.pose.position[1]+frame.c*x-frame.s*z,
+                    frame.feet+center[2]*frame.units*frame.height_scale,
+                    frame.pose.position[3]+frame.s*x+frame.c*z),
+                half_extents=vec(half[1]*frame.units,half[2]*frame.units*frame.height_scale,half[3]*frame.units),
+                rotation={frame.c,frame.s},zone=zone.name
+            }
+        end
+    end
+    return boxes
+end
+
 -- Returns the closest zone, including rays beginning inside a box. Boxes may
 -- overlap; the first declared zone wins an exact tie.
 function engine.hitbox.trace_segment(entity,h,a,b)

@@ -1,7 +1,7 @@
 // A chroma-keyed frame is composited into the linear HDR scene before grading.
 // Neural-Sight's firing-frame alpha contains a weapon-protection mask, not image
 // transparency, so coverage comes from the green key instead of source alpha.
-struct Settings { key: vec4f, view: vec4f, motion: vec4f };
+struct Settings { key: vec4f, view: vec4f, motion: vec4f, blur: vec4f };
 @group(0) @binding(0) var image: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> settings: Settings;
 @group(0) @binding(2) var previous_image: texture_2d<f32>;
@@ -30,6 +30,24 @@ fn sample_keyed(frame: texture_2d<f32>, uv: vec2f, dim: vec2i) -> vec4f {
     return mix(mix(keyed(frame,lo,dim), keyed(frame,lo+vec2i(1,0),dim), t.x),
                mix(keyed(frame,lo+vec2i(0,1),dim), keyed(frame,lo+vec2i(1,1),dim), t.x), t.y);
 }
+// Blur premultiplied, keyed colors so the green screen cannot bleed into the
+// weapon silhouette. Keep clip transitions inside the same sample path.
+fn presented(uv: vec2f, dim: vec2i) -> vec4f {
+    if any(uv < vec2f(0.)) || any(uv > vec2f(1.)) { return vec4f(0.); }
+    let current = sample_keyed(image, uv, dim);
+    if settings.motion.w >= .9999 { return current; }
+    return mix(sample_keyed(previous_image, uv, dim), current, settings.motion.w);
+}
+// Trail taps use one keyed source texel each; the center retains the full
+// bilinear reconstruction. This bounds turn-time cost while keeping the green
+// key and clip blending in premultiplied space.
+fn presented_trail(uv: vec2f, dim: vec2i) -> vec4f {
+    if any(uv < vec2f(0.)) || any(uv > vec2f(1.)) { return vec4f(0.); }
+    let pixel = vec2i(floor(uv * vec2f(dim)));
+    let current = keyed(image, pixel, dim);
+    if settings.motion.w >= .9999 { return current; }
+    return mix(keyed(previous_image, pixel, dim), current, settings.motion.w);
+}
 @fragment fn fragment(in: VertexOut) -> @location(0) vec4f {
     var uv = in.uv;
     // Preserve the footage aspect ratio and anchor its bottom to the scene.
@@ -46,11 +64,19 @@ fn sample_keyed(frame: texture_2d<f32>, uv: vec2f, dim: vec2i) -> vec4f {
     p = vec2f(c*p.x + s*p.y, -s*p.x + c*p.y);
     uv = p + vec2f(.5, 1.);
     uv.y -= settings.view.x;
-    if any(uv < vec2f(0.)) || any(uv > vec2f(1.)) { return vec4f(0.); }
     let dim = vec2i(textureDimensions(image));
-    // Key before interpolation and blend the premultiplied results. Green
-    // pixels never leak into the weapon during a clip transition.
-    let current = sample_keyed(image, uv, dim);
-    if settings.motion.w >= .9999 { return current; }
-    return mix(sample_keyed(previous_image, uv, dim), current, settings.motion.w);
+    let center = presented(uv, dim);
+    let span = settings.blur.xy;
+    let pixel_span = length(span * vec2f(dim));
+    // A subpixel span is already covered by the keyed bilinear sample. Use
+    // fewer taps for short trails and reserve the wider filter for fast turns.
+    if pixel_span < .45 { return center; }
+    if pixel_span < 2.0 {
+        return center * .5 + (presented_trail(uv - span, dim) + presented_trail(uv + span, dim)) * .25;
+    }
+    // A symmetric, weighted five-tap shutter keeps the sight centered and
+    // softens the trail instead of producing a pair of hard ghost images.
+    return center * .4
+        + (presented_trail(uv - span * .5, dim) + presented_trail(uv + span * .5, dim)) * .2
+        + (presented_trail(uv - span, dim) + presented_trail(uv + span, dim)) * .1;
 }

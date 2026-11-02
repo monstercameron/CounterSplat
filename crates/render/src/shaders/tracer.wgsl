@@ -2,14 +2,14 @@ struct Camera { view_projection: mat4x4<f32> };
 @group(0) @binding(0) var<uniform> camera: Camera;
 struct VertexOut {
     @builtin(position) position: vec4f,
-    @location(0) opacity: f32,
+    @location(0) color: vec4f,
 };
-@vertex fn vs_main(@location(0) vertex: vec4f) -> VertexOut {
+@vertex fn vs_main(@location(0) position: vec3f, @location(1) color: vec4f) -> VertexOut {
     var out: VertexOut;
-    out.position = camera.view_projection * vec4f(vertex.xyz, 1.0);
-    out.opacity = vertex.w;
+    out.position = camera.view_projection * vec4f(position, 1.0);
+    out.color = color;
     return out;
 }
 @fragment fn fs_main(in: VertexOut) -> @location(0) vec4f {
-    return vec4f(3.2, 1.55, 0.35, in.opacity * 0.9);
+    return in.color;
 }

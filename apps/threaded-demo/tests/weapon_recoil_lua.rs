@@ -266,3 +266,77 @@ fn recoil_respects_pitch_limit_and_is_stable_across_tick_rates() {
     f.tick(60, 60.0);
     assert!((f.camera().pitch.to_degrees() - 85.0).abs() < 0.001);
 }
+
+#[test]
+fn ads_shots_follow_the_actual_presented_recoil_frame_and_motion() {
+    for (aspect, blend) in [(16.0_f64 / 9.0, 1.0_f64), (4.0 / 3.0, 0.25)] {
+        let f = Fixture::new();
+        f.world
+            .borrow_mut()
+            .set_dynamic_resource("render.scene_aspect", json!(aspect));
+        f.aim();
+        // The displayed frame can lag the Lua animation request while images
+        // decode. Use the actual frame, including its transform and blend.
+        f.dispatch(
+            "first_person.presentation",
+            json!({
+                "visible":true, "clip":"fireADS", "index":4,
+                "motion_x":0.012, "motion_y":-0.018, "motion_roll":0.09,
+                "vertical_offset":0.055, "blend":blend,
+                "previous":{"clip":"raising", "index":33}
+            }),
+        );
+        f.fire_single();
+        let shot = f.shots().pop().expect("ADS shot");
+        let dir = shot["direction"].as_array().unwrap();
+        let dx = dir[0].as_f64().unwrap();
+        let dy = dir[1].as_f64().unwrap();
+        let dz = dir[2].as_f64().unwrap();
+        let camera = f.camera();
+        let tangent = ((camera.view_fov_degrees.unwrap_or(camera.fov_degrees) as f64).to_radians()
+            * 0.5)
+            .tan();
+        let projected_x = 0.5 + dx / (-dz) / (2.0 * aspect * tangent);
+        let projected_y = 0.5 - dy / (-dz) / (2.0 * tangent);
+
+        let u = (640.0 + (638.0 - 640.0) * blend) / 1280.0;
+        let v = (361.0 + (305.0 - 361.0) * blend) / 720.0;
+        let x = u - 0.5;
+        let y = v + 0.055 - 1.0;
+        let c = 0.09_f64.cos();
+        let r = 0.09_f64.sin();
+        let frame_x = c * x - r * y + 0.5 + 0.012;
+        let frame_y = r * x + c * y + 1.0 - 0.018;
+        let source = 16.0 / 9.0;
+        let (expected_x, expected_y) = if aspect > source {
+            (0.5 + (frame_x - 0.5) * source / aspect, frame_y)
+        } else {
+            (frame_x, 1.0 + (frame_y - 1.0) * aspect / source)
+        };
+        assert!(
+            (projected_x - expected_x).abs() < 1e-6,
+            "x: {projected_x} vs {expected_x}"
+        );
+        assert!(
+            (projected_y - expected_y).abs() < 1e-6,
+            "y: {projected_y} vs {expected_y}"
+        );
+    }
+}
+
+#[test]
+fn cleared_presentation_uses_the_scene_pose_instead_of_a_stale_frame() {
+    let f = Fixture::new();
+    f.aim();
+    f.dispatch(
+        "first_person.presentation",
+        json!({
+            "visible":true,"clip":"fireADS","index":4,"motion_x":0.1,"motion_y":-0.1
+        }),
+    );
+    f.dispatch("first_person.presentation", json!({"visible":false}));
+    f.fire_single();
+    let shot = f.shots().pop().unwrap();
+    // The default ADS landmark has no horizontal offset in an uncropped view.
+    assert!(shot["direction"][0].as_f64().unwrap().abs() < 0.0001);
+}

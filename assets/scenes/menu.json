@@ -303,7 +303,7 @@
             "x": 20,
             "y": 91,
             "width": 260,
-            "height": 425
+            "height": 476
           },
           "z": 110,
           "visible": true,
@@ -660,7 +660,7 @@
         "UiElement": {
           "rect": {
             "x": 29,
-            "y": 457,
+            "y": 508,
             "width": 242,
             "height": 44
           },
@@ -1402,7 +1402,7 @@
         "UiElement": {
           "rect": {
             "x": 42,
-            "y": 467,
+            "y": 518,
             "width": 24,
             "height": 24
           },
@@ -7284,6 +7284,19 @@
         }
       },
       "parent": "panel"
-    }
+    },
+    {"id": "nav_game_mode","layer": "ui","components": {"UiElement": {"rect": {"x": 29,"y": 457,"width": 242,"height": 44},"z": 112,"visible": true,"enabled": true,"draggable": false,"style": {"fill": [15,23,28,220],"border": [72,89,97,175],"text": [235,239,239,255],"font_size": 15,"rounding": 5},"widget": {"type": "button","label": "Game mode"}}},"parent": "panel"},
+    {"id": "icon_nav_game_mode","layer": "ui","components": {"UiElement": {"rect": {"x": 42,"y": 467,"width": 24,"height": 24},"z": 114,"visible": true,"enabled": false,"draggable": false,"style": {"fill": [230,234,231,240],"border": [0,0,0,0],"text": [235,239,239,255],"font_size": 14,"rounding": 0},"widget": {"type": "polyline","points": [[12,2],[19,5],[22,12],[19,19],[12,22],[5,19],[2,12],[5,5],[12,2],[12,8],[12,16],[12,22],[12,16],[8,12],[16,12],[22,12]],"thickness": 1.7}}},"parent": "panel"},
+    {"id": "page_game_mode","layer": "ui","components": {"UiElement": {"rect": {"x": 0,"y": 0,"width": 1120,"height": 700},"z": 110,"visible": false,"enabled": true,"draggable": false,"style": {"fill": [0,0,0,0],"border": [0,0,0,0],"text": [235,239,239,255],"font_size": 14,"rounding": 4},"widget": {"type": "panel"}}},"parent": "panel"},
+    {"id": "mode_card","layer": "ui","components": {"UiElement": {"rect": {"x": 300,"y": 91,"width": 800,"height": 514},"z": 110,"visible": true,"enabled": true,"draggable": false,"style": {"fill": [8,15,19,241],"border": [80,98,106,180],"text": [235,239,239,255],"font_size": 14,"rounding": 5},"widget": {"type": "rectangle"}}},"parent": "page_game_mode"},
+    {"id": "mode_heading","layer": "ui","components": {"UiElement": {"rect": {"x": 322,"y": 112,"width": 500,"height": 30},"z": 113,"visible": true,"enabled": false,"draggable": false,"style": {"fill": [0,0,0,0],"border": [0,0,0,0],"text": [235,239,239,255],"font_size": 24,"rounding": 0},"widget": {"type": "text","text": "Pursuit","align": "left"}}},"parent": "page_game_mode"},
+    {"id": "mode_description","layer": "ui","components": {"UiElement": {"rect": {"x": 322,"y": 154,"width": 690,"height": 26},"z": 113,"visible": true,"enabled": false,"draggable": false,"style": {"fill": [0,0,0,0],"border": [0,0,0,0],"text": [155,171,177,255],"font_size": 15,"rounding": 0},"widget": {"type": "text","text": "Survive the incoming targets. Shoot their hitboxes before they reach you.","align": "left"}}},"parent": "page_game_mode"},
+    {"id": "mode_status","layer": "ui","components": {"UiElement": {"rect": {"x": 322,"y": 211,"width": 690,"height": 26},"z": 113,"visible": true,"enabled": false,"draggable": false,"style": {"fill": [0,0,0,0],"border": [0,0,0,0],"text": [226,181,111,255],"font_size": 16,"rounding": 0},"widget": {"type": "text","text": "STATUS  ·  READY","align": "left"}}},"parent": "page_game_mode"},
+    {"id": "mode_stats","layer": "ui","components": {"UiElement": {"rect": {"x": 322,"y": 247,"width": 690,"height": 26},"z": 113,"visible": true,"enabled": false,"draggable": false,"style": {"fill": [0,0,0,0],"border": [0,0,0,0],"text": [220,228,230,255],"font_size": 15,"rounding": 0},"widget": {"type": "text","text": "KILLS  0      SHOTS  0      HITS  0","align": "left"}}},"parent": "page_game_mode"},
+    {"id": "mode_rules","layer": "ui","components": {"UiElement": {"rect": {"x": 322,"y": 283,"width": 690,"height": 26},"z": 113,"visible": true,"enabled": false,"draggable": false,"style": {"fill": [0,0,0,0],"border": [0,0,0,0],"text": [155,171,177,255],"font_size": 14,"rounding": 0},"widget": {"type": "text","text": "TARGET 100 HP    ·    HITBOX 100 HP    ·    SHOT 35 DMG","align": "left"}}},"parent": "page_game_mode"},
+    {"id": "mode_tip","layer": "ui","components": {"UiElement": {"rect": {"x": 322,"y": 325,"width": 690,"height": 26},"z": 113,"visible": true,"enabled": false,"draggable": false,"style": {"fill": [0,0,0,0],"border": [0,0,0,0],"text": [155,171,177,255],"font_size": 13,"rounding": 0},"widget": {"type": "text","text": "Damaged hitboxes turn red. Survive as long as you can.","align": "left"}}},"parent": "page_game_mode"},
+    {"id": "mode_start","layer": "ui","components": {"UiElement": {"rect": {"x": 322,"y": 390,"width": 238,"height": 44},"z": 112,"visible": true,"enabled": true,"draggable": false,"style": {"fill": [120,87,49,240],"border": [217,166,99,245],"text": [235,239,239,255],"font_size": 15,"rounding": 5},"widget": {"type": "button","label": "Start pursuit"}}},"parent": "page_game_mode"},
+    {"id": "mode_reset","layer": "ui","components": {"UiElement": {"rect": {"x": 574,"y": 390,"width": 210,"height": 44},"z": 112,"visible": true,"enabled": true,"draggable": false,"style": {"fill": [15,23,28,220],"border": [72,89,97,175],"text": [235,239,239,255],"font_size": 15,"rounding": 5},"widget": {"type": "button","label": "Reset status"}}},"parent": "page_game_mode"},
+    {"id": "mode_reset_hint","layer": "ui","components": {"UiElement": {"rect": {"x": 322,"y": 449,"width": 690,"height": 26},"z": 113,"visible": true,"enabled": false,"draggable": false,"style": {"fill": [0,0,0,0],"border": [0,0,0,0],"text": [155,171,177,255],"font_size": 13,"rounding": 0},"widget": {"type": "text","text": "Reset clears targets and scores, and restores your health and ammunition.","align": "left"}}},"parent": "page_game_mode"}
   ]
 }

@@ -5,6 +5,7 @@ local player = assert(ids.player, "player entity is missing")
 local read_controls = engine.component_reader(player, "PlayerControls")
 local read_rig = engine.component_reader(player, "PlayerRig")
 local read_posture = engine.component_reader(player, "PlayerPosture")
+local read_weapon_state = ids.first_person and engine.component_reader(ids.first_person, "WeaponState")
 local read_level = ids.active_level and engine.component_reader(ids.active_level, "VoxelCollider")
 local read_level_state = ids.active_level and engine.component_reader(ids.active_level, "VoxelColliderState")
 
@@ -417,7 +418,16 @@ ecs.system("player.camera", function(dt)
     local rig = assert(read_rig())
     local posture = read_posture()
     local crouched = posture and (posture.crouched or (posture.amount or 0) > 0.001)
-    local multiplier = not aiming and engine.input.is_down(held, b.sprint) and settings.sprint_multiplier or 1
+    local active_aim = aiming
+    if active_aim and read_weapon_state then
+        local state = read_weapon_state()
+        local name = type(state) == "table" and state.state or nil
+        -- Match the camera zoom: aim is unavailable while the weapon is stowed,
+        -- changing equipment, dead, or using a non-ADS reload.
+        if name == "noGun" or name == "stow" or name == "equip" or name == "death" or
+           name == "dead" or name == "reload" or name == "repack" then active_aim = false end
+    end
+    local multiplier = not active_aim and engine.input.is_down(held, b.sprint) and settings.sprint_multiplier or 1
     if crouched then
         local factor = posture.crouch_speed_multiplier
         multiplier = type(factor) == "number" and factor == factor and math.max(0.1, math.min(1, factor)) or 0.45

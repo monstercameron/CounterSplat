@@ -5,7 +5,9 @@ import { VoxelRuntime } from '/pkg/voxel_runtime.js';
 import { MouseCapture } from '/pkg/mouse_capture.js';
 import { GameplayMouseButtons, GameplayFireButton } from '/pkg/mouse_buttons.js';
 import { FirstPersonFrames } from '/pkg/first_person_frames.js';
+import { LineLayers } from '/pkg/line_layers.js';
 import { layoutKey, migrateGameplayLayout } from '/pkg/ui_layout_preferences.js';
+import { PLAYER_CONTROLS_KEY, LEGACY_PLAYER_CONTROLS_KEY, readControlsPreference } from '/pkg/player_controls_preferences.js';
 import { SceneAudio } from '/pkg/scene_audio.js';
 import { MinimapRuntime } from '/pkg/minimap_runtime.js';
 import { createDisplaySettings, createHudPreferences, ASPECT_RATIOS, inferAspect, resolutionOptions,
@@ -68,9 +70,9 @@ let pendingLightPresentation = null;
 const gameplayMouse = new GameplayMouseButtons(pressed => gameplayLua?.emit('input.mouse_button', {button:'right', pressed, gameplay:true}));
 const gameplayFire = new GameplayFireButton(pressed => gameplayLua?.emit('input.mouse_button', {button:'left', pressed, gameplay:true}));
 let firstPersonFrames = null, minimapRuntime = null;
-let inspectionPoseEnabled = false, lastInspectionPresentation = null;
+let inspectionPoseEnabled = false, lastInspectionPresentation = null, lastWeaponPresentation = null;
 let dragLook = false, lastEscapeTime = -Infinity;
-const playerControlsKey = 'countersplat.player-controls.v1';
+const playerControlsKey = PLAYER_CONTROLS_KEY;
 const opticKey = 'countersplat.weapon-optic.first-person.v1';
 let activeWeaponId = null, gameplayEntityIds = null;
 const cameraLensKey = 'countersplat.camera-lens.v1';
@@ -109,18 +111,23 @@ function saveLayout(target, scene) {
   catch (error) { console.warn('Could not save UI layout:', error); }
 }
 function layoutScene() { return mode === 'menu' ? 'menu' : mode === 'gameplay' ? 'gameplay' : 'selector'; }
-function resetPlayerInput() { gameplayMouse.reset(); gameplayFire.reset(); pendingLightPresentation = null; if (gameplayLua) gameplayLua.emit('input.reset', {}); }
+function resetPlayerInput() { gameplayMouse.reset(); gameplayFire.reset(); pendingLightPresentation = null; lastWeaponPresentation = null; if (gameplayLua) gameplayLua.emit('input.reset', {}); }
 function releaseMouseLook() {
   dragLook = false;
   mouseCapture.release();
 }
 function restorePlayerControls(game) {
   try {
-    const raw = localStorage.getItem(playerControlsKey);
-    if (!raw) return;
-    if (raw.length > 16384) throw new Error('Saved controls are too large.');
+    const current = localStorage.getItem(playerControlsKey);
+    const legacy = current === null ? localStorage.getItem(LEGACY_PLAYER_CONTROLS_KEY) : null;
+    if (current === null && legacy === null) return;
+    const defaults = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'player.default_controls'}))).value;
+    const saved = readControlsPreference(current, legacy, defaults?.sprint_multiplier);
+    if (!saved) return;
     const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
-    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.player,name:'PlayerControls',value:JSON.parse(raw)}));
+    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.player,name:'PlayerControls',value:saved.settings}));
+    // Keep v1 intact and write v2 only after ECS accepts the restored component.
+    if (saved.migrated) localStorage.setItem(playerControlsKey, JSON.stringify(saved.settings));
   } catch (error) { console.warn('Could not restore player controls:', error); }
 }
 // Browser persistence is host plumbing; the lens itself remains a normal ECS component.
@@ -213,6 +220,7 @@ const tickEventChannels = new EventChannels(['weapon.shot', 'weapon.dry_fire', '
   'combat.near_miss', 'combat.suppression', 'engine.event']);
 const outputChannels = new EventChannels(['player.controls_changed', 'camera.lens_changed', 'camera.zoom_lens_changed',
   'camera.controller_changed', 'image.correction_changed', 'first_person.frame', 'audio.layer', 'audio.play', 'lighting.flash_started', 'weapon.optic_changed', 'hud.pose_tracking', 'hud.map_request']);
+const hitboxLineLayers = new LineLayers();
 const trailingOutputChannels = new EventChannels(['projectile.visuals', 'player.rig_changed', 'impact.visuals', 'hitbox.visuals']);
 const outputConsumers = [
   savePlayerControls, saveCameraLens, saveCameraZoomLens, saveCameraController, saveImageCorrection,
@@ -233,11 +241,15 @@ function ensureMinimapRuntime() {
   }
   return minimapRuntime;
 }
-function publishInspectionPresentation(runtime) {
-  if (!inspectionPoseEnabled) return;
+function publishFirstPersonPresentation(runtime) {
   const pose=firstPersonFrames?.presentation() ?? {visible:false};
   const signature=JSON.stringify(pose);
-  if (signature !== lastInspectionPresentation) {
+  // Gameplay aim is independent of whether the optional ammo HUD is visible.
+  if (signature !== lastWeaponPresentation) {
+    lastWeaponPresentation=signature;
+    runtime.dispatch('first_person.presentation',pose);
+  }
+  if (inspectionPoseEnabled && signature !== lastInspectionPresentation) {
     lastInspectionPresentation=signature;
     runtime.dispatch('hud.weapon_presentation',pose);
   }
@@ -252,18 +264,9 @@ function consumeGameplayOutput(index, events) {
 }
 function consumeTrailingOutput(index, events) {
   if (index === 3) {
-    const snapshot = events[events.length - 1];
-    if (!snapshot) return;
-    const packed = [];
-    for (const line of (Array.isArray(snapshot.segments) ? snapshot.segments : []).slice(0, 1024)) {
-      if (!Array.isArray(line.start) || line.start.length !== 3 ||
-          !Array.isArray(line.finish) || line.finish.length !== 3 ||
-          ![...line.start, ...line.finish, line.alpha].every(Number.isFinite) ||
-          [...line.start, ...line.finish].some(value => Math.abs(value) > 10_000_000) ||
-          line.alpha < 0 || line.alpha > 1) continue;
-      packed.push(...line.start, ...line.finish, line.alpha);
-    }
-    active.set_hitbox_debug_lines(new Float32Array(packed));
+    let changed = false;
+    for (const snapshot of events) changed = hitboxLineLayers.update(snapshot) || changed;
+    if (changed) active.set_hitbox_debug_lines_colored(hitboxLineLayers.packed());
     return;
   }
   if (index === 2) {
@@ -301,10 +304,11 @@ function dispatchGameplayEvents(runtime) {
   runtime.dispatchPending(gameplayEventChannels);
 }
 function closeScripts() {
+  hitboxLineLayers.clear();
   inputLatency?.clearPending();
   gameplayLua?.close(); menuLua?.close();
   gameplayLua = null; menuLua = null; lastScriptTime = null; pendingLightPresentation = null; activeWeaponId = null;
-  inspectionPoseEnabled = false; lastInspectionPresentation = null; gameplayEntityIds = null;
+  inspectionPoseEnabled = false; lastInspectionPresentation = null; lastWeaponPresentation = null; gameplayEntityIds = null;
 }
 function sceneAsset(scene, base, id) {
   const asset = scene.resources?.assets?.[id];
@@ -331,6 +335,11 @@ function menuSettings(error = '') {
     try { return JSON.parse(active.ecs_operation('gameplay',JSON.stringify({op:'get',id,name}))).value ?? null; }
     catch { return null; }
   };
+  const readResource=name=>{
+    if (!active) return null;
+    try { return JSON.parse(active.ecs_operation('gameplay',JSON.stringify({op:'get_resource',name}))).value ?? null; }
+    catch { return null; }
+  };
   const controls=read('player','PlayerControls'), level=read('active_level','LevelSettings');
   const assets=read('active_level','LevelAssets'), sky=read('skybox','Skybox'), layer=read('audio_root','AudioLayer');
   let stats={};
@@ -343,10 +352,17 @@ function menuSettings(error = '') {
     ratio_width:ratio.width,ratio_height:ratio.height}, show_performance:hudPreferences.showPerformance,
     game,controls,graphics:{lod:level?.lod,draw_distance:level?.draw_distance,lod_count:assets?.lod_count,sky_enabled:sky?.enabled},
     audio:{gain:layer?.mix?.gain,muted:layer?.mix?.muted},
+    mode_state:readResource('game.mode_state'), mode_config:read('pursuit_mode','PursuitConfig'),
+    weapon_ballistics:read('first_person','Ballistics'),
     aspects:ASPECT_RATIOS, presets:resolutionOptions(aspect,current,displayViewport,active?.max_texture_dimension() ?? MAX_RENDER_DIMENSION,ratio),
     error:error || warning};
 }
 function processMenuSettings(runtime) {
+  for (const request of runtime.drain('game.mode_request')) {
+    if (request?.mode==='pursuit' && (request.action==='start' || request.action==='reset') && gameplayLua)
+      gameplayLua.dispatch('game.mode_request',request);
+    runtime.dispatch('menu.settings',menuSettings());
+  }
   for (const request of runtime.drain('settings.aspect_request')) {
     const result=displayPanel.setAspect(request.aspect,displayViewport);
     runtime.dispatch('menu.settings', menuSettings(result.error || ''));
@@ -385,7 +401,7 @@ function processSceneRequests(runtime) {
     if (mode === 'gameplay' && request.action === 'push' && sceneAsset(gameplayScene, gameplayUrl, request.scene) === menuUrl.href) {
       gameplayMouse.reset(); gameplayFire.reset(); pendingLightPresentation = null;
       // Keep the ammo callout's pose subscription across pause/resume.
-      lastInspectionPresentation = null;
+      lastInspectionPresentation = null; lastWeaponPresentation = null;
       runtime.dispatch('input.reset', {});
       voxelRuntime?.suspend(); inputLatency?.clearPending(); sceneAudio.stopVoices();
       releaseMouseLook();
@@ -1075,11 +1091,10 @@ function tick(timestamp) {
       const timedRenderer = stackFrame?.before ? active : null;
       timedRenderer?.arm_frame_timing();
       const renderStart = frameProfiler ? performance.now() : 0;
-      // Decoding may finish between animation frames; update the Lua callout
-      // before submitting the texture that was just installed.
-      if (mode === 'gameplay' && gameplayLua) publishInspectionPresentation(gameplayLua);
       submitted = active.frame(timestamp);
       if (submitted && mode === 'gameplay') {
+        // Capture before presented() advances a queued muzzle-flash frame.
+        if (gameplayLua) publishFirstPersonPresentation(gameplayLua);
         reportWeaponFrame(firstPersonFrames?.presented());
         if (pendingLightPresentation !== null && gameplayLua) {
           // Acknowledge only a submitted frame; Lua owns the pulse and its fade.
@@ -1125,7 +1140,6 @@ function tick(timestamp) {
             const outputStart = frameProfiler ? performance.now() : 0;
             runtime.consumePending(outputChannels, consumeGameplayOutput);
             firstPersonFrames?.update(timestamp);
-            publishInspectionPresentation(runtime);
             runtime.consumePending(trailingOutputChannels, consumeTrailingOutput);
             if (frameProfiler) stages.output_ms = performance.now() - outputStart;
             const voxelStart = frameProfiler ? performance.now() : 0;
@@ -1176,6 +1190,9 @@ function tick(timestamp) {
           metrics.dataset.lens = JSON.stringify(state.camera_lens ?? null);
           // Recent ECS events make projectile timing and collision observable in development.
           const combatValue = name => JSON.parse(active.ecs_operation('gameplay', JSON.stringify({op:'get_resource', name}))).value ?? null;
+          metrics.dataset.gameMode = JSON.stringify(combatValue('game.mode_state'));
+          metrics.dataset.sprint = JSON.stringify({blur:combatValue('camera.peripheral_blur') ?? 0, combat_blur:combatValue('camera.combat_vision') ?? 0});
+          metrics.dataset.weaponBlur = JSON.stringify(combatValue('render.weapon_motion_blur') ?? {x:0,y:0});
           metrics.dataset.combat = JSON.stringify({shot:combatValue('combat.last_shot'), impact:combatValue('combat.last_impact'),
             expiration:combatValue('combat.last_expiration')});
           const mouse = document.pointerLockElement === canvas ? 'Mouse locked · ~ releases' :

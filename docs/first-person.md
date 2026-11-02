@@ -34,6 +34,8 @@ boolean), `weapon.reload`, `weapon.equip`, `weapon.mode`, `weapon.hit`
 flag. The shot captures the visible sight's camera ray before applying its own
 recoil; with the view hidden it uses the camera center. The host publishes
 the current render aspect as `render.scene_aspect`.
+Fast mouse-driven camera turns produce a directional blur on the weapon layer. The Lua system measures the camera's actual clamped rotation and uses the active standard or zoom lens shutter; the effect fades as the camera settles and is reduced during ADS. The `WeaponMotionBlur` component on **First person** exposes enablement, strength, maximum span, response, and ADS scale in Entity settings. Disabling lens motion blur also disables this effect. It is a keyed, premultiplied compositing effect: it does not move the sight or change gameplay aim, and the world and UI are not sampled by the weapon blur.
+
 Projectile travel, collision, and damage are handled by the separate Lua
 system described in [ballistics.md](ballistics.md).
 

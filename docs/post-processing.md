@@ -24,7 +24,8 @@ with the image-correction exposure.
    The correction shader then combines bloom, exposure, white balance, tonal and saturation adjustments,
    an optional ACES-inspired filmic curve, vignette, and optional screen-stable grain. The result is
    written to the sRGB display target. The curve is a fit, not a full ACES color-management transform.
-4. UI and menus are composited afterward, so the grade never changes their colors.
+4. During actual sprint movement, an optional Lua-driven radial peripheral blur is evaluated in the same correction shader. Sustained fire can add a gradual tunnel effect, slightly expanding and darkening the blurred periphery while preserving the aiming center. It keeps the center clear and adds two scene samples only on affected edge pixels. It operates on the composited scene, including any first-person weapon at the edges, and is independent of the image-correction enable switch.
+5. UI and menus are composited afterward, so these effects never change their colors. Sprint blur is suppressed while the pause menu is open.
 
 The intermediate scene target and two half-resolution bloom targets use approximately 12 bytes per
 full-resolution pixel. They are recreated on resize. The source splats are photographic scans rather

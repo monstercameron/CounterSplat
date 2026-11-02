@@ -419,3 +419,57 @@ fn return_to_menu_opens_the_available_top_level_scene() {
         vec![json!({"action":"replace", "scene":"level_selector"})]
     );
 }
+
+#[test]
+fn pause_menu_exposes_pursuit_status_and_start_reset_actions() {
+    let (world, lua, ids) = scene("menu.json", "menu-navigation");
+    lua.dispatch(
+        "menu.settings",
+        &json!({
+            "mode_state":{"status":"running","kills":7,"shots":14,"hits":9},
+            "mode_config":{"target_health":120,"zone_health":80},
+            "weapon_ballistics":{"damage":30}
+        }),
+    )
+    .unwrap();
+    open_page(&world, &lua, &ids, "nav_game_mode");
+    {
+        let w = world.borrow();
+        assert!(
+            w.get::<countersplat_ui::UiElement>(ids["page_game_mode"])
+                .unwrap()
+                .visible
+        );
+        let stats = &w
+            .get::<countersplat_ui::UiElement>(ids["mode_stats"])
+            .unwrap()
+            .widget;
+        assert!(
+            matches!(stats,countersplat_ui::Widget::Text {text,..} if text.contains("7") && text.contains("14") && text.contains("9"))
+        );
+        let rules = &w
+            .get::<countersplat_ui::UiElement>(ids["mode_rules"])
+            .unwrap()
+            .widget;
+        assert!(
+            matches!(rules,countersplat_ui::Widget::Text {text,..} if text.contains("120") && text.contains("80") && text.contains("30"))
+        );
+    }
+    click(&world, ids["mode_reset"]);
+    lua.run_systems(0.0).unwrap();
+    assert_eq!(
+        world.borrow_mut().drain_events("game.mode_request"),
+        vec![json!({"mode":"pursuit","action":"reset"})]
+    );
+    assert!(world.borrow_mut().drain_events("engine.scene").is_empty());
+    click(&world, ids["mode_start"]);
+    lua.run_systems(0.0).unwrap();
+    assert_eq!(
+        world.borrow_mut().drain_events("game.mode_request"),
+        vec![json!({"mode":"pursuit","action":"start"})]
+    );
+    assert_eq!(
+        world.borrow_mut().drain_events("engine.scene"),
+        vec![json!({"action":"pop"})]
+    );
+}

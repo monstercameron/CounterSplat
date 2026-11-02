@@ -45,7 +45,7 @@ single-consumer ECS queues.
 
 ## Running and crouching
 
-Either Shift key runs while held. Either Ctrl key crouches while held; the
+Either Shift key runs while held. The gameplay scene defaults to 4 m/s walking and a 1.6× sprint (6.4 m/s at the default rig scale); both remain configurable in **Player controls**. Either Ctrl key crouches while held; the
 bindings can be changed in **Player controls**. Crouch takes priority over run
 and uses the scene's crouch-speed multiplier. The player entity's
 `PlayerPosture` component exposes crouch enablement, height ratio, movement
@@ -92,7 +92,11 @@ NeuralSight profile adapts `app/src/view-bob.js`: longer running strides, an asy
 small visual pitch and roll, and reduced gait while aiming. Positional amplitudes remain configurable in metres
 and scale with the player rig. Bob starts and settles smoothly, pauses in the air when voxel collision is active,
 and stops when movement is blocked. `PlayerCamera.position`, gameplay aim, collision, and the spawn pose stay
-unchanged by these visual offsets. Older scenes without the controller retain the original bob behavior.
+unchanged by these visual offsets. Collision-resolved speed is smoothed so asynchronous collision batches do not make the bob jump or flicker. Older scenes without the controller retain the original bob behavior.
+
+The optional player `SprintVisuals` component provides inspector exports for sprint bob multipliers, peripheral blur enablement, strength, and response. Lua drives the blur from actual resolved movement, fading it out on stopping, blocking, crouching, aiming, or leaving the ground. It remains available when view bob is disabled. Existing v1 browser controls with the former 3× sprint default migrate once to the scene default; custom sprint values and other settings are preserved.
+
+The player also owns a `CombatVision` component. Its Lua system listens for that player's actual `weapon.shot` events: frequent shots gradually build a restrained tunnel effect, while isolated shots stay below the default threshold. It decays smoothly after firing and does not change the camera aim or projectile path. In **Entity settings**, select **Player** to adjust the effect's enablement, maximum strength, buildup per shot, threshold, recovery time, and response. It works independently of sprint blur, including while aiming; pausing or losing input focus clears it.
 
 The player has a `PhysicsBody` component. Physics, collision and gravity are on by default; the player stands
 on the level voxels and can jump while grounded. With gravity off, Space follows a free-fly jump arc.
@@ -150,3 +154,24 @@ kick. Camera rise accumulates during a burst and remains after firing stops;
 pulling the mouse down counters it. The same walking, crouching, and sustained
 fire modifiers used by aim stability affect camera recoil. The kick respects
 the camera's pitch limit and does not reset mouse corrections.
+
+For filmed weapon clips, optional `sight_anchors` in the scene's
+`first_person_clips` describe each frame's sight point in source-image pixels;
+`sight_frame_size` supplies that source resolution. The browser reports the frame actually submitted to the canvas, and Lua projects
+its visible sight to produce the next shot direction. Hosts without frame
+presentation feedback use the latest Lua pose. Clip blending interpolates the
+two sight anchors; camera recoil and projectile travel remain independent.
+
+### Running and firing
+
+Holding Shift while moving keeps the player at sprint speed during hip fire.
+The Lua weapon controller briefly transitions from the run carry into the
+hip-fire pose, fires single, burst, or automatic shots, then returns to the run
+carry when firing ends. The first-person entity's `WeaponConfig` exposes
+`sprint_fire_exit_seconds` and `sprint_fire_raise_seconds` for tuning this
+transition. A new shot reverses a lowering weapon without waiting for the full
+lowering animation. ADS still takes priority over sprint; crouch prevents sprint.
+Stowing cancels an in-progress reload without swapping the magazine, and input
+reset clears queued reloads and trigger requests. Holding aim with the weapon
+stowed does not block sprint; if aim is still held when the weapon is equipped,
+the weapon and camera return to ADS together.

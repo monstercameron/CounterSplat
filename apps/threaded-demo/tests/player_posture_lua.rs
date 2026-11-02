@@ -86,6 +86,13 @@ impl Fixture {
             .unwrap()
             .clone()
     }
+    fn sprint_multiplier(&self) -> f32 {
+        self.world
+            .borrow()
+            .get::<PlayerControls>(self.player)
+            .unwrap()
+            .sprint_multiplier
+    }
     fn body(&self) -> PhysicsBody {
         self.world
             .borrow()
@@ -229,7 +236,10 @@ fn shift_runs_and_crouch_overrides_sprint_with_rebindable_ctrl() {
     f.key("ShiftRight", true);
     f.tick(6);
     let run = -f.camera().position[2];
-    assert!((run / walk - 3.0).abs() < 0.01, "either Shift should run");
+    assert!(
+        (run / walk - f.sprint_multiplier()).abs() < 0.01,
+        "either Shift should run"
+    );
     f.key("ControlRight", true);
     f.tick(15);
     f.world
@@ -404,7 +414,7 @@ fn aiming_blocks_sprint_speed_and_releasing_aim_restores_it() {
     f.key("ShiftRight", true);
     f.tick(6);
     let sprint = -f.camera().position[2];
-    assert!((sprint / walk - 3.0).abs() < 0.01);
+    assert!((sprint / walk - f.sprint_multiplier()).abs() < 0.01);
 
     f.lua
         .dispatch(
@@ -427,7 +437,7 @@ fn aiming_blocks_sprint_speed_and_releasing_aim_restores_it() {
     reset_position();
     f.tick(6);
     assert!(
-        (-f.camera().position[2] / walk - 3.0).abs() < 0.01,
+        (-f.camera().position[2] / walk - f.sprint_multiplier()).abs() < 0.01,
         "releasing ADS restores held sprint"
     );
 
@@ -446,7 +456,7 @@ fn aiming_blocks_sprint_speed_and_releasing_aim_restores_it() {
     reset_position();
     f.tick(6);
     assert!(
-        (-f.camera().position[2] / walk - 3.0).abs() < 0.01,
+        (-f.camera().position[2] / walk - f.sprint_multiplier()).abs() < 0.01,
         "reset clears the aim lock"
     );
 }

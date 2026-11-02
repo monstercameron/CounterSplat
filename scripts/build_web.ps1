@@ -31,7 +31,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/worker_latency.js') -Des
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/frame_stack_profile.js') -Destination (Join-Path $output 'frame_stack_profile.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/player_rig.js') -Destination (Join-Path $output 'player_rig.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/chunk_decoder_pool.js') -Destination (Join-Path $output 'chunk_decoder_pool.js') -Force
-foreach ($module in @('ui_layout_preferences.js', 'scene_audio.js', 'chunk_preload.js', 'metadata_client.js', 'metadata_loader.js', 'metadata-worker.js', 'asset_loader.js')) {
+foreach ($module in @('ui_layout_preferences.js', 'player_controls_preferences.js', 'line_layers.js', 'scene_audio.js', 'chunk_preload.js', 'metadata_client.js', 'metadata_loader.js', 'metadata-worker.js', 'asset_loader.js')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "preview/$module") -Destination (Join-Path $output $module) -Force
 }
 $luaOutput = Join-Path $output 'wasmoon'

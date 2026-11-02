@@ -195,7 +195,7 @@ fn collision_resolved_travel_drives_bob_and_blocked_or_airborne_motion_settles()
         .get_mut::<PhysicsBody>(player)
         .unwrap()
         .grounded = false;
-    for _ in 0..20 {
+    for _ in 0..90 {
         f.lua
             .dispatch(
                 "physics.motion_resolved",
@@ -334,4 +334,201 @@ fn bob_tracks_external_posture_changes_and_removal() {
             "removing posture restores standing bob"
         );
     }
+}
+
+fn sprint_fixture() -> Fixture {
+    let f = Fixture::new(&["camera_bob.lua"]);
+    let player = f.ids["player"];
+    f.world
+        .borrow_mut()
+        .set_dynamic_resource("voxel.capture_movement", json!(true));
+    f.world
+        .borrow_mut()
+        .get_mut::<PhysicsBody>(player)
+        .unwrap()
+        .grounded = true;
+    f.lua
+        .dispatch(
+            "input.key",
+            &json!({"code":"ShiftLeft","pressed":true,"is_repeat":false,"gameplay":true}),
+        )
+        .unwrap();
+    f
+}
+fn movement_tick(f: &Fixture, dt: f32, distance: f32) {
+    f.lua
+        .dispatch(
+            "physics.motion_resolved",
+            &json!({"entity":f.ids["player"].to_string(),"moved":[0.0,0.0,-distance]}),
+        )
+        .unwrap();
+    f.lua.run_systems(dt.into()).unwrap();
+}
+fn blur(f: &Fixture) -> f64 {
+    f.world
+        .borrow()
+        .get_dynamic_resource("camera.peripheral_blur")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0)
+}
+fn run_for(f: &Fixture, ticks: usize, distance: f32) {
+    for _ in 0..ticks {
+        movement_tick(f, 1.0 / 60.0, distance);
+    }
+}
+
+#[test]
+fn sprint_blur_follows_resolved_movement_and_turns_off_for_aim_crouch_air_and_reset() {
+    let f = sprint_fixture();
+    let player = f.ids["player"];
+    let run_distance = 6.4 / 60.0;
+    run_for(&f, 120, run_distance);
+    assert!(
+        blur(&f) > 0.40,
+        "actual sprint should produce blur: {}",
+        blur(&f)
+    );
+    run_for(&f, 90, 0.0);
+    assert_eq!(blur(&f), 0.0, "blocked movement must settle");
+    run_for(&f, 120, run_distance);
+    f.lua
+        .dispatch("weapon.aim", &json!({"pressed":true}))
+        .unwrap();
+    run_for(&f, 90, 4.0 / 60.0);
+    assert_eq!(blur(&f), 0.0, "scripted ADS blocks sprint blur");
+    f.lua
+        .dispatch("weapon.aim", &json!({"pressed":false}))
+        .unwrap();
+    run_for(&f, 120, run_distance);
+    assert!(blur(&f) > 0.40);
+    f.world
+        .borrow_mut()
+        .write_component_field(player, "PlayerPosture", "crouched", json!(true))
+        .unwrap();
+    run_for(&f, 90, run_distance);
+    assert_eq!(blur(&f), 0.0, "crouching blocks sprint blur");
+    f.world
+        .borrow_mut()
+        .write_component_field(player, "PlayerPosture", "crouched", json!(false))
+        .unwrap();
+    run_for(&f, 120, run_distance);
+    f.world
+        .borrow_mut()
+        .get_mut::<PhysicsBody>(player)
+        .unwrap()
+        .grounded = false;
+    run_for(&f, 90, run_distance);
+    assert_eq!(
+        blur(&f),
+        0.0,
+        "airborne travel does not keep sprint blur alive"
+    );
+    f.world
+        .borrow_mut()
+        .get_mut::<PhysicsBody>(player)
+        .unwrap()
+        .grounded = true;
+    f.world
+        .borrow_mut()
+        .get_mut::<PlayerControls>(player)
+        .unwrap()
+        .bob_enabled = false;
+    run_for(&f, 120, run_distance);
+    assert!(
+        blur(&f) > 0.40,
+        "blur remains separately configurable from bob"
+    );
+    assert_eq!(f.camera().view_offset, [0.0; 3]);
+    f.world
+        .borrow_mut()
+        .write_component_field(player, "SprintVisuals", "peripheral_enabled", json!(false))
+        .unwrap();
+    run_for(&f, 90, run_distance);
+    assert_eq!(
+        blur(&f),
+        0.0,
+        "disabling the effect fades it out during a sprint"
+    );
+    f.world
+        .borrow_mut()
+        .write_component_field(player, "SprintVisuals", "peripheral_enabled", json!(true))
+        .unwrap();
+    run_for(&f, 120, run_distance);
+    assert!(blur(&f) > 0.40);
+    f.lua.dispatch("input.reset", &json!({})).unwrap();
+    assert_eq!(blur(&f), 0.0);
+}
+
+#[test]
+fn batched_collision_responses_keep_sprint_effect_stable() {
+    let continuous = sprint_fixture();
+    let batched = sprint_fixture();
+    let distance = 6.4 / 60.0;
+    let mut values = Vec::new();
+    for tick in 0..240 {
+        movement_tick(&continuous, 1.0 / 60.0, distance);
+        movement_tick(
+            &batched,
+            1.0 / 60.0,
+            if tick % 6 == 5 { distance * 6.0 } else { 0.0 },
+        );
+        if tick >= 180 {
+            values.push(blur(&batched));
+        }
+    }
+    let minimum = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let maximum = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    assert!(
+        minimum > 0.25 && maximum - minimum < 0.12,
+        "batched range: {minimum}..{maximum}"
+    );
+    assert!(
+        (mean - blur(&continuous)).abs() < 0.12,
+        "batched={mean}, continuous={}",
+        blur(&continuous)
+    );
+}
+
+#[test]
+fn partial_sprint_configuration_is_normalized_and_toggleable() {
+    let f = Fixture::new(&[]);
+    f.lua.execute("local p=ecs.get_resource('scene.entities').player; ecs.set(p,'SprintVisuals',{peripheral_enabled=false})").unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    f.lua
+        .execute(&std::fs::read_to_string(root.join("assets/scripts/camera_bob.lua")).unwrap())
+        .unwrap();
+    f.lua.execute("local p=ecs.get_resource('scene.entities').player; local v=ecs.get(p,'SprintVisuals'); assert(not v.peripheral_enabled and v.peripheral_strength == 0.45); engine.set_export(p,'sprint_blur_enabled',true)").unwrap();
+}
+
+#[test]
+fn brief_voxel_ground_gaps_do_not_cut_running_effects_but_jumps_do() {
+    let f = sprint_fixture();
+    let player = f.ids["player"];
+    let mut samples = Vec::new();
+    for tick in 0..240 {
+        // Brief gaps simulate the ground flag changing between voxel replies.
+        f.world
+            .borrow_mut()
+            .get_mut::<PhysicsBody>(player)
+            .unwrap()
+            .grounded = tick % 4 == 0;
+        movement_tick(&f, 1.0 / 60.0, 6.4 / 60.0);
+        if tick > 180 {
+            samples.push(blur(&f));
+        }
+    }
+    let min = samples.into_iter().fold(f64::INFINITY, f64::min);
+    assert!(
+        min > 0.35,
+        "temporary ground gaps must not flicker the sprint effect: {min}"
+    );
+    {
+        let mut world = f.world.borrow_mut();
+        let body = world.get_mut::<PhysicsBody>(player).unwrap();
+        body.grounded = false;
+        body.velocity[1] = 4.0;
+    }
+    run_for(&f, 90, 6.4 / 60.0);
+    assert_eq!(blur(&f), 0.0, "jumping should suppress sprint blur");
 }

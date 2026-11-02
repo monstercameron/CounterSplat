@@ -37,9 +37,9 @@ local function highlight_aspect(id, selected)
     if changed then ecs.set(id,"UiElement",element) end
 end
 local groups={overview=ids.page_overview,settings=ids.page_settings,display=ids.page_display,
-    controls=ids.page_controls,graphics=ids.page_graphics,audio=ids.page_audio}
+    controls=ids.page_controls,graphics=ids.page_graphics,audio=ids.page_audio,mode=ids.page_game_mode}
 local navigation={settings=ids.nav_settings,display=ids.nav_display,controls=ids.nav_controls,
-    graphics=ids.nav_graphics,audio=ids.nav_audio}
+    graphics=ids.nav_graphics,audio=ids.nav_audio,mode=ids.nav_game_mode}
 local function visibility(id, value)
     local element=id and ecs.get(id,"UiElement")
     if element and element.visible~=value then element.visible=value; ecs.set(id,"UiElement",element) end
@@ -153,6 +153,16 @@ local function sync(message)
     widget(ids.graphics_hint,"text",has_lods and "0 is the finest available level of detail." or "This level has one level of detail.")
     if type(audio.gain)=="number" then set_slider(ids.audio_gain,audio.gain) end
     if type(audio.muted)=="boolean" then set_checked(ids.audio_mute,audio.muted) end
+    local mode=type(snapshot.mode_state)=="table" and snapshot.mode_state or {}
+    local cfg=type(snapshot.mode_config)=="table" and snapshot.mode_config or {}
+    local gun=type(snapshot.weapon_ballistics)=="table" and snapshot.weapon_ballistics or {}
+    local status=type(mode.status)=="string" and mode.status or "ready"
+    local status_labels={ready="READY",running="IN PROGRESS",defeated="DEFEATED"}
+    widget(ids.mode_status,"text","STATUS  ·  "..(status_labels[status] or "READY"))
+    widget(ids.mode_stats,"text",string.format("KILLS  %s      SHOTS  %s      HITS  %s",grouped(mode.kills or 0),grouped(mode.shots or 0),grouped(mode.hits or 0)))
+    widget(ids.mode_rules,"text",string.format("TARGET %s HP    ·    HITBOX %s HP    ·    SHOT %s DMG",
+        grouped(cfg.target_health or 100),grouped(cfg.zone_health or 100),grouped(gun.damage or 35)))
+    widget(ids.mode_start,"label",status=="running" and "Restart pursuit" or status=="defeated" and "Play again" or "Start pursuit")
 end
 local function apply_state(value)
     if type(value) ~= "table" then return end
@@ -259,6 +269,13 @@ ecs.system("menu.navigation", function(_dt)
             elseif id == ids.nav_controls then set_page("controls")
             elseif id == ids.nav_graphics then set_page("graphics")
             elseif id == ids.nav_audio then set_page("audio")
+            elseif id == ids.nav_game_mode then set_page("mode")
+            elseif id == ids.mode_start then
+                ecs.emit("game.mode_request",{mode="pursuit",action="start"})
+                engine.scene.pop()
+                return
+            elseif id == ids.mode_reset then
+                ecs.emit("game.mode_request",{mode="pursuit",action="reset"})
             elseif id == ids.aspect_16_9 then ecs.emit("settings.aspect_request", {aspect="16:9"})
             elseif id == ids.aspect_16_10 then ecs.emit("settings.aspect_request", {aspect="16:10"})
             elseif id == ids.aspect_21_9 then ecs.emit("settings.aspect_request", {aspect="21:9"})

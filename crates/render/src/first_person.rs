@@ -16,6 +16,9 @@ pub struct Settings {
     pub motion_roll: f32,
     /// Blend from the captured previous frame to the current frame (0..1).
     pub blend: f32,
+    /// Half the directional blur span in source-frame UV coordinates.
+    pub blur_x: f32,
+    pub blur_y: f32,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -30,6 +33,8 @@ impl Default for Settings {
             motion_y: 0.0,
             motion_roll: 0.0,
             blend: 1.0,
+            blur_x: 0.0,
+            blur_y: 0.0,
         }
     }
 }
@@ -140,7 +145,7 @@ impl FirstPersonLayer {
         });
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("first-person key settings"),
-            contents: bytemuck::cast_slice(&[0.0f32; 12]),
+            contents: bytemuck::cast_slice(&[0.0f32; 16]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let texture = Self::texture(device, 1, 1);
@@ -279,6 +284,10 @@ impl FirstPersonLayer {
             } else {
                 1.0
             },
+            finite(settings.blur_x, 0.0, -0.04, 0.04),
+            finite(settings.blur_y, 0.0, -0.04, 0.04),
+            0.0,
+            0.0,
         ];
         queue.write_buffer(&self.uniform, 0, bytemuck::cast_slice(&values));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

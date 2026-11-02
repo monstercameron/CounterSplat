@@ -37,7 +37,7 @@ Dependencies point toward the lower-level crates; no crate includes another crat
 worker design, current integration, and browser constraints. See [timing](docs/timing.md) for fixed ticks,
 frame deadlines, adaptive pacing, and host integration. See [UI](docs/ui.md) for controls, ECS/Lua hooks,
 frame counters, and the rendering contract. See [skyboxes](docs/skybox.md) for HDR assets, ECS selection,
-and host integration. See [audio](docs/audio.md) for layered mixing, stereo and ECS/Lua hooks. See [scene JSON](docs/scenes.md) for entity, component, asset, and script definitions, [asset loading](docs/asset-loading.md) for preload policies and level transitions, and [level assets](docs/level-assets.md) for ECS inventory and LOD controls, and [entity physics](docs/entity-physics.md) for per-entity settings, collision and Lua exports. See [voxel collision](docs/voxel-collision.md) for the level collider and debug view. The [4DGS research](docs/4dgs-research.md) records a proposed path for dynamic splat playback.
+and host integration. See [audio](docs/audio.md) for layered mixing, stereo and ECS/Lua hooks. See [scene JSON](docs/scenes.md) for entity, component, asset, and script definitions, [asset loading](docs/asset-loading.md) for preload policies and level transitions, and [level assets](docs/level-assets.md) for ECS inventory and LOD controls, [entity physics](docs/entity-physics.md) for per-entity settings, collision and Lua exports, and [game modes](docs/game-modes.md) for the Lua-driven Pursuit mode. See [voxel collision](docs/voxel-collision.md) for the level collider and debug view. The [4DGS research](docs/4dgs-research.md) records a proposed path for dynamic splat playback.
 
 ## Build and test
 

@@ -76,6 +76,14 @@ function engine.aim_stability.new(entity,receiver)
     local model={heat=0,pressure=0,movement=0,crouch=0,aim=0,amplitude=0,
         kick_x=0,kick_y=0,clock=0,events=0,publish_elapsed=.1}
     local function cfg() return read() or initial end
+    function model:reset()
+        self.heat,self.pressure,self.movement,self.crouch,self.aim,self.amplitude=0,0,0,0,0,0
+        self.kick_x,self.kick_y,self.clock,self.events,self.publish_elapsed=0,0,0,0,.1
+        if ecs.get(entity,'AimStabilityState') then
+            ecs.set(entity,'AimStabilityState',{movement=0,crouch=0,aim=0,heat=0,
+                under_fire=0,sway_degrees=0,offset_x_degrees=0,offset_y_degrees=0})
+        end
+    end
 
     -- A near miss or direct hit can be supplied by any gameplay script.
     function model:under_fire(intensity,direct)

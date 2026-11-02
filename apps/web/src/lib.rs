@@ -1146,15 +1146,23 @@ impl Viewer {
         if let Some(index) = capture_gpu {
             self.gpu_timers[index].mark(&mut encoder, "scene_draw");
         }
+        let mut weapon_settings = self.first_person_settings;
+        let blur = if self.menu_visible {
+            [0.0; 2]
+        } else {
+            self.ui.weapon_motion_blur()
+        };
+        weapon_settings.blur_x = blur[0];
+        weapon_settings.blur_y = blur[1];
         self.first_person.encode(
             &self.queue,
             &mut encoder,
             self.postprocess.scene_view(),
             self.render_size,
-            self.first_person_settings,
+            weapon_settings,
         );
         // The render crate consumes a plain snapshot, never ECS or Lua state.
-        let grade = self
+        let mut grade = self
             .ui
             .image_correction()
             .map(|grade| postprocess::Settings {
@@ -1174,8 +1182,20 @@ impl Viewer {
                 vignette: grade.vignette,
                 grain: grade.grain,
                 sharpness: grade.sharpness,
+                peripheral_blur: 0.0,
+                tunnel_vision: 0.0,
             })
             .unwrap_or_default();
+        grade.peripheral_blur = if self.menu_visible {
+            0.0
+        } else {
+            self.ui.peripheral_blur()
+        };
+        grade.tunnel_vision = if self.menu_visible {
+            0.0
+        } else {
+            self.ui.combat_vision()
+        };
         self.postprocess.encode_to_viewport(
             &self.queue,
             &mut encoder,
@@ -1264,6 +1284,13 @@ impl Viewer {
     pub fn set_hitbox_debug_lines(&mut self, segments: Vec<f32>) -> Result<(), JsValue> {
         self.hitbox_lines
             .set(&self.queue, &segments)
+            .map_err(js_error)
+    }
+
+    /// Replace independent Lua-authored, per-segment colored world-space lines.
+    pub fn set_hitbox_debug_lines_colored(&mut self, segments: Vec<f32>) -> Result<(), JsValue> {
+        self.hitbox_lines
+            .set_colored(&self.queue, &segments)
             .map_err(js_error)
     }
 

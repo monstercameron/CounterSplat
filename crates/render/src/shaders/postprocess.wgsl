@@ -81,11 +81,11 @@ fn noise(pixel: vec2f) -> f32 {
         sample_uv = (floor(uv * dimensions) + vec2f(0.5)) / dimensions;
     }
     var scene = textureSampleLevel(source, linear_sampler, sample_uv, 0.0);
-    if grade.bloom_threshold_grain_enabled.w < 0.5 { return scene; }
+    let grade_enabled = grade.bloom_threshold_grain_enabled.w >= 0.5;
     // A bounded four-neighbor unsharp mask in linear HDR. Limit the detail
     // contribution so high-contrast highlights cannot create extreme halos.
     let sharpness = grade.filmic_reserved.w;
-    if sharpness > 0.0 {
+    if grade_enabled && sharpness > 0.0 {
         let texel = 1.0 / vec2f(textureDimensions(source));
         let adjacent = (
             textureSampleLevel(source, linear_sampler, sample_uv + vec2f(texel.x, 0.0), 0.0).rgb +
@@ -97,6 +97,26 @@ fn noise(pixel: vec2f) -> f32 {
         let detail = clamp(scene.rgb - adjacent, -limit, limit);
         scene = vec4f(clamp(scene.rgb + detail * sharpness, vec3f(0.0), vec3f(60000.0)), scene.a);
     }
+    // Both effects are bounded and blend smoothly. Sustained fire also
+    // moves the falloff slightly inward, while the aiming center stays sharp.
+    let sprint_blur = grade.tonal_warmth.z;
+    let tunnel = grade.tonal_warmth.w;
+    let peripheral_blur = 1.0 - (1.0 - sprint_blur) * (1.0 - tunnel);
+    if peripheral_blur > 0.0005 {
+        let radial = sample_uv - vec2f(0.5);
+        let aspect = dimensions.x / max(dimensions.y, 1.0);
+        let edge = smoothstep(0.45 - 0.12 * tunnel, 0.85 - 0.06 * tunnel,
+                              length(radial * vec2f(aspect, 1.0)));
+        if edge > 0.001 {
+            let offset = radial * (0.012 * peripheral_blur * edge);
+            let blurred = scene.rgb * 0.5
+                + textureSampleLevel(source, linear_sampler, sample_uv + offset, 0.0).rgb * 0.25
+                + textureSampleLevel(source, linear_sampler, sample_uv - offset, 0.0).rgb * 0.25;
+            let shaded = mix(scene.rgb, blurred, edge) * (1.0 - 0.10 * tunnel * edge);
+            scene = vec4f(shaded, scene.a);
+        }
+    }
+    if !grade_enabled { return scene; }
     let p = grade.exposure_contrast_saturation_temperature;
     let q = grade.tint_shadows_highlights_vignette;
     var color = max(min(scene.rgb, vec3f(60000.0)) * exp2(p.x) + textureSampleLevel(bloom, linear_sampler, sample_uv, 0.0).rgb * grade.bloom_threshold_grain_enabled.x, vec3f(0.0));

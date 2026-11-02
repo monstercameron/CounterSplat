@@ -78,6 +78,10 @@ pub struct Settings {
     pub vignette: f32,
     pub grain: f32,
     pub sharpness: f32,
+    /// Transient speed-driven edge blur. Zero skips the extra samples.
+    pub peripheral_blur: f32,
+    /// Transient firing-driven tunnel effect; kept separate so both can blend.
+    pub tunnel_vision: f32,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -98,6 +102,8 @@ impl Default for Settings {
             vignette: 0.0,
             grain: 0.0,
             sharpness: 0.0,
+            peripheral_blur: 0.0,
+            tunnel_vision: 0.0,
         }
     }
 }
@@ -130,8 +136,8 @@ impl Settings {
             finite(self.sharpness, 0.0, 0.0, 2.0),
             finite(self.shadow_warmth, 0.0, -1.0, 1.0),
             finite(self.highlight_warmth, 0.0, -1.0, 1.0),
-            0.0,
-            0.0,
+            finite(self.peripheral_blur, 0.0, 0.0, 1.0),
+            finite(self.tunnel_vision, 0.0, 0.0, 1.0),
             0.0,
             0.0,
             0.0,

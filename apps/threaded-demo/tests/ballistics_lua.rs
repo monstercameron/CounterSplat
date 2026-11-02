@@ -619,3 +619,27 @@ fn impact_diagnostics_only_appear_with_the_ecs_tools() {
         "new impacts are displayed while ECS tools are open"
     );
 }
+
+#[test]
+fn combat_reset_cancels_in_flight_projectiles_and_stale_worker_replies() {
+    let f = Fixture::new(true);
+    f.shot();
+    f.lua.run_systems(0.1).unwrap();
+    let trace = f
+        .events("physics.trace_request")
+        .pop()
+        .expect("pending trace");
+    let projectile = trace["entity"].as_str().unwrap().to_owned();
+    f.lua
+        .dispatch("combat.reset", &json!({"owner":f.player.to_string()}))
+        .unwrap();
+    f.lua
+        .dispatch(
+            "physics.trace_result",
+            &json!({"entity":projectile,"token":trace["token"],"status":"miss"}),
+        )
+        .unwrap();
+    f.lua.run_systems(0.1).unwrap();
+    assert!(f.events("projectile.impact").is_empty());
+    assert!(f.events("physics.trace_request").is_empty());
+}
