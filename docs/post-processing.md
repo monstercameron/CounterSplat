@@ -1,14 +1,16 @@
 # Post-processing and image correction
 
 The gameplay scene defines an `image_correction` entity with an `ImageCorrection` component in
-`assets/scenes/gameplay.json`. Open **Image correction** at the lower right of the canvas, or select
+`assets/scenes/gameplay.json`. Open **Image correction** in the tool stack, or select
 **Image correction** in **ECS entities** and edit its exported component settings in the inspector.
-The panel is collapsible and draggable. The scene preset uses a restrained filmic curve, slight
-warmth and contrast, a soft bloom, and a mild vignette; it can be adjusted or bypassed entirely.
+The panel is collapsible and draggable. The scene preset uses a restrained filmic curve, cool
+shadows, warm highlights, controlled bloom and a mild vignette; it can be adjusted or bypassed entirely.
 
-Controls include exposure in stops, contrast, saturation, warmth, tint, shadows, highlights, bloom
-strength and threshold, vignette, grain, sharpening, and the filmic curve. **Reset cinematic grade** restores the
-values authored in the current scene JSON. Sharpening ranges from 0 to 2; the gameplay preset starts at 0.2.
+Controls include exposure in stops, contrast, saturation, overall warmth, tint, shadow and highlight
+brightness, shadow warmth, highlight warmth, bloom strength and threshold, vignette, grain, sharpening,
+and the filmic curve. Negative tonal warmth is cool and positive is warm. **Reset cinematic grade**
+restores the values authored in the current scene JSON. Sharpening ranges from 0 to 2; the gameplay
+preset starts at 0.24.
 In the browser, edits persist locally across level changes
 and reloads; they do not rewrite scene files. Camera lens exposure is applied earlier, so it combines
 with the image-correction exposure.

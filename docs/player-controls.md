@@ -3,7 +3,7 @@
 The browser game has a grounded first-person player camera when voxel collision is available. Click the canvas to focus it, then use **W/A/S/D** to move,
 **E/Q** to move up/down, **Space** to jump, hold **Shift** to run, and hold **Ctrl** to crouch. In browsers that permit
 pointer lock, clicking the scene captures the mouse for continuous look; press **` / ~** to release it. The Codex
-in-app browser uses left-drag look when pointer lock is unavailable. Hold **right mouse** for a smooth 5× zoom and release to return to the normal view. **Escape** opens the pause menu. Movement stops on focus loss, pause, or
+in-app browser uses left-drag look when pointer lock is unavailable. Hold **right mouse** to aim using the equipped optic’s magnification; release to return to the normal view. **Escape** opens the pause menu. Movement stops on focus loss, pause, or
 when UI arrangement starts, so a missed key release cannot leave the player moving.
 
 Open **Player controls** in the lower right of the canvas to change movement and mouse-look enablement, speed,
@@ -81,7 +81,7 @@ position. Reset, pointer-lock loss, pause, and removing the controller clear tra
 
 ## Camera zoom
 
-[`camera_zoom.lua`](../assets/scripts/camera_zoom.lua) handles right-button zoom with a smooth transition. It computes optical magnification from the tangent of half the field of view, so 5× means five times the focal length at any configured base FOV. The base FOV and player position remain unchanged. Focus loss, pause, and reset release the zoom. **Entity settings → player → Component settings** provides **Zoom magnification** and **Zoom response**; the defaults in `gameplay.json` are 5× and 12 per second.
+[`camera_zoom.lua`](../assets/scripts/camera_zoom.lua) handles right-button or scripted ADS with a smooth transition. Iron sights use 1.25×, red dots use 1.5×, and scopes use the equipped `WeaponOptic.scope_magnification`. Magnification is calculated from the tangent of half the field of view, keeping the base FOV and player position unchanged. Focus loss, pause, and reset release ADS. **Camera & lens → Optic** selects the sight; **Edit zoom lens** exposes scope magnification for scopes. Zoom response remains available in the player entity settings. The old `PlayerControls.zoom_factor` field is retained for saved-data compatibility but no longer determines weapon ADS.
 
 ## Camera bob
 
@@ -125,3 +125,28 @@ and head clearance are also exported to **Entity settings** for tuning through t
 
 The **Camera & lens** panel adds field of view, yaw, pitch, roll, photographic exposure, shutter and focus controls.
 See [camera and lens](camera.md) for the ECS component, Lua API, and limits of the real-time blur effects.
+
+
+## Aim stability
+
+The first-person weapon uses the Lua-owned AimStability component for an angular sway envelope. Collision-resolved walking increases sway and recoil; crouching reduces both. ADS eases into its own multiplier. Burst and automatic fire build instability at separately configurable rates, and it recovers smoothly after firing stops. Existing recoil and viewmodel animation settings remain independent.
+
+Shots follow the same sight movement shown by the first-person layer, including the current zoom and viewport aspect. No separate random spread is added behind the visible sight. Open the ECS HUD with the backquote key, select **First person**, and use the Entity settings pages to tune the AimStability fields. The player's SuppressionReceiver settings enable near-miss detection and set its radius in metres from the player's capsule. AimStabilityState reports the current movement, crouch, ADS, firing heat, incoming pressure, and angular sway for engine scripts.
+
+Hostile projectiles produce one combat.near_miss event after passing close to the player, using the confirmed unobstructed portion of their path. A direct hit instead sends combat.damage. Both feed the aim stability model; the player's own shots do not. Asynchronous collision checks retain the player pose from the submitted projectile segment. There are no hostile actors in the dojo yet, so the incoming-fire response requires a hostile projectile or a scripted event.
+
+Other Lua systems can emit `ecs.emit('combat.suppression', {target=player, owner=attacker, intensity=0.7})` to apply incoming pressure. Intensity is clamped to 0–1. `engine.aim_stability.new(weapon, player)` creates an independent model for another weapon with AimStability and SuppressionReceiver components.
+
+### Muzzle rise
+
+The first-person entity's `WeaponRecoil` component controls actual camera aim:
+vertical rise and horizontal kick in degrees per shot, hip and ADS multipliers,
+and the time over which the kick is applied. Select **First person** in the ECS
+entity inspector to tune or disable these values. The existing `WeaponAnimation`
+recoil controls only the filmed weapon's motion.
+
+The Lua controller snapshots each shot's visible aim before applying its own
+kick. Camera rise accumulates during a burst and remains after firing stops;
+pulling the mouse down counters it. The same walking, crouching, and sustained
+fire modifiers used by aim stability affect camera recoil. The kick respects
+the camera's pitch limit and does not reset mouse corrections.

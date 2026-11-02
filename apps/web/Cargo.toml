@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 countersplat-core.workspace = true
 countersplat-scene.workspace = true
 countersplat-scene-ecs.workspace = true
+countersplat-audio-ecs.workspace = true
 countersplat-ecs.workspace = true
 countersplat-ui.workspace = true
 countersplat-ui-ecs.workspace = true

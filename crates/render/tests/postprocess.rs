@@ -34,6 +34,7 @@ fn render_to_viewport(
 }
 @fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {
   if abs(p.x - 32.0) < 2.0 && abs(p.y - 32.0) < 2.0 { return vec4f(4.0, 3.0, 2.0, 1.0); }
+  if p.y < 20.0 && p.x > 40.0 { return vec4f(0.65, 0.65, 0.65, 1.0); }
   if p.y < 20.0 { return vec4f(0.30, 0.10, 0.05, 1.0); }
   return vec4f(0.08, 0.10, 0.20, 1.0);
 }
@@ -324,5 +325,107 @@ fn presentation_fills_or_letterboxes_without_stretching_the_scene() {
     assert!(
         pixel(&fill, 128, 125, 55)[2] > 20,
         "fill should cover the opposite edge"
+    );
+}
+
+#[test]
+fn pixel_perfect_replicates_texels_and_crops_oversized_scenes_without_filtering() {
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let post = PostProcess::new(&device, countersplat_render::COLOR_FORMAT, 64, 64);
+    let grade = Settings {
+        enabled: true,
+        bloom_intensity: 0.2,
+        grain: 0.04,
+        vignette: 0.2,
+        sharpness: 0.3,
+        ..Default::default()
+    };
+    let image = render_to_viewport(
+        &device,
+        &queue,
+        &post,
+        grade,
+        129,
+        129,
+        Some(ViewportScale::PixelPerfect),
+    );
+    for y in (0..128).step_by(2) {
+        for x in (0..128).step_by(2) {
+            let expected = pixel(&image, 129, x, y);
+            assert_eq!(
+                expected,
+                pixel(&image, 129, x + 1, y),
+                "horizontal texel at {x},{y}"
+            );
+            assert_eq!(
+                expected,
+                pixel(&image, 129, x, y + 1),
+                "vertical texel at {x},{y}"
+            );
+            assert_eq!(
+                expected,
+                pixel(&image, 129, x + 1, y + 1),
+                "texel block at {x},{y}"
+            );
+        }
+    }
+    assert_eq!(pixel(&image, 129, 128, 50)[0..3], [0, 0, 0]);
+    let source = render(&device, &queue, &post, Settings::default(), 64, 64);
+    let crop = render_to_viewport(
+        &device,
+        &queue,
+        &post,
+        Settings::default(),
+        31,
+        31,
+        Some(ViewportScale::PixelPerfect),
+    );
+    for (x, y) in [(0, 0), (15, 15), (30, 30)] {
+        assert_eq!(
+            pixel(&crop, 31, x, y),
+            pixel(&source, 64, x + 17, y + 17),
+            "1x crop at {x},{y}"
+        );
+    }
+}
+
+#[test]
+fn split_toning_cools_shadows_and_warms_highlights() {
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let post = PostProcess::new(&device, countersplat_render::COLOR_FORMAT, 64, 64);
+    let neutral = Settings {
+        enabled: true,
+        ..Default::default()
+    };
+    let base = render(&device, &queue, &post, neutral, 64, 64);
+    let toned = render(
+        &device,
+        &queue,
+        &post,
+        Settings {
+            shadow_warmth: -1.0,
+            highlight_warmth: 1.0,
+            ..neutral
+        },
+        64,
+        64,
+    );
+    let shadow = pixel(&base, 64, 5, 55);
+    let cool = pixel(&toned, 64, 5, 55);
+    let highlight = pixel(&base, 64, 50, 5);
+    let warm = pixel(&toned, 64, 50, 5);
+    assert!(
+        cool[0] < shadow[0] && cool[2] > shadow[2],
+        "shadow: {shadow:?} {cool:?}"
+    );
+    assert!(
+        warm[0] > highlight[0] && warm[2] < highlight[2],
+        "highlight: {highlight:?} {warm:?}"
     );
 }

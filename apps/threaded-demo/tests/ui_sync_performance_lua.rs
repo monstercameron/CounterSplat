@@ -2,7 +2,7 @@
 use countersplat_ecs::{World, WorldOperation, WorldOutcome};
 use countersplat_scene::{LevelSettings, SceneManifest, VoxelColliderState, VoxelStatus};
 use countersplat_scripting_lua::{LuaRuntime, ScriptOptions, WorldBridge};
-use countersplat_ui::{UiElement, Widget};
+use countersplat_ui::{UiElement, UiEvent, UiEventKind, Widget};
 use std::{
     cell::{Cell, RefCell},
     path::PathBuf,
@@ -150,6 +150,17 @@ fn inspector_reuses_tree_until_structure_or_component_membership_changes() {
         &["ui", "player", "level", "scene"],
     )
     .unwrap();
+    // Refresh is intentionally suspended while this panel starts collapsed.
+    // Open it before checking cache invalidation for the visible entity tree.
+    let events = countersplat_ui_ecs::apply_events(
+        &mut world.borrow_mut(),
+        [UiEvent {
+            id: ids["ecs_panel"].to_string(),
+            kind: UiEventKind::CollapsedChanged(false),
+        }],
+    );
+    assert_eq!(events.len(), 1);
+    world.borrow_mut().drain_events("ui.action");
     let reads = Rc::new(Cell::new(0));
     let lua = LuaRuntime::new(
         HierarchyCountingBridge {

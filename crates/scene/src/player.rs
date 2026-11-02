@@ -268,8 +268,9 @@ pub struct PlayerControls {
     pub bob_vertical: f32,
     pub bob_horizontal: f32,
     pub bob_smoothing: f32,
-    /// Right-button optical magnification and transition response in inverse seconds.
+    /// Legacy saved zoom value; ADS magnification comes from the weapon's optic.
     pub zoom_factor: f32,
+    /// ADS transition response in inverse seconds.
     pub zoom_response: f32,
     pub bindings: PlayerBindings,
 }

@@ -1,8 +1,8 @@
-//! A small GPU line renderer for host-provided projectile trace snapshots.
-//! It knows nothing about ECS, collision, weapon rules, or projectile lifetime.
+//! A small GPU line renderer for host-provided world-space snapshots.
+//! It knows nothing about ECS, collision, weapons, or target rules.
 use crate::camera::{self, Mat4};
 
-pub const MAX_TRACE_SEGMENTS: usize = 256;
+pub const MAX_TRACE_SEGMENTS: usize = 1024;
 
 pub struct TracerRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -117,7 +117,7 @@ impl TracerRenderer {
                 .chunks_exact(7)
                 .any(|v| !(0.0..=1.0).contains(&v[6]))
         {
-            return Err("invalid projectile trace snapshot");
+            return Err("invalid world-space line snapshot");
         }
         let mut vertices = Vec::with_capacity(segments.len() / 7 * 8);
         for s in segments.chunks_exact(7) {

@@ -291,3 +291,48 @@ fn segment_tracing_respects_negative_boundaries_and_legacy_coordinates() {
         .unwrap();
     assert_eq!(diagonal.position, [2.0, 2.0, 2.0]);
 }
+
+#[test]
+fn horizontal_map_slice_projects_only_the_requested_height() {
+    let mut mask = 0_u64;
+    for z in 0..4 {
+        for x in 0..4 {
+            mask |= 1 << (x + z * 16);
+        } // floor
+        mask |= 1 << (2 + 2 * 4 + z * 16); // wall at body height
+    }
+    let world = capsule_world(mask, "1.1");
+    let map = world
+        .horizontal_slice([2.0, 2.0], 2.5, 2.0, 0.2, 40)
+        .unwrap();
+    for z in 0..4 {
+        assert_eq!(map[(z * 10 + 5) * 40 + 25], 255);
+    }
+    assert_eq!(map[5 * 40 + 5], 0, "the floor must not appear as a wall");
+    let above = world
+        .horizontal_slice([2.0, 2.0], 3.5, 2.0, 0.2, 40)
+        .unwrap();
+    assert!(above.iter().all(|value| *value == 0));
+    assert!(world
+        .horizontal_slice([2.0, 2.0], 2.5, f32::NAN, 0.2, 40)
+        .is_err());
+    assert!(world
+        .horizontal_slice([2.0, 2.0], 2.5, 2.0, 0.2, 1024)
+        .is_err());
+}
+
+#[test]
+fn horizontal_map_slice_preserves_world_orientation_for_legacy_voxels() {
+    let mut mask = 0_u64;
+    for z in 0..4 {
+        mask |= 1 << (2 + 2 * 4 + z * 16);
+    }
+    let legacy = capsule_world(mask, "1.0");
+    let map = legacy
+        .horizontal_slice([-2.0, 2.0], -2.5, 2.0, 0.2, 40)
+        .unwrap();
+    for z in 0..4 {
+        assert_eq!(map[(z * 10 + 5) * 40 + 15], 255);
+    }
+    assert_eq!(map[5 * 40 + 25], 0);
+}

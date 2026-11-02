@@ -7,6 +7,8 @@ local read_rig = engine.component_reader(player, 'PlayerRig')
 local read_weapon_config = engine.component_reader(owner, 'WeaponConfig')
 local read_weapon_animation = engine.component_reader(owner, 'WeaponAnimation')
 local read_weapon_view = engine.component_reader(owner, 'FirstPersonView')
+local read_weapon_recoil = engine.component_reader(owner, 'WeaponRecoil')
+local read_camera_controller = ids.camera_controller and engine.component_reader(ids.camera_controller, 'CameraController')
 local clips = assert(ecs.get_resource('first_person_clips'))
 local config = assert(ecs.get(owner,'WeaponConfig'))
 local function setting(name, fallback, low, high)
@@ -67,11 +69,37 @@ local function animation_setting(name,fallback,low,high)
     return math.max(low,math.min(high,n))
 end
 
+-- Recoil changes the player's actual aim, independently of the filmed weapon.
+-- Older scenes without WeaponRecoil retain their previous visual-only behavior.
+local recoil=ecs.get(owner,'WeaponRecoil')
+if recoil then
+    for _,e in ipairs({
+        {'camera_recoil_enabled','enabled','Camera recoil'},
+        {'camera_recoil_rise','vertical_degrees','Muzzle rise per shot (deg)',0,3},
+        {'camera_recoil_side','horizontal_degrees','Side kick per shot (deg)',0,2},
+        {'camera_recoil_ads','ads_multiplier','ADS recoil multiplier',0,2},
+        {'camera_recoil_hip','hip_multiplier','Hip recoil multiplier',0,2},
+        {'camera_recoil_speed','rise_seconds','Recoil rise time (s)',.01,.25},
+    }) do
+        local spec={component='WeaponRecoil',field=e[2],label=e[3]}
+        if e[4] then spec.min,spec.max=e[4],e[5] end
+        engine.export(owner,e[1],spec)
+    end
+end
+local function recoil_setting(name,fallback,low,high)
+    local n=recoil and recoil[name]
+    if type(n)~='number' or n~=n or math.abs(n)>1000000 then return fallback end
+    return math.max(low,math.min(high,n))
+end
+
+-- The optional module preserves compatibility with scenes that do not load it.
+local stability=engine.aim_stability and engine.aim_stability.new(owner,player) or nil
+
 local s = {
     state='lowReady', mode='single', ammo=initial_ammo, mags=initial_spares, shots=0,
     aim=false, held=false, pending=false, hip_shot=false, burst=0, cooldown=0, recovery=0,
     time=0, duration=0, target=nil, clip='raising', from=0, to=0,
-    run_clock=0, flash=0, flash_stance='hip', reload_slot=nil,
+    run_clock=0, flash=0, flash_fresh=false, flash_stance='hip', reload_slot=nil,
     reload_held=false, reload_time=0, repack_time=0, keys={},
     crouch=0, crouch_clock=0, crouch_moving=false, reaction=0, reaction_length=0,
     idle_clock=0, motion_clock=0, idle_settle=0, fire_pose_hold=0, pose_slope=0,
@@ -79,6 +107,7 @@ local s = {
     gait_phase=0, gait_gain=0, last_travel=1, resolved_distance=0,
     recoil_x={x=0,v=0}, recoil_y={x=0,v=0}, recoil_roll={x=0,v=0},
     recoil_drift_x={x=0,v=0}, recoil_drift_y={x=0,v=0}, recoil_hip=false, recoil_heat=0, recoil_bias=0,
+    camera_kick_pitch=0, camera_kick_yaw=0,
 }
 -- Last selected source frame allows stow/death to lower any interrupted
 -- stance, including crouch and sprint, without snapping to a different clip.
@@ -140,6 +169,7 @@ local function reload()
     stop_trigger(); s.reload_requested=false; s.recovery=0; s.reload_slot=slot
     local ads=s.state=='ads'
     transition(ads and 'reloadADS' or 'reload',ads and 'reloadADS' or 'reload',0,1,setting('reload_seconds',4,.1,10),ads and 'ads' or 'lowReady')
+    ecs.emit('weapon.reload_started', {entity=owner, aiming=ads})
 end
 -- Consolidation moves exactly one round at a time without creating ammunition.
 local function pack_round()
@@ -171,7 +201,7 @@ local function shoot(cadence_remainder)
     local interval=setting('fire_interval',.1,.05,1)
     s.cooldown=interval-(s.ammo>1 and clamp(cadence_remainder or 0,0,interval-.001) or 0)
     s.ammo=s.ammo-1; s.shots=s.shots+1
-    s.flash=0.14; s.flash_stance=s.state=='ads' and 'ads' or 'hip'
+    s.flash=0.14; s.flash_fresh=true; s.flash_stance=s.state=='ads' and 'ads' or 'hip'
     if s.state=='hipFire' then
         s.recovery=setting('hip_recovery_seconds',1,0,3)
         s.fire_pose_hold=math.min(.2,(clips.fireHip and clips.fireHip.duration or .14))
@@ -203,7 +233,7 @@ local function shoot(cadence_remainder)
     else screen_x,screen_y=frame_x,1+(frame_y-1)*aspect/source end
     if view.enabled~=true or (type(view.opacity)=='number' and view.opacity<=0) then screen_x,screen_y=.5,.5 end
     local fov=type(camera.view_fov_degrees)=='number' and camera.view_fov_degrees or camera.fov_degrees
-    local tangent=math.tan(math.rad(clamp(fov,1,178))*.5)
+    local tangent=math.tan(math.rad(clamp(fov,.01,178.999))*.5)
     local sx=(screen_x-.5)*2*aspect*tangent
     local sy=(.5-screen_y)*2*tangent
     local yaw,roll=camera.yaw,camera.roll+(camera.view_bob_roll or 0)+(camera.view_turn_roll or 0)
@@ -226,8 +256,21 @@ local function shoot(cadence_remainder)
     s.recoil_heat=math.min(1,s.recoil_heat+.22)
     local memory=s.recoil_hip and .40 or .62
     s.recoil_bias=s.recoil_bias*memory+side*(1-memory)
+    local stability_recoil=stability and stability:shot(s.mode) or 1
+    recoil=read_weapon_recoil()
+    if recoil and recoil.enabled~=false then
+        local stance=s.recoil_hip and recoil_setting('hip_multiplier',1.1,0,2)
+            or recoil_setting('ads_multiplier',.85,0,2)
+        -- Queue a one-way camera displacement after capturing this round's ray.
+        -- It is applied over subsequent ticks; nothing recenters the camera.
+        local kick=stance*stability_recoil
+        s.camera_kick_pitch=clamp(s.camera_kick_pitch+
+            math.rad(recoil_setting('vertical_degrees',.55,0,3))*kick,0,math.rad(45))
+        s.camera_kick_yaw=clamp(s.camera_kick_yaw+
+            math.rad(recoil_setting('horizontal_degrees',.12,0,2))*side*kick,-math.rad(30),math.rad(30))
+    end
     local weight=animation_setting('recoil_strength',1,0,3)*(s.recoil_hip and 1.15 or .8)*
-        (1+s.recoil_heat*(s.recoil_hip and .3 or .15))
+        (1+s.recoil_heat*(s.recoil_hip and .3 or .15))*stability_recoil
     s.recoil_x.v=s.recoil_x.v+(side*.30+s.recoil_bias*.12)*weight*.64
     s.recoil_y.v=s.recoil_y.v-(.82+side*.13)*weight
     s.recoil_roll.v=s.recoil_roll.v+side*.24*weight*.64
@@ -270,10 +313,27 @@ ecs.on('weapon.reload',reload)
 ecs.on('weapon.equip',equip)
 ecs.on('weapon.mode',cycle_mode)
 ecs.on('weapon.hit',function(e)
+    if type(e)~='table' or (e.target~=nil and e.target~=player and e.target~=owner) or
+       (e.entity~=nil and e.entity~=player and e.entity~=owner) then return end
     if s.state~='dead' then
         s.reaction_length=e.near==true and .16 or .35
         s.reaction=s.reaction_length
         s.idle_settle=s.reaction_length+.12
+        if stability then stability:under_fire(e.near==true and .55 or 1,e.near~=true) end
+    end
+end)
+-- Future gameplay scripts may report a near miss or explicit suppression with
+-- {target=player, intensity=0..1, owner=attacker}; damage uses the same model.
+for _,channel in ipairs({'combat.near_miss','combat.suppression'}) do
+    ecs.on(channel,function(e)
+        if stability and type(e)=='table' and e.target==player and e.owner~=player then
+            stability:under_fire(e.intensity,false)
+        end
+    end)
+end
+ecs.on('combat.damage',function(e)
+    if stability and type(e)=='table' and e.target==player and type(e.amount)=='number' and e.amount>0 then
+        stability:under_fire(clamp(e.amount/35,.2,1),true)
     end
 end)
 ecs.on('weapon.die',function() local current=phase(); s.frozen_pose=last_pose; stop_trigger(); s.aim=false; transition('death','raising',current,current,.8,'dead') end)
@@ -309,6 +369,7 @@ end)
 ecs.on('input.reset',function()
     stop_trigger(); s.aim=false; s.keys={}; s.reload_held=false; s.reload_time=0
     s.look_x,s.look_y,s.resolved_distance=0,0,0
+    s.camera_kick_pitch,s.camera_kick_yaw=0,0
     if s.state=='repack' then stable('lowReady') end
 end)
 ecs.on('input.key',function(e)
@@ -326,14 +387,15 @@ ecs.on('input.key',function(e)
     end
 end)
 
-local last_frame,last_state,last_hud,last_clip=nil,nil,nil,nil
+local last_frame,last_state,last_clip=nil,nil,nil
+local ammo_pose_signature=nil
 local canonical={raising=true,runFromLow=true,runFromADS=true,runLateral=true}
 local function is_fire(clip) return clip=='fireHip' or clip=='fireADS' end
 -- Select authored loops, shared carry bridges and interrupted crouch phases.
 -- The host streams these frames and blends only discontinuous clip handoffs.
 local function present()
     local view=read_weapon_view()
-    if not view then return end
+    if not view then s.flash_fresh=false; return end
     local visible=view.enabled==true and s.state~='noGun' and s.state~='dead'
     local clip,p,direction,loop=s.clip,phase(),1,false
     if s.edge_a then direction=s.to>=s.from and 1 or -1
@@ -359,6 +421,9 @@ local function present()
         clip='lowReady'; p=(s.idle_clock%clips.lowReady.duration)/clips.lowReady.duration; loop=true
     end
     if not clips[clip] then clip,p,direction,loop='raising',0,1,false end
+    -- A shot accepted between ticks must reach the first flash frame before
+    -- elapsed simulation time can advance its animation.
+    s.flash_fresh=false
     last_pose={clip=clip,p=p,direction=direction}
     local frame=math.floor(clamp(p,0,1)*(clips[clip].frames-1)+.5)+1
     local blend=0
@@ -367,7 +432,7 @@ local function present()
         blend=animation_setting('clip_blend_seconds',.12,0,.3)
     end
     local reaction_offset=0
-    if s.reaction>0 then
+    if not stability and s.reaction>0 then
         local elapsed=s.reaction_length-s.reaction
         reaction_offset=.008*(s.reaction/s.reaction_length)*math.sin(elapsed*32)
     end
@@ -389,18 +454,19 @@ local function present()
             loop_blend_seconds=animation_setting('clip_blend_seconds',.12,0,.3)})
         last_clip=clip
     end
+    -- Publish changed poses for the persistent ammo callout. Browser hosts
+    -- override these with the frame actually installed by the compositor.
+    if signature~=ammo_pose_signature then
+        ammo_pose_signature=signature
+        ecs.set_resource('hud.weapon_pose',{clip=clip,index=frame,visible=visible,opacity=opacity,
+            vertical_offset=view.vertical_offset,motion_x=mx,motion_y=my,motion_roll=mr})
+    end
     local status=table.concat({s.state,s.mode,s.ammo,reserve(),s.shots,s.reaction,clip},':')
     if status~=last_state then
         last_state=status
         local magazines=ecs.array(); for i=1,3 do magazines[i]=s.mags[i] end
         ecs.set(owner,'WeaponState',{state=s.state,mode=s.mode,ammo=s.ammo,reserve=reserve(),magazines=magazines,
             shots=s.shots,reaction=s.reaction,clip=clip})
-    end
-    local hud=('%02d / %02d   %s   |   LMB fire   R reload   V mode   F stow'):format(s.ammo,reserve(),string.upper(s.mode))
-    if ids.weapon_hud and hud~=last_hud then
-        local element=ecs.get(ids.weapon_hud,'UiElement')
-        if element then element.widget.text=hud; ecs.set(ids.weapon_hud,'UiElement',element) end
-        last_hud=hud
     end
 end
 local function is_down(bindings,name)
@@ -473,8 +539,27 @@ local function update_motion(dt,moving,running,controls)
     spring(s.recoil_drift_x,dt,8,.95)
     spring(s.recoil_drift_y,dt,10,.95)
     s.recoil_heat=s.recoil_heat*math.exp(-dt*2.2)
-    s.motion_x=clamp(idle_x+gait_x+s.look_x*aim_weight+s.recoil_x.x+s.recoil_drift_x.x,-.10,.10)
-    s.motion_y=clamp(idle_y+gait_y+s.look_y*aim_weight+s.recoil_y.x+s.recoil_drift_y.x,-.10,.10)
+    local stability_x,stability_y=0,0
+    if stability then
+        local units=math.max(.01,rig.units_per_meter)
+        local walk_speed=math.max(.01,controls.move_speed)
+        local speed=grounded and distance/(math.max(dt,.00001)*units) or 0
+        local angle_x,angle_y=stability:update(dt,speed/walk_speed,s.crouch,s.aim)
+        -- The source footage is bottom-anchored and may be aspect-cropped.
+        -- Convert angular sway to the same normalized source-frame offsets
+        -- consumed by both the compositor and shoot(), including zoom.
+        local aspect=tonumber(ecs.get_resource('render.scene_aspect')) or 16/9
+        if aspect~=aspect then aspect=16/9 end
+        aspect=clamp(aspect,.2,5)
+        local fov=type(camera.view_fov_degrees)=='number' and camera.view_fov_degrees or camera.fov_degrees
+        local tangent=math.tan(math.rad(clamp(fov,.01,178.999))*.5)
+        stability_x=math.tan(math.rad(angle_x))/(2*aspect*tangent)
+        stability_y=-math.tan(math.rad(angle_y))/(2*tangent)
+        if aspect>16/9 then stability_x=stability_x*aspect/(16/9)
+        else stability_y=stability_y*(16/9)/aspect end
+    end
+    s.motion_x=clamp(idle_x+gait_x+s.look_x*aim_weight+s.recoil_x.x+s.recoil_drift_x.x+stability_x,-.10,.10)
+    s.motion_y=clamp(idle_y+gait_y+s.look_y*aim_weight+s.recoil_y.x+s.recoil_drift_y.x+stability_y,-.10,.10)
     s.motion_roll=clamp(idle_roll+gait_roll+s.recoil_roll.x,-.10,.10)
 end
 
@@ -505,12 +590,45 @@ local function reverse_carry(target)
     return true
 end
 
+-- Apply each shot's pending kick smoothly to the live camera. This is additive,
+-- so mouse corrections made during the rise are preserved instead of overwritten.
+local function update_camera_recoil(dt)
+    if s.camera_kick_pitch==0 and s.camera_kick_yaw==0 then return end
+    recoil=read_weapon_recoil()
+    if not recoil or recoil.enabled==false then
+        s.camera_kick_pitch,s.camera_kick_yaw=0,0
+        return
+    end
+    local camera=ecs.get(player,'PlayerCamera')
+    if not camera then
+        s.camera_kick_pitch,s.camera_kick_yaw=0,0
+        return
+    end
+    local fraction=1-math.exp(-dt/recoil_setting('rise_seconds',.045,.01,.25))
+    local pitch_delta=s.camera_kick_pitch*fraction
+    local yaw_delta=s.camera_kick_yaw*fraction
+    s.camera_kick_pitch=s.camera_kick_pitch-pitch_delta
+    s.camera_kick_yaw=s.camera_kick_yaw-yaw_delta
+    if math.abs(s.camera_kick_pitch)<.000001 then s.camera_kick_pitch=0 end
+    if math.abs(s.camera_kick_yaw)<.000001 then s.camera_kick_yaw=0 end
+    local controller=read_camera_controller and read_camera_controller()
+    local degrees=controller and tonumber(controller.pitch_limit_degrees) or 89
+    if not degrees or degrees~=degrees then degrees=89 end
+    local limit=math.min(1.553343,math.rad(clamp(degrees,1,89)))
+    local yaw=(camera.yaw+yaw_delta+math.pi)%(2*math.pi)-math.pi
+    -- If a scene starts beyond the current look limit, recoil must never snap
+    -- the camera downward; let the next mouse movement bring it into range.
+    local pitch=math.max(camera.pitch,math.min(limit,camera.pitch+pitch_delta))
+    ecs.set_fields(player,'PlayerCamera',{pitch=pitch,yaw=yaw})
+end
+
 -- Fixed-tick simulation: settle actions, resolve carry, then commit shots.
 ecs.system('player.first_person',function(dt)
     dt=clamp(dt,0,.1)
     config=read_weapon_config() or config
     animation=read_weapon_animation() or animation
     if dt<=0 then present(); return end
+    update_camera_recoil(dt)
     local controls=read_controls()
     local moving,sprint=movement(controls)
     -- Hold the authored idle briefly after an action; breathing has its own
@@ -525,7 +643,8 @@ ecs.system('player.first_person',function(dt)
         (s.state=='ads' or s.state=='hipFire') and uninterrupted and math.max(0,dt-s.cooldown) or 0
     s.cooldown=math.max(0,s.cooldown-dt); if s.cooldown<1e-8 then s.cooldown=0 end
     s.crouch_clock=s.crouch_clock+dt
-    s.recovery=math.max(0,s.recovery-dt); s.flash=math.max(0,s.flash-dt)
+    s.recovery=math.max(0,s.recovery-dt)
+    if not s.flash_fresh then s.flash=math.max(0,s.flash-dt) end
     s.reaction=math.max(0,s.reaction-dt)
     if s.reload_held then
         s.reload_time=s.reload_time+dt

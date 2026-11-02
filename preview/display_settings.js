@@ -1,20 +1,34 @@
 // Resolution selection is independent of the browser viewport and renderer.
 export const MAX_RENDER_PIXELS = 16_777_216;
 export const MAX_RENDER_DIMENSION = 8192;
-export const DEFAULT_DISPLAY = Object.freeze({mode:'fixed', width:1280, height:720, scaling:'fill'});
-export const RESOLUTION_PRESETS = Object.freeze([
-  {id:'viewport', label:'Viewport (native)'},
-  {id:'640x360', label:'640 × 360  ·  16:9', width:640, height:360},
-  {id:'1280x720', label:'1280 × 720  ·  16:9', width:1280, height:720},
-  {id:'1920x1080', label:'1920 × 1080  ·  16:9', width:1920, height:1080},
-  {id:'2560x1440', label:'2560 × 1440  ·  16:9', width:2560, height:1440},
-  {id:'3840x2160', label:'3840 × 2160  ·  16:9', width:3840, height:2160},
-  {id:'1024x768', label:'1024 × 768  ·  4:3', width:1024, height:768},
-  {id:'2560x1080', label:'2560 × 1080  ·  21:9', width:2560, height:1080},
-  {id:'3440x1440', label:'3440 × 1440  ·  ultrawide', width:3440, height:1440},
-  {id:'custom', label:'Custom…'},
+export const DEFAULT_DISPLAY = Object.freeze({mode:'fixed', width:1280, height:720, scaling:'fill', aspect:'16:9'});
+// The 21:9 family uses common marketed ultrawide sizes (which are not all
+// mathematically identical ratios, e.g. 3440×1440 and 2560×1080).
+export const ASPECT_RATIOS = Object.freeze([
+  {id:'16:9', label:'16:9'}, {id:'16:10', label:'16:10'},
+  {id:'21:9', label:'21:9'}, {id:'custom', label:'Custom'},
 ]);
-
+const COMMON_RESOLUTIONS = Object.freeze({
+  '16:9': [[640,360],[960,540],[1280,720],[1600,900],[1920,1080],[2560,1440],[3200,1800],[3840,2160],[5120,2880]],
+  '16:10': [[640,400],[960,600],[1280,800],[1440,900],[1680,1050],[1920,1200],[2560,1600],[2880,1800],[3840,2400]],
+  '21:9': [[1280,540],[1920,810],[2560,1080],[3440,1440],[3840,1600],[5120,2160]],
+});
+const CUSTOM_HEIGHTS = [180,270,360,432,480,540,600,720,800,900,1080,1200,1440,1600,1800,2160,2400,2880,3200];
+const validAspect = id => ASPECT_RATIOS.some(item=>item.id===id);
+// Store the user's reference ratio separately, so repeated rounded resolution
+// steps cannot progressively change it. This is not a render allocation.
+const validRatio = (width,height) => Number.isInteger(width) && Number.isInteger(height) &&
+  width > 0 && height > 0 && width <= MAX_RENDER_DIMENSION && height <= MAX_RENDER_DIMENSION;
+export function aspectMatches(id, width, height) {
+  if (!(Number.isFinite(width) && Number.isFinite(height) && width>0 && height>0)) return false;
+  if (id==='custom') return true;
+  const ratio=width/height;
+  const target=({'16:9':16/9, '16:10':16/10, '21:9':43/18})[id];
+  return !!target && Math.abs(ratio/target-1) <= (id==='21:9' ? 0.035 : 0.006);
+}
+export function inferAspect(width, height) {
+  return ASPECT_RATIOS.find(item=>item.id!=='custom' && aspectMatches(item.id,width,height))?.id || 'custom';
+}
 export function validateResolution(width, height, deviceLimit = MAX_RENDER_DIMENSION) {
   const max = Math.min(MAX_RENDER_DIMENSION, Number.isFinite(deviceLimit) ? Math.floor(deviceLimit) : MAX_RENDER_DIMENSION);
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 64)
@@ -25,9 +39,14 @@ export function validateResolution(width, height, deviceLimit = MAX_RENDER_DIMEN
 }
 export function normalizeDisplay(value) {
   if (!value || typeof value !== 'object' || !['fixed','viewport'].includes(value.mode) ||
-      !['fill','fit'].includes(value.scaling) || validateResolution(value.width,value.height))
+      !['fill','fit','pixel'].includes(value.scaling) || validateResolution(value.width,value.height))
     return {...DEFAULT_DISPLAY};
-  return {mode:value.mode, width:value.width, height:value.height, scaling:value.scaling};
+  const aspect=validAspect(value.aspect) && (value.mode==='viewport' || aspectMatches(value.aspect,value.width,value.height))
+    ? value.aspect : inferAspect(value.width,value.height);
+  const ratio = aspect==='custom' ? (validRatio(value.ratio_width,value.ratio_height)
+    ? {ratio_width:value.ratio_width,ratio_height:value.ratio_height}
+    : {ratio_width:value.width,ratio_height:value.height}) : {};
+  return {mode:value.mode, width:value.width, height:value.height, scaling:value.scaling, aspect, ...ratio};
 }
 export function aspectLabel(width, height) {
   let a=width, b=height;
@@ -48,67 +67,99 @@ export function sceneResolution(preferences, viewport) {
   return preferences.mode === 'viewport' ? viewport : {width:preferences.width,height:preferences.height};
 }
 
-// The display panel is host UI because it also applies before a game scene is
-// loaded. Only the selected settings cross into the renderer; game UI stays ECS.
-export function attachDisplayPanel(document, storage, getDeviceLimit) {
-  const key='countersplat.display.v1';
-  const preset=document.getElementById('render-preset');
-  const scaling=document.getElementById('viewport-scaling');
-  const custom=document.getElementById('custom-resolution');
-  const width=document.getElementById('render-width');
-  const height=document.getElementById('render-height');
-  const form=document.getElementById('resolution-form');
-  const feedback=document.getElementById('display-feedback');
-  const summary=document.getElementById('display-current');
-  let preferences;
-  try { preferences=normalizeDisplay(JSON.parse(storage.getItem(key))); }
-  catch { preferences={...DEFAULT_DISPLAY}; }
-  let viewport={width:1,height:1};
-  for (const item of RESOLUTION_PRESETS) {
-    const option=document.createElement('option'); option.value=item.id; option.textContent=item.label; preset.append(option);
+// The same mapping is passed to scene UI scripts, so callouts follow the GPU
+// image through letterboxing, cropping, and integer-aligned odd-sized borders.
+export function presentationMapping(source, output, mode) {
+  const sw=Math.max(1,source.width), sh=Math.max(1,source.height);
+  const ow=Math.max(1,output.width), oh=Math.max(1,output.height);
+  if (mode==='pixel') {
+    const factor=Math.max(1,Math.min(Math.floor(ow/sw),Math.floor(oh/sh)));
+    const iw=sw*factor, ih=sh*factor;
+    const dx=ow-iw, dy=oh-ih;
+    return {scale:[ow/iw,oh/ih], offset:[(dx/2-Math.floor(dx/2))/iw,(dy/2-Math.floor(dy/2))/ih],
+      factor, cropped:iw>ow || ih>oh};
   }
-  const describe=() => {
-    const size=sceneResolution(preferences,viewport);
-    const label=preferences.mode==='viewport' ? 'Viewport' : `${size.width} × ${size.height}`;
-    summary.textContent=label;
-    if (size.width>1 && size.height>1)
-      feedback.textContent=`${size.width} × ${size.height} · ${aspectLabel(size.width,size.height)} · ${preferences.scaling==='fill' ? 'Fill viewport' : 'Fit entire image'}`;
+  const ratio=(ow/oh)/(sw/sh);
+  const scale=mode==='fill' ? (ratio<1 ? [ratio,1] : [1,1/ratio]) :
+    (ratio<1 ? [1,1/ratio] : [ratio,1]);
+  return {scale,offset:[0,0],factor:null,cropped:false};
+}
+// Presets are filtered against both the GPU dimension and total-pixel limits.
+// Custom sizes scale from the selected ratio, rounded by at most one pixel.
+export function resolutionOptions(aspect, reference, viewport, deviceLimit=MAX_RENDER_DIMENSION, ratioReference=reference) {
+  if (!validAspect(aspect)) return [];
+  const ref=reference?.width>0 && reference?.height>0 ? reference : {width:1280,height:720};
+  const ratio=validRatio(ratioReference?.width,ratioReference?.height) ? ratioReference : ref;
+  const pairs=aspect==='custom' ? CUSTOM_HEIGHTS.map(h=>[Math.round(h*ratio.width/ratio.height),h]) : COMMON_RESOLUTIONS[aspect];
+  const found=new Map();
+  const add=(width,height)=>{
+    if (!validateResolution(width,height,deviceLimit) && (aspect==='custom' || aspectMatches(aspect,width,height)))
+      found.set(`${width}x${height}`,{id:`${width}x${height}`,label:`${width} × ${height}`,width,height});
   };
-  const sync=() => {
-    const match=RESOLUTION_PRESETS.find(item=>item.width===preferences.width && item.height===preferences.height);
-    preset.value=preferences.mode==='viewport' ? 'viewport' : match?.id || 'custom';
-    scaling.value=preferences.scaling;
-    custom.hidden=preset.value!=='custom';
-    width.value=String(preferences.width); height.value=String(preferences.height);
-    describe();
-  };
-  const save=next => {
-    const limit=getDeviceLimit();
-    const error=next.mode==='fixed' ? validateResolution(next.width,next.height,limit) : null;
-    if (error) { feedback.textContent=error; return false; }
-    preferences=next;
-    try { storage.setItem(key,JSON.stringify(preferences)); } catch { /* The live setting still applies. */ }
-    sync(); return true;
-  };
-  preset.addEventListener('change', () => {
-    if (preset.value==='custom') { custom.hidden=false; width.focus(); return; }
-    const chosen=RESOLUTION_PRESETS.find(item=>item.id===preset.value);
-    if (!chosen) return;
-    const next=chosen.id==='viewport' ? {...preferences,mode:'viewport'} :
-      {...preferences,mode:'fixed',width:chosen.width,height:chosen.height};
-    if (!save(next)) preset.value=preferences.mode==='viewport' ? 'viewport' :
-      (RESOLUTION_PRESETS.find(item=>item.width===preferences.width && item.height===preferences.height)?.id || 'custom');
-  });
-  scaling.addEventListener('change', () => save({...preferences,scaling:scaling.value}));
-  form.addEventListener('submit', event => {
-    event.preventDefault();
-    save({...preferences,mode:'fixed',width:Number(width.value),height:Number(height.value)});
-  });
-  sync();
+  for (const [width,height] of pairs) add(width,height);
+  add(ref.width,ref.height);
+  return [...found.values()].sort((a,b)=>a.width*a.height-b.width*b.height);
+}
+// Persistence and validation stay in the browser host. The pause scene owns
+// presentation and sends setting requests through ECS events.
+export function createDisplaySettings(storage, getDeviceLimit) {
+  const key='countersplat.display.v1';
+  let preferences;
+  try { preferences=normalizeDisplay(JSON.parse(storage?.getItem(key) ?? 'null')); }
+  catch { preferences={...DEFAULT_DISPLAY}; }
+  const save=next=>{ preferences=next; try { storage?.setItem(key,JSON.stringify(preferences)); } catch { /* Live settings still work. */ } };
   return {
     get preferences() { return preferences; },
-    updateViewport(size) {
-      if (size.width!==viewport.width || size.height!==viewport.height) { viewport=size; if (preferences.mode==='viewport') describe(); }
+    set(next) {
+      if (!next || typeof next !== 'object' || !['fixed','viewport'].includes(next.mode) ||
+          !['fill','fit','pixel'].includes(next.scaling) || (next.aspect !== undefined && !validAspect(next.aspect)))
+        return {ok:false,error:'Invalid display setting.'};
+      const error=validateResolution(next.width,next.height,next.mode==='fixed' ? getDeviceLimit() : MAX_RENDER_DIMENSION);
+      if (error) return {ok:false,error};
+      const aspect=validAspect(next.aspect) && (next.mode==='viewport' || aspectMatches(next.aspect,next.width,next.height))
+        ? next.aspect : inferAspect(next.width,next.height);
+      let ratio={};
+      if (aspect==='custom') {
+        const sameSize=preferences.mode==='fixed' && preferences.aspect==='custom' &&
+          preferences.width===next.width && preferences.height===next.height;
+        const previous=validRatio(preferences.ratio_width,preferences.ratio_height) && sameSize && !next.reset_ratio;
+        const ratioWidth=next.ratio_width ?? (previous ? preferences.ratio_width : next.width);
+        const ratioHeight=next.ratio_height ?? (previous ? preferences.ratio_height : next.height);
+        if (!validRatio(ratioWidth,ratioHeight)) return {ok:false,error:'Invalid custom aspect ratio.'};
+        ratio={ratio_width:ratioWidth,ratio_height:ratioHeight};
+      }
+      save({mode:next.mode,width:next.width,height:next.height,scaling:next.scaling,aspect,...ratio});
+      return {ok:true};
+    },
+    setAspect(aspect,viewport) {
+      if (!validAspect(aspect)) return {ok:false,error:'Invalid aspect ratio.'};
+      const reference=sceneResolution(preferences,viewport);
+      if (aspect==='custom') {
+        const source=validateResolution(reference.width,reference.height,getDeviceLimit()) ? preferences : reference;
+        save({...preferences,mode:'fixed',width:source.width,height:source.height,aspect,ratio_width:source.width,ratio_height:source.height});
+        return {ok:true};
+      }
+      const options=resolutionOptions(aspect,reference,viewport,getDeviceLimit()).filter(item=>item.id!=='viewport');
+      if (!options.length) return {ok:false,error:'No supported resolutions for this aspect ratio.'};
+      const pixels=Math.max(1,reference.width*reference.height);
+      options.sort((a,b)=>Math.abs(Math.log(a.width*a.height/pixels))-Math.abs(Math.log(b.width*b.height/pixels)));
+      save({mode:'fixed',width:options[0].width,height:options[0].height,scaling:preferences.scaling,aspect});
+      return {ok:true};
+    },
+  };
+}
+export function createHudPreferences(storage) {
+  const key='countersplat.hud.show-performance.v1';
+  let showPerformance=true;
+  try { const value=storage?.getItem(key); if (value==='true' || value==='false') showPerformance=value==='true'; }
+  catch { /* Default remains visible. */ }
+  return {
+    get showPerformance() { return showPerformance; },
+    set(value) {
+      if (typeof value!=='boolean') return false;
+      showPerformance=value;
+      try { storage?.setItem(key,String(value)); } catch { /* Live setting still applies. */ }
+      return true;
     },
   };
 }

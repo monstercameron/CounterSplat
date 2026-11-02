@@ -88,7 +88,7 @@ pub fn sog_v2_sh_overrides() -> Overrides {
         1,
         "splat lens uniform hook changed"
     );
-    let corner = corner.replace(VIEWPORT, "uniform lens_effects: vec4f;\nuniform previous_clip_from_model: mat4x4f;\nuniform viewport_size: vec4f;");
+    let corner = corner.replace(VIEWPORT, "struct FrameEffects { lens: vec4f, light_position_radius: vec4f, light_color_intensity: vec4f, };\nuniform frame_effects: FrameEffects;\nuniform previous_clip_from_model: mat4x4f;\nuniform viewport_size: vec4f;");
     const DIAGONAL: &str = "    let diagonal1 = cov[0][0] + 0.3;\n    let offDiagonal = cov[0][1];\n    let diagonal2 = cov[1][1] + 0.3;";
     assert_eq!(
         corner.matches(DIAGONAL).count(),
@@ -100,20 +100,20 @@ pub fn sog_v2_sh_overrides() -> Overrides {
     var offDiagonal = cov[0][1];
     var diagonal2 = cov[1][1] + 0.3;
     corner.lensFactor = 1.0;
-    if (uniform.lens_effects.z > 0.0 || uniform.lens_effects.w > 0.0) {
+    if (uniform.frame_effects.lens.z > 0.0 || uniform.frame_effects.lens.w > 0.0) {
         let originalDet = max(diagonal1 * diagonal2 - offDiagonal * offDiagonal, 0.000001);
-        if (uniform.lens_effects.z > 0.0) {
+        if (uniform.frame_effects.lens.z > 0.0) {
             let depth = max(-center.view.z, 0.001);
-            let diameter = min(24.0, uniform.lens_effects.z * abs(1.0 - uniform.lens_effects.y / depth));
+            let diameter = min(24.0, uniform.frame_effects.lens.z * abs(1.0 - uniform.frame_effects.lens.y / depth));
             let variance = diameter * diameter / 16.0;
             diagonal1 += variance;
             diagonal2 += variance;
         }
-        if (uniform.lens_effects.w > 0.0) {
+        if (uniform.frame_effects.lens.w > 0.0) {
             let oldClip = uniform.previous_clip_from_model * vec4f(center.modelCenterModified, 1.0);
             if (oldClip.w > 0.001 && center.proj.w > 0.001) {
                 var motion = (center.proj.xy / center.proj.w - oldClip.xy / oldClip.w) *
-                    (0.5 * uniform.viewport_size.xy * uniform.lens_effects.w);
+                    (0.5 * uniform.viewport_size.xy * uniform.frame_effects.lens.w);
                 motion *= min(1.0, 32.0 / max(length(motion), 0.001));
                 diagonal1 += motion.x * motion.x / 12.0;
                 offDiagonal += motion.x * motion.y / 12.0;
@@ -213,14 +213,28 @@ varying gaussianUV: half2;
     );
     // SOG color arrives in gamma space. Apply photographic exposure in linear
     // light, then return to the source representation for the existing output path.
-    let vs = vs.replace("    // user hook operates in f32", r#"
+    let vs = vs.replace(
+        "    // user hook operates in f32",
+        r#"
     #ifndef PREPASS_PASS
-        if (uniform.lens_effects.x != 0.0) {
-            let linearColor = pow(max(vec3f(clr.xyz), vec3f(0.0)), vec3f(2.2)) * exp2(uniform.lens_effects.x);
+        let light = uniform.frame_effects.light_color_intensity;
+        if (uniform.frame_effects.lens.x != 0.0 || light.w > 0.0) {
+            var linearColor = pow(max(vec3f(clr.xyz), vec3f(0.0)), vec3f(2.2));
+            if (light.w > 0.0) {
+                // The captured splats have baked colors rather than surface normals.
+                // Apply a bounded, smooth world-space light to those colors only.
+                let position = (uniform.matrix_model * vec4f(center.modelCenterModified, 1.0)).xyz;
+                let delta = position - uniform.frame_effects.light_position_radius.xyz;
+                let radius = uniform.frame_effects.light_position_radius.w;
+                let falloff = max(0.0, 1.0 - dot(delta, delta) / max(radius * radius, 0.000001));
+                linearColor *= vec3f(1.0) + light.xyz * (light.w * falloff * falloff);
+            }
+            linearColor *= exp2(uniform.frame_effects.lens.x);
             clr = half4(pow(linearColor, vec3f(1.0 / 2.2)), clr.a);
         }
     #endif
-    // user hook operates in f32"#);
+    // user hook operates in f32"#,
+    );
     const READ_COLOR: &str = "var clr: half4 = half4(getColor());";
     assert!(vs.contains(READ_COLOR), "gsplat color hook changed");
     o.insert("gsplatVS".into(), vs.replace(READ_COLOR, "#ifdef PREPASS_PASS\n var clr: half4 = half4(0.0, 0.0, 0.0, textureLoad(sh0, splat.uv, 0).w);\n#else\n var clr: half4 = half4(getColor());\n#endif"));

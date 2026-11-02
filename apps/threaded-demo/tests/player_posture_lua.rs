@@ -387,3 +387,66 @@ fn input_reset_cancels_pending_clearance_without_accepting_old_results() {
     f.result(&fresh, true);
     assert_eq!(f.posture()["crouched"], false);
 }
+#[test]
+fn aiming_blocks_sprint_speed_and_releasing_aim_restores_it() {
+    let f = Fixture::new();
+    f.key("KeyW", true);
+    f.tick(6);
+    let walk = -f.camera().position[2];
+    let reset_position = || {
+        f.world
+            .borrow_mut()
+            .get_mut::<PlayerCamera>(f.player)
+            .unwrap()
+            .position[2] = 0.0;
+    };
+    reset_position();
+    f.key("ShiftRight", true);
+    f.tick(6);
+    let sprint = -f.camera().position[2];
+    assert!((sprint / walk - 3.0).abs() < 0.01);
+
+    f.lua
+        .dispatch(
+            "input.mouse_button",
+            &json!({"button":"right","pressed":true,"gameplay":true}),
+        )
+        .unwrap();
+    reset_position();
+    f.tick(6);
+    assert!(
+        (-f.camera().position[2] / walk - 1.0).abs() < 0.01,
+        "ADS must walk despite Shift"
+    );
+    f.lua
+        .dispatch(
+            "input.mouse_button",
+            &json!({"button":"right","pressed":false,"gameplay":false}),
+        )
+        .unwrap();
+    reset_position();
+    f.tick(6);
+    assert!(
+        (-f.camera().position[2] / walk - 3.0).abs() < 0.01,
+        "releasing ADS restores held sprint"
+    );
+
+    f.lua
+        .dispatch("weapon.aim", &json!({"pressed":true}))
+        .unwrap();
+    reset_position();
+    f.tick(6);
+    assert!(
+        (-f.camera().position[2] / walk - 1.0).abs() < 0.01,
+        "scripted ADS also blocks sprint"
+    );
+    f.lua.dispatch("input.reset", &json!({})).unwrap();
+    f.key("KeyW", true);
+    f.key("ShiftRight", true);
+    reset_position();
+    f.tick(6);
+    assert!(
+        (-f.camera().position[2] / walk - 3.0).abs() < 0.01,
+        "reset clears the aim lock"
+    );
+}

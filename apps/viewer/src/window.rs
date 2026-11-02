@@ -620,6 +620,8 @@ impl State {
                 saturation: grade.saturation,
                 temperature: grade.temperature,
                 tint: grade.tint,
+                shadow_warmth: grade.shadow_warmth,
+                highlight_warmth: grade.highlight_warmth,
                 shadows: grade.shadows,
                 highlights: grade.highlights,
                 bloom_intensity: grade.bloom_intensity,

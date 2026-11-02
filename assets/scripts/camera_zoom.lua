@@ -2,8 +2,11 @@
 -- zoom writes only the temporary render FOV of the player camera.
 local ids = assert(ecs.get_resource("scene.entities"))
 local player = assert(ids.player)
+local weapon = ids.first_person
+local optics = assert(engine.optics, "load weapon_optics.lua before camera_zoom.lua")
 local read_controls = engine.component_reader(player, "PlayerControls")
-engine.export(player, "zoom_factor", {component="PlayerControls", field="zoom_factor", label="Zoom magnification", min=1, max=10})
+local read_optic = weapon and engine.component_reader(weapon, "WeaponOptic")
+local read_weapon_state = weapon and engine.component_reader(weapon, "WeaponState")
 engine.export(player, "zoom_response", {component="PlayerControls", field="zoom_response", label="Zoom response", min=1, max=30})
 
 local held = false
@@ -46,6 +49,8 @@ local function publish_lens(amount)
     last_standard, last_zoom, last_amount = standard, zoom, amount
 end
 
+-- Scripted aiming and physical right-button aiming use the same behavior.
+ecs.on("weapon.aim", function(event) held = event.pressed == true end)
 ecs.on("input.mouse_button", function(event)
     if event.button ~= "right" then return end
     if event.pressed == false then held = false
@@ -74,11 +79,18 @@ ecs.system("player.camera_zoom", function(dt)
     elseif not controls then return end
     dt = math.max(0, math.min(dt, 0.25))
     if dt == 0 then return end
-    local target = held and controls.enabled and controls.zoom_factor or 1
+    local aiming = held and controls.enabled
+    if aiming and read_weapon_state then
+        local state = read_weapon_state()
+        local name = type(state) == "table" and state.state or nil
+        if name == "noGun" or name == "stow" or name == "equip" or name == "death" or
+           name == "dead" or name == "reload" or name == "repack" then aiming = false end
+    end
+    local target = aiming and optics.magnification(read_optic and read_optic()) or 1
     local blend = 1 - math.exp(-controls.zoom_response * dt)
     magnification = magnification + (target - magnification) * blend
     if math.abs(magnification - target) < 0.0001 then magnification = target end
-    local lens_target = held and controls.enabled and 1 or 0
+    local lens_target = aiming and 1 or 0
     lens_blend = lens_blend + (lens_target - lens_blend) * blend
     if math.abs(lens_blend - lens_target) < 0.0001 then lens_blend = lens_target end
     publish_lens(lens_blend)

@@ -601,6 +601,7 @@ name = "countersplat-web"
 version = "0.1.0"
 dependencies = [
  "countersplat-assets",
+ "countersplat-audio-ecs",
  "countersplat-core",
  "countersplat-ecs",
  "countersplat-physics",

@@ -13,6 +13,9 @@ pub enum ViewportScale {
     Fill,
     /// Show the complete scene with black bars when aspect ratios differ.
     Fit,
+    /// Replicate whole source pixels by an integer factor. If the source is
+    /// larger than the output, present at 1x and crop instead of resampling.
+    PixelPerfect,
 }
 
 /// UV scale for aspect-preserving presentation. Input and output sizes must be nonzero.
@@ -25,7 +28,35 @@ pub fn viewport_uv_scale(source: (u32, u32), output: (u32, u32), mode: ViewportS
         ViewportScale::Fill => [1.0, 1.0 / ratio],
         ViewportScale::Fit if ratio < 1.0 => [1.0, 1.0 / ratio],
         ViewportScale::Fit => [ratio, 1.0],
+        ViewportScale::PixelPerfect => {
+            let source = (source.0.max(1), source.1.max(1));
+            let output = (output.0.max(1), output.1.max(1));
+            let factor = (output.0 / source.0).min(output.1 / source.1).max(1);
+            [
+                output.0 as f32 / (source.0 as f32 * factor as f32),
+                output.1 as f32 / (source.1 as f32 * factor as f32),
+            ]
+        }
     }
+}
+
+/// Integer-aligned centering correction, including odd-sized bars and crops.
+pub fn viewport_uv_offset(source: (u32, u32), output: (u32, u32), mode: ViewportScale) -> [f32; 2] {
+    if mode != ViewportScale::PixelPerfect {
+        return [0.0, 0.0];
+    }
+    let source = (source.0.max(1), source.1.max(1));
+    let output = (output.0.max(1), output.1.max(1));
+    let factor = (output.0 / source.0).min(output.1 / source.1).max(1);
+    let correction = |src: u32, out: u32| {
+        let image = i64::from(src) * i64::from(factor);
+        let difference = i64::from(out) - image;
+        (difference as f64 / 2.0 - difference.div_euclid(2) as f64) as f32 / image as f32
+    };
+    [
+        correction(source.0, output.0),
+        correction(source.1, output.1),
+    ]
 }
 
 /// Renderer-facing values, independent of ECS and scripting. Exposure is in stops.
@@ -38,6 +69,8 @@ pub struct Settings {
     pub saturation: f32,
     pub temperature: f32,
     pub tint: f32,
+    pub shadow_warmth: f32,
+    pub highlight_warmth: f32,
     pub shadows: f32,
     pub highlights: f32,
     pub bloom_intensity: f32,
@@ -56,6 +89,8 @@ impl Default for Settings {
             saturation: 1.0,
             temperature: 0.0,
             tint: 0.0,
+            shadow_warmth: 0.0,
+            highlight_warmth: 0.0,
             shadows: 0.0,
             highlights: 0.0,
             bloom_intensity: 0.0,
@@ -67,7 +102,7 @@ impl Default for Settings {
     }
 }
 impl Settings {
-    fn uniform(self) -> [f32; 16] {
+    fn uniform(self) -> [f32; 24] {
         // Keep the low-level interface safe even when a host does not validate its input.
         let finite = |v: f32, fallback: f32, lo: f32, hi: f32| {
             if v.is_finite() {
@@ -93,6 +128,14 @@ impl Settings {
             1.0,
             1.0,
             finite(self.sharpness, 0.0, 0.0, 2.0),
+            finite(self.shadow_warmth, 0.0, -1.0, 1.0),
+            finite(self.highlight_warmth, 0.0, -1.0, 1.0),
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
         ]
     }
 }
@@ -365,6 +408,10 @@ impl PostProcess {
         let uv = viewport_uv_scale((self.width, self.height), output_size, mode);
         packed[13] = uv[0];
         packed[14] = uv[1];
+        let offset = viewport_uv_offset((self.width, self.height), output_size, mode);
+        packed[20] = offset[0];
+        packed[21] = offset[1];
+        packed[22] = (mode == ViewportScale::PixelPerfect) as u8 as f32;
         queue.write_buffer(&self.uniform, 0, bytemuck::cast_slice(&packed));
         fn draw(
             encoder: &mut wgpu::CommandEncoder,
@@ -430,6 +477,18 @@ impl PostProcess {
 mod presentation_tests {
     use super::{viewport_uv_scale, ViewportScale};
     #[test]
+    fn integer_scaling_handles_odd_bars_and_oversized_sources() {
+        use super::viewport_uv_offset;
+        let mode = ViewportScale::PixelPerfect;
+        assert_eq!(viewport_uv_scale((2, 2), (5, 5), mode), [1.25, 1.25]);
+        assert_eq!(viewport_uv_offset((2, 2), (5, 5), mode), [0.125, 0.125]);
+        assert_eq!(viewport_uv_scale((8, 6), (5, 5), mode), [0.625, 5.0 / 6.0]);
+        assert_eq!(
+            viewport_uv_offset((8, 6), (5, 5), mode),
+            [0.5 / 8.0, 0.5 / 6.0]
+        );
+    }
+    #[test]
     fn fill_and_fit_preserve_aspect_for_wide_and_tall_outputs() {
         for (source, output) in [
             ((1920, 1080), (1200, 900)),
@@ -444,6 +503,7 @@ mod presentation_tests {
                 match mode {
                     ViewportScale::Fill => assert!(x <= 1.0 && y <= 1.0 && (x == 1.0 || y == 1.0)),
                     ViewportScale::Fit => assert!(x >= 1.0 && y >= 1.0 && (x == 1.0 || y == 1.0)),
+                    ViewportScale::PixelPerfect => unreachable!(),
                 }
             }
         }

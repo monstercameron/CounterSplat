@@ -51,6 +51,8 @@ impl Fixture {
             .borrow_mut()
             .set_dynamic_resource("voxel.capture_movement", json!(worker));
         let lua = LuaRuntime::new(Bridge(world.clone()), ScriptOptions::default()).unwrap();
+        lua.execute(&std::fs::read_to_string(root.join("assets/scripts/hitboxes.lua")).unwrap())
+            .unwrap();
         lua.execute(&std::fs::read_to_string(root.join("assets/scripts/ballistics.lua")).unwrap())
             .unwrap();
         Self {
@@ -365,56 +367,61 @@ fn gravity_uses_analytic_motion_at_different_tick_rates() {
 #[test]
 fn weapon_shot_tracks_the_visible_sight_through_the_render_aspect() {
     use countersplat_scene::PlayerCamera;
-    let f = Fixture::new(false);
-    {
-        let mut w = f.world.borrow_mut();
-        let camera = w.get_mut::<PlayerCamera>(f.player).unwrap();
-        camera.yaw = 0.0;
-        camera.pitch = 0.0;
-        camera.roll = 0.0;
-        camera.view_bob_pitch = 0.0;
-        camera.view_bob_roll = 0.0;
-        camera.view_turn_roll = 0.0;
-        camera.fov_degrees = 60.0;
-        camera.view_fov_degrees = None;
-        w.set_dynamic_resource("render.scene_aspect", json!(4.0 / 3.0));
-        let mut animation = w.get_dynamic(f.weapon, "WeaponAnimation").unwrap().clone();
-        animation["idle_enabled"] = json!(false);
-        animation["recoil_strength"] = json!(0.0);
-        w.set_dynamic(f.weapon, "WeaponAnimation", animation)
+    for render_fov in [60.0_f32, 0.2_f32] {
+        let f = Fixture::new(false);
+        {
+            let mut w = f.world.borrow_mut();
+            let camera = w.get_mut::<PlayerCamera>(f.player).unwrap();
+            camera.yaw = 0.0;
+            camera.pitch = 0.0;
+            camera.roll = 0.0;
+            camera.view_bob_pitch = 0.0;
+            camera.view_bob_roll = 0.0;
+            camera.view_turn_roll = 0.0;
+            camera.fov_degrees = 60.0;
+            camera.view_fov_degrees = Some(render_fov);
+            w.set_dynamic_resource("render.scene_aspect", json!(4.0 / 3.0));
+            let mut animation = w.get_dynamic(f.weapon, "WeaponAnimation").unwrap().clone();
+            animation["idle_enabled"] = json!(false);
+            animation["recoil_strength"] = json!(0.0);
+            w.set_dynamic(f.weapon, "WeaponAnimation", animation)
+                .unwrap();
+        }
+        let view = f
+            .world
+            .borrow()
+            .get_dynamic(f.weapon, "FirstPersonView")
+            .unwrap()
+            .clone();
+        let vertical = view["vertical_offset"].as_f64().unwrap();
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        f.lua
+            .execute(
+                &std::fs::read_to_string(root.join("assets/scripts/first_person_controller.lua"))
+                    .unwrap(),
+            )
             .unwrap();
-    }
-    let view = f
-        .world
-        .borrow()
-        .get_dynamic(f.weapon, "FirstPersonView")
-        .unwrap()
-        .clone();
-    let vertical = view["vertical_offset"].as_f64().unwrap();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    f.lua
-        .execute(
-            &std::fs::read_to_string(root.join("assets/scripts/first_person_controller.lua"))
-                .unwrap(),
-        )
-        .unwrap();
-    f.lua
-        .dispatch("weapon.aim", &json!({"pressed":true}))
-        .unwrap();
-    for _ in 0..30 {
+        f.lua
+            .dispatch("weapon.aim", &json!({"pressed":true}))
+            .unwrap();
+        for _ in 0..30 {
+            f.tick(1.0 / 60.0);
+        }
+        f.lua
+            .dispatch("weapon.trigger", &json!({"pressed":true}))
+            .unwrap();
         f.tick(1.0 / 60.0);
+        let shot = f.events("weapon.shot").pop().expect("ADS shot");
+        // Invert the bottom-anchored 16:9 source mapping for a 4:3 scene.
+        let scene_y = 1.0 + (361.0 / 720.0 + vertical - 1.0) * 0.75;
+        let sy = (0.5 - scene_y) * 2.0 * ((render_fov as f64 / 2.0).to_radians()).tan();
+        let expected_y = sy / (1.0 + sy * sy).sqrt();
+        assert!((shot["direction"][0].as_f64().unwrap()).abs() < 1e-7);
+        assert!(
+            (shot["direction"][1].as_f64().unwrap() - expected_y).abs() < 1e-7,
+            "render FOV: {render_fov}"
+        );
     }
-    f.lua
-        .dispatch("weapon.trigger", &json!({"pressed":true}))
-        .unwrap();
-    f.tick(1.0 / 60.0);
-    let shot = f.events("weapon.shot").pop().expect("ADS shot");
-    // Invert the bottom-anchored 16:9 source mapping for a 4:3 scene.
-    let scene_y = 1.0 + (361.0 / 720.0 + vertical - 1.0) * 0.75;
-    let sy = (0.5 - scene_y) * 2.0 * (30.0_f64.to_radians()).tan();
-    let expected_y = sy / (1.0 + sy * sy).sqrt();
-    assert!((shot["direction"][0].as_f64().unwrap()).abs() < 1e-7);
-    assert!((shot["direction"][1].as_f64().unwrap() - expected_y).abs() < 1e-6);
 }
 
 #[test]
@@ -456,4 +463,159 @@ fn a_hidden_weapon_fires_through_the_camera_center() {
     assert!(shot["direction"][0].as_f64().unwrap().abs() < 1e-7);
     assert!(shot["direction"][1].as_f64().unwrap().abs() < 1e-7);
     assert!((shot["direction"][2].as_f64().unwrap() + 1.0).abs() < 1e-7);
+}
+#[test]
+fn human_zones_trace_and_report_through_real_projectiles() {
+    let f = Fixture::new(false);
+    let target = f.target(-10.0);
+    let config = f
+        .world
+        .borrow()
+        .get_dynamic(f.player, "Hitbox")
+        .unwrap()
+        .clone();
+    f.world
+        .borrow_mut()
+        .set_dynamic(target, "Hitbox", config)
+        .unwrap();
+    f.world
+        .borrow_mut()
+        .set_dynamic_resource("test.target", json!(target.to_string()));
+    f.lua
+        .execute(
+            r#"
+      local target=ecs.get_resource('test.target')
+      local h=ecs.get(target,'Hitbox')
+      for _,case in ipairs({
+        {'head',0,1.68},{'neck',0,1.51},{'chest',0,1.29},
+        {'abdomen',0,.99},{'pelvis',0,.82},{'left_arm',-.28,1.17},
+        {'right_arm',.28,1.17},{'left_leg',-.10,.41},{'right_leg',.10,.41}
+      }) do
+        local hit=engine.hitbox.trace_segment(target,h,{case[2],case[3],-8},{case[2],case[3],-12})
+        assert(hit and hit.zone==case[1], case[1] .. ': ' .. tostring(hit and hit.zone))
+        assert(hit.fraction>=0 and hit.fraction<=1)
+      end
+      assert(not engine.hitbox.trace_segment(target,h,{2,1,-8},{2,1,-12}))
+      assert(not engine.hitbox.trace_segment(target,h,{0,1,-8},{0,1,-8}))
+      local inside=engine.hitbox.trace_segment(target,h,{0,1.68,-10},{0,1.68,-12})
+      assert(inside and inside.zone=='head' and inside.fraction==0)
+      h.yaw=math.pi/2
+      local rotated=engine.hitbox.trace_segment(target,h,{-2,1.68,-10},{2,1.68,-10})
+      assert(rotated and rotated.zone=='head' and rotated.normal[1]<-.99)
+      h.enabled=false
+      assert(not engine.hitbox.trace_segment(target,h,{0,1.68,-8},{0,1.68,-12}))
+    "#,
+        )
+        .unwrap();
+    f.lua.dispatch("weapon.shot", &json!({"entity":f.weapon.to_string(),"player":f.player.to_string(),"shot":7,"origin":[0,1.68,0],"direction":[0,0,-1]})).unwrap();
+    for _ in 0..4 {
+        f.tick(0.25);
+    }
+    let impact = f.events("projectile.impact").pop().unwrap();
+    assert_eq!(impact["zone"], "head");
+    assert_eq!(f.events("combat.damage")[0]["zone"], "head");
+}
+
+#[test]
+fn player_hitbox_follows_rig_scale_and_crouched_feet() {
+    let f = Fixture::new(false);
+    f.lua.execute(r#"
+      local id=ecs.get_resource('scene.entities').player
+      local camera=ecs.get(id,'PlayerCamera'); camera.position={0,3.4,0}; camera.yaw=0; ecs.set(id,'PlayerCamera',camera)
+      local rig=ecs.get(id,'PlayerRig'); rig.units_per_meter=2; rig.eye_height_m=1.7; ecs.set(id,'PlayerRig',rig)
+      local body=ecs.get(id,'PhysicsBody'); body.radius=.5; body.capsule_half_height=1.35; body.collision_offset_y=-1.55; ecs.set(id,'PhysicsBody',body)
+      local h=ecs.get(id,'Hitbox')
+      local hit=engine.hitbox.trace_segment(id,h,{0,3.36,2},{0,3.36,-2})
+      assert(hit and hit.zone=='head')
+      -- Crouching keeps the feet fixed but halves the standing height.
+      body.capsule_half_height=.5; body.collision_offset_y=-.7; ecs.set(id,'PhysicsBody',body)
+      camera.position[2]=1.7; ecs.set(id,'PlayerCamera',camera)
+      hit=engine.hitbox.trace_segment(id,h,{0,1.68,2},{0,1.68,-2})
+      assert(hit and hit.zone=='head')
+      assert(not engine.hitbox.trace_segment(id,h,{0,3.36,2},{0,3.36,-2}))
+    "#).unwrap();
+}
+
+#[test]
+fn armor_absorbs_part_of_damage_then_depletes() {
+    let f = Fixture::new(false);
+    let target = f.target(-3.0);
+    f.world
+        .borrow_mut()
+        .set_dynamic(
+            target,
+            "Armor",
+            json!({"current":10.0,"maximum":100.0,"absorption":0.5}),
+        )
+        .unwrap();
+    f.shot();
+    f.tick(0.25);
+    let w = f.world.borrow();
+    assert_eq!(w.get_dynamic(target, "Armor").unwrap()["current"], 0.0);
+    assert_eq!(w.get_dynamic(target, "Health").unwrap()["current"], 75.0);
+    drop(w);
+    let damage = f.events("combat.damage");
+    assert_eq!(damage[0]["armor_absorbed"], 10.0);
+    assert_eq!(damage[0]["health_damage"], 25.0);
+}
+
+#[test]
+fn impact_diagnostics_only_appear_with_the_ecs_tools() {
+    use countersplat_ui::UiElement;
+    let f = Fixture::new(false);
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    f.lua
+        .execute(&std::fs::read_to_string(root.join("assets/scripts/editor_overlay.lua")).unwrap())
+        .unwrap();
+    let notice: Entity = f
+        .world
+        .borrow()
+        .get_dynamic_resource("scene.entities")
+        .unwrap()["weapon_impact_notice"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let visible = || f.world.borrow().get::<UiElement>(notice).unwrap().visible;
+    let toggle = || {
+        f.lua
+            .dispatch(
+                "input.key",
+                &json!({"code":"Backquote","pressed":true,"is_repeat":false,"gameplay":true}),
+            )
+            .unwrap();
+        for event in f.events("engine.event") {
+            f.lua.dispatch("engine.event", &event).unwrap();
+        }
+    };
+    f.target(-3.0);
+    f.shot();
+    f.tick(0.25);
+    assert!(
+        !visible(),
+        "an impact must not leak debug output into the regular HUD"
+    );
+    assert_eq!(f.events("projectile.impact").len(), 1);
+    toggle();
+    assert!(
+        visible(),
+        "a still-current diagnostic is visible with ECS tools open"
+    );
+    toggle();
+    assert!(
+        !visible(),
+        "closing ECS tools hides an active notice immediately"
+    );
+    toggle();
+    assert!(visible());
+    for _ in 0..5 {
+        f.tick(0.25);
+    }
+    assert!(!visible(), "the notice still expires normally");
+    f.shot();
+    f.tick(0.25);
+    assert!(
+        visible(),
+        "new impacts are displayed while ECS tools are open"
+    );
 }

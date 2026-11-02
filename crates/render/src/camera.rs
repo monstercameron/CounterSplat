@@ -7,6 +7,20 @@ pub const IDENTITY: Mat4 = [
     1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 ];
 
+/// Scale displacement between submitted frames to a virtual camera exposure.
+/// A shutter can span several display frames, especially on high-refresh screens.
+/// Invalid intervals disable the effect; the bound limits extrapolation after tiny deltas.
+pub fn shutter_motion_scale(shutter_seconds: f32, frame_seconds: f32) -> f32 {
+    if !shutter_seconds.is_finite()
+        || !frame_seconds.is_finite()
+        || shutter_seconds <= 0.0
+        || frame_seconds <= 0.0
+    {
+        return 0.0;
+    }
+    (shutter_seconds / frame_seconds).min(8.0)
+}
+
 /// Right-handed view matrix looking from `eye` at `target`.
 pub fn look_at(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> Mat4 {
     let f = normalize(sub(target, eye));
@@ -218,4 +232,24 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 fn normalize(v: [f32; 3]) -> [f32; 3] {
     let len = dot(v, v).sqrt();
     [v[0] / len, v[1] / len, v[2] / len]
+}
+
+#[cfg(test)]
+mod shutter_tests {
+    use super::shutter_motion_scale;
+
+    #[test]
+    fn exposure_scales_consistently_with_frame_rate_and_rejects_invalid_intervals() {
+        let shutter = 1.0 / 48.0;
+        for fps in [30.0, 60.0, 120.0, 240.0] {
+            let delta = 1.0 / fps;
+            let displacement = 3.0 * delta;
+            let exposed = displacement * shutter_motion_scale(shutter, delta);
+            assert!((exposed - 3.0 * shutter).abs() < 1e-6, "fps={fps}");
+        }
+        assert_eq!(shutter_motion_scale(shutter, 0.0), 0.0);
+        assert_eq!(shutter_motion_scale(f32::NAN, 0.01), 0.0);
+        assert_eq!(shutter_motion_scale(shutter, f32::INFINITY), 0.0);
+        assert_eq!(shutter_motion_scale(shutter, 0.0001), 8.0);
+    }
 }

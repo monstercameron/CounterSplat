@@ -467,6 +467,10 @@ ecs.on("ui.action", function(action)
                         ecs.emit("camera.lens_changed", ecs.get(selected, "CameraLens"))
                     elseif selected == ids.player and entry.component == "CameraZoomLens" then
                         ecs.emit("camera.zoom_lens_changed", ecs.get(selected, "CameraZoomLens"))
+                    elseif entry.component == "WeaponOptic" then
+                        local optic = ecs.get(selected, "WeaponOptic")
+                        ecs.emit("weapon.optic_changed", {entity=selected, kind=optic.kind,
+                            scope_magnification=optic.scope_magnification})
                     elseif selected == ids.image_correction and entry.component == "ImageCorrection" then
                         ecs.emit("image.correction_changed", ecs.get(selected, "ImageCorrection"))
                     elseif selected == ids.camera_controller and entry.component == "CameraController" then

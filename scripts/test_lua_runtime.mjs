@@ -103,7 +103,7 @@ class WorldFixture {
   }
 }
 const factory = new LuaFactory();
-const world = new WorldFixture({back_to_levels: 'game-levels'});
+const world = new WorldFixture({});
 const game = await LuaScene.create(factory, world, 'gameplay', engineApi, [gameplay]);
 assert.equal(game.vm.doStringSync('return _VERSION'), 'Lua 5.4');
 function runGameplay() {
@@ -116,9 +116,6 @@ assert.deepEqual(game.drain('engine.scene'), []);
 game.emit('input.key', {key: 'Escape', pressed: true, is_repeat: false});
 runGameplay();
 assert.deepEqual(game.drain('engine.scene'), [{action:'push', scene:'pause_menu'}]);
-game.emit('ui.action', {id:'game-levels', kind:{type:'clicked'}});
-runGameplay();
-assert.deepEqual(game.drain('engine.scene'), [{action:'replace', scene:'level_selector'}]);
 world.components.set('entity', new Map([['Health', 50], ['Nullable', null], ['False', false], ['__proto__', 'safe'], ['Stats', Object.assign(Object.create(null), {hp:10, keep:true})]]));
 world.resources.set('null-resource', null);
 world.resources.set('false-resource', false);
@@ -639,6 +636,24 @@ const profiledChannels = new LuaScene(null, orderedWorld, 'gameplay', true);
 profiledChannels.consumePending(fixedChannels, () => {});
 assert.equal(profiledChannels.profileReport().operations.drain_next.count, 1);
 ordered.close();
+
+// User-defined names share one queued channel in the browser Lua runtime.
+const eventWorld = new WorldFixture({});
+const eventScene = await LuaScene.create(factory, eventWorld, 'gameplay', engineApi, [`
+  local callback = engine.events.on('demo.ping', function(e)
+    ecs.set_resource('demo.first', e.value)
+    engine.events.emit('demo.pong', {value=e.value+1})
+  end)
+  engine.events.on('demo.pong', function(e) ecs.set_resource('demo.second', e.value) end)
+  engine.events.emit('demo.ping', {value=7})
+`]);
+const eventChannel = new EventChannels(['engine.event']);
+eventScene.dispatchPending(eventChannel);
+assert.equal(eventWorld.resources.get('demo.first'), 7);
+assert.equal(eventWorld.resources.has('demo.second'), false);
+eventScene.dispatchPending(eventChannel);
+assert.equal(eventWorld.resources.get('demo.second'), 8);
+eventScene.close();
 
 // Time spent inside an ECS host call must not exhaust a healthy Lua tick.
 const stallSignal = new Int32Array(new SharedArrayBuffer(4));

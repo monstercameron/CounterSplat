@@ -36,15 +36,15 @@
             "height": 1
           },
           "z": 100,
-          "widget": {
-            "type": "rectangle"
-          },
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
           "style": {
             "fill": [
               3,
-              8,
-              15,
-              185
+              7,
+              10,
+              188
             ],
             "border": [
               0,
@@ -52,9 +52,18 @@
               0,
               0
             ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
             "rounding": 0
           },
-          "draggable": false
+          "widget": {
+            "type": "rectangle"
+          }
         }
       }
     },
@@ -66,27 +75,37 @@
           "rect": {
             "x": 0,
             "y": 0,
-            "width": 380,
-            "height": 286
+            "width": 1120,
+            "height": 700
           },
           "z": 110,
-          "widget": {
-            "type": "panel"
-          },
+          "visible": true,
+          "enabled": true,
+          "draggable": true,
           "style": {
             "fill": [
-              16,
-              32,
-              41,
-              250
+              0,
+              0,
+              0,
+              0
             ],
             "border": [
-              103,
-              145,
-              145,
-              230
+              0,
+              0,
+              0,
+              0
             ],
-            "rounding": 10
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "panel"
           },
           "anchor": "center"
         }
@@ -99,17 +118,15 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 28,
-            "y": 23,
-            "width": 324,
-            "height": 38
+            "x": 20,
+            "y": 13,
+            "width": 640,
+            "height": 30
           },
-          "z": 111,
-          "widget": {
-            "type": "text",
-            "text": "Paused",
-            "align": "left"
-          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
           "style": {
             "fill": [
               0,
@@ -123,13 +140,19 @@
               0,
               0
             ],
-            "font_size": 28,
             "text": [
-              240,
-              248,
-              244,
+              235,
+              239,
+              239,
               255
-            ]
+            ],
+            "font_size": 20,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "C O U N T E R S P L A T",
+            "align": "left"
           }
         }
       },
@@ -141,17 +164,15 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 28,
-            "y": 67,
-            "width": 324,
-            "height": 26
+            "x": 20,
+            "y": 42,
+            "width": 300,
+            "height": 17
           },
-          "z": 111,
-          "widget": {
-            "type": "text",
-            "text": "Take a moment, then continue.",
-            "align": "left"
-          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
           "style": {
             "fill": [
               0,
@@ -165,13 +186,153 @@
               0,
               0
             ],
-            "font_size": 14,
             "text": [
-              165,
-              190,
-              194,
+              155,
+              171,
+              177,
               255
-            ]
+            ],
+            "font_size": 10,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "C A N V A S",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "paused_label",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 1000,
+            "y": 21,
+            "width": 86,
+            "height": 20
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 12,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "PAUSED",
+            "align": "right"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "paused_accent",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 1099,
+            "y": 18,
+            "width": 2,
+            "height": 25
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              204,
+              151,
+              82,
+              255
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "rail_background",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 20,
+            "y": 91,
+            "width": 260,
+            "height": 425
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              7,
+              13,
+              17,
+              232
+            ],
+            "border": [
+              80,
+              97,
+              105,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "rectangle"
           }
         }
       },
@@ -183,37 +344,40 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 28,
-            "y": 111,
-            "width": 324,
-            "height": 46
+            "x": 29,
+            "y": 100,
+            "width": 242,
+            "height": 44
           },
           "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              134,
+              96,
+              50,
+              235
+            ],
+            "border": [
+              217,
+              166,
+              99,
+              245
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
           "widget": {
             "type": "button",
             "label": "Resume"
-          },
-          "style": {
-            "fill": [
-              163,
-              113,
-              54,
-              255
-            ],
-            "border": [
-              237,
-              190,
-              121,
-              255
-            ],
-            "text": [
-              255,
-              248,
-              234,
-              255
-            ],
-            "font_size": 16,
-            "rounding": 6
           }
         }
       },
@@ -225,41 +389,6855 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 28,
-            "y": 169,
-            "width": 324,
-            "height": 46
+            "x": 29,
+            "y": 151,
+            "width": 242,
+            "height": 44
           },
           "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
           "widget": {
             "type": "button",
             "label": "Choose level"
-          },
-          "style": {
-            "fill": [
-              29,
-              56,
-              62,
-              255
-            ],
-            "border": [
-              100,
-              150,
-              151,
-              220
-            ],
-            "text": [
-              229,
-              242,
-              237,
-              255
-            ],
-            "font_size": 16,
-            "rounding": 6
           }
         }
       },
       "parent": "panel"
+    },
+    {
+      "id": "nav_settings",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 29,
+            "y": 202,
+            "width": 242,
+            "height": 44
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Settings"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "nav_display",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 29,
+            "y": 253,
+            "width": 242,
+            "height": 44
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Display"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "nav_controls",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 29,
+            "y": 304,
+            "width": 242,
+            "height": 44
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Controls"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "nav_graphics",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 29,
+            "y": 355,
+            "width": 242,
+            "height": 44
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Graphics"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "nav_audio",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 29,
+            "y": 406,
+            "width": 242,
+            "height": 44
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Audio"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "return_menu",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 29,
+            "y": 457,
+            "width": 242,
+            "height": 44
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Return to menu"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "icon_resume",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 42,
+            "y": 110,
+            "width": 24,
+            "height": 24
+          },
+          "z": 114,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              230,
+              234,
+              231,
+              240
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "polyline",
+            "points": [
+              [
+                4,
+                2
+              ],
+              [
+                19,
+                12
+              ],
+              [
+                4,
+                22
+              ],
+              [
+                4,
+                2
+              ]
+            ],
+            "thickness": 1.7
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "icon_levels",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 42,
+            "y": 161,
+            "width": 24,
+            "height": 24
+          },
+          "z": 114,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              230,
+              234,
+              231,
+              240
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "polyline",
+            "points": [
+              [
+                3,
+                3
+              ],
+              [
+                10,
+                3
+              ],
+              [
+                10,
+                10
+              ],
+              [
+                3,
+                10
+              ],
+              [
+                3,
+                3
+              ],
+              [
+                3,
+                14
+              ],
+              [
+                10,
+                14
+              ],
+              [
+                10,
+                21
+              ],
+              [
+                3,
+                21
+              ],
+              [
+                3,
+                14
+              ],
+              [
+                14,
+                14
+              ],
+              [
+                21,
+                14
+              ],
+              [
+                21,
+                21
+              ],
+              [
+                14,
+                21
+              ],
+              [
+                14,
+                14
+              ],
+              [
+                14,
+                3
+              ],
+              [
+                21,
+                3
+              ],
+              [
+                21,
+                10
+              ],
+              [
+                14,
+                10
+              ],
+              [
+                14,
+                3
+              ]
+            ],
+            "thickness": 1.7
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "icon_nav_settings",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 42,
+            "y": 212,
+            "width": 24,
+            "height": 24
+          },
+          "z": 114,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              230,
+              234,
+              231,
+              240
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "polyline",
+            "points": [
+              [
+                12,
+                2
+              ],
+              [
+                18,
+                4
+              ],
+              [
+                21,
+                10
+              ],
+              [
+                19,
+                17
+              ],
+              [
+                12,
+                21
+              ],
+              [
+                5,
+                18
+              ],
+              [
+                2,
+                12
+              ],
+              [
+                5,
+                5
+              ],
+              [
+                12,
+                2
+              ],
+              [
+                12,
+                8
+              ],
+              [
+                15,
+                10
+              ],
+              [
+                15,
+                14
+              ],
+              [
+                12,
+                16
+              ],
+              [
+                9,
+                14
+              ],
+              [
+                9,
+                10
+              ],
+              [
+                12,
+                8
+              ]
+            ],
+            "thickness": 1.7
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "icon_nav_display",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 42,
+            "y": 263,
+            "width": 24,
+            "height": 24
+          },
+          "z": 114,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              230,
+              234,
+              231,
+              240
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "polyline",
+            "points": [
+              [
+                2,
+                3
+              ],
+              [
+                22,
+                3
+              ],
+              [
+                22,
+                17
+              ],
+              [
+                2,
+                17
+              ],
+              [
+                2,
+                3
+              ],
+              [
+                12,
+                17
+              ],
+              [
+                12,
+                21
+              ],
+              [
+                7,
+                21
+              ],
+              [
+                17,
+                21
+              ]
+            ],
+            "thickness": 1.7
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "icon_nav_controls",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 42,
+            "y": 314,
+            "width": 24,
+            "height": 24
+          },
+          "z": 114,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              230,
+              234,
+              231,
+              240
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "polyline",
+            "points": [
+              [
+                3,
+                7
+              ],
+              [
+                6,
+                4
+              ],
+              [
+                18,
+                4
+              ],
+              [
+                21,
+                7
+              ],
+              [
+                23,
+                17
+              ],
+              [
+                20,
+                20
+              ],
+              [
+                16,
+                17
+              ],
+              [
+                8,
+                17
+              ],
+              [
+                4,
+                20
+              ],
+              [
+                1,
+                17
+              ],
+              [
+                3,
+                7
+              ],
+              [
+                7,
+                9
+              ],
+              [
+                11,
+                9
+              ],
+              [
+                9,
+                7
+              ],
+              [
+                9,
+                11
+              ],
+              [
+                16,
+                9
+              ],
+              [
+                17,
+                9
+              ]
+            ],
+            "thickness": 1.7
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "icon_nav_graphics",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 42,
+            "y": 365,
+            "width": 24,
+            "height": 24
+          },
+          "z": 114,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              230,
+              234,
+              231,
+              240
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "polyline",
+            "points": [
+              [
+                12,
+                2
+              ],
+              [
+                22,
+                7
+              ],
+              [
+                22,
+                17
+              ],
+              [
+                12,
+                22
+              ],
+              [
+                2,
+                17
+              ],
+              [
+                2,
+                7
+              ],
+              [
+                12,
+                2
+              ],
+              [
+                12,
+                12
+              ],
+              [
+                22,
+                7
+              ],
+              [
+                12,
+                12
+              ],
+              [
+                2,
+                7
+              ],
+              [
+                12,
+                12
+              ],
+              [
+                12,
+                22
+              ]
+            ],
+            "thickness": 1.7
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "icon_nav_audio",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 42,
+            "y": 416,
+            "width": 24,
+            "height": 24
+          },
+          "z": 114,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              230,
+              234,
+              231,
+              240
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "polyline",
+            "points": [
+              [
+                2,
+                9
+              ],
+              [
+                7,
+                9
+              ],
+              [
+                13,
+                4
+              ],
+              [
+                13,
+                20
+              ],
+              [
+                7,
+                15
+              ],
+              [
+                2,
+                15
+              ],
+              [
+                2,
+                9
+              ],
+              [
+                17,
+                8
+              ],
+              [
+                20,
+                12
+              ],
+              [
+                17,
+                16
+              ],
+              [
+                20,
+                5
+              ],
+              [
+                23,
+                12
+              ],
+              [
+                20,
+                19
+              ]
+            ],
+            "thickness": 1.7
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "icon_return_menu",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 42,
+            "y": 467,
+            "width": 24,
+            "height": 24
+          },
+          "z": 114,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              230,
+              234,
+              231,
+              240
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "polyline",
+            "points": [
+              [
+                12,
+                3
+              ],
+              [
+                21,
+                3
+              ],
+              [
+                21,
+                21
+              ],
+              [
+                12,
+                21
+              ],
+              [
+                12,
+                17
+              ],
+              [
+                4,
+                17
+              ],
+              [
+                4,
+                14
+              ],
+              [
+                1,
+                12
+              ],
+              [
+                4,
+                10
+              ],
+              [
+                4,
+                7
+              ],
+              [
+                12,
+                7
+              ],
+              [
+                12,
+                3
+              ],
+              [
+                11,
+                8
+              ],
+              [
+                15,
+                12
+              ],
+              [
+                11,
+                16
+              ]
+            ],
+            "thickness": 1.7
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "back_overview",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 945,
+            "y": 52,
+            "width": 145,
+            "height": 30
+          },
+          "z": 112,
+          "visible": false,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "‹  Overview"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "page_overview",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1120,
+            "height": 700
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "page_settings",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1120,
+            "height": 700
+          },
+          "z": 110,
+          "visible": false,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "page_display",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1120,
+            "height": 700
+          },
+          "z": 110,
+          "visible": false,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "page_controls",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1120,
+            "height": 700
+          },
+          "z": 110,
+          "visible": false,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "page_graphics",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1120,
+            "height": 700
+          },
+          "z": 110,
+          "visible": false,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "page_audio",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 1120,
+            "height": 700
+          },
+          "z": 110,
+          "visible": false,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "panel"
+          }
+        }
+      },
+      "parent": "panel"
+    },
+    {
+      "id": "status_card",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 300,
+            "y": 91,
+            "width": 800,
+            "height": 238
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              8,
+              15,
+              19,
+              241
+            ],
+            "border": [
+              80,
+              98,
+              106,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 318,
+            "y": 106,
+            "width": 400,
+            "height": 19
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 12,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "G A M E   S T A T U S",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_preview",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 316,
+            "y": 133,
+            "width": 410,
+            "height": 180
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              24,
+              28,
+              255
+            ],
+            "border": [
+              80,
+              98,
+              106,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "image",
+            "source": "level-preview"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_level_name",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 137,
+            "width": 330,
+            "height": 29
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 22,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Current level",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_level_kind",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 169,
+            "width": 330,
+            "height": 20
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Exploration",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_line_splats",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 197,
+            "width": 330,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_label_splats",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 199,
+            "width": 190,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 11,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "LOADED SPLATS",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_value_splats",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 946,
+            "y": 199,
+            "width": 130,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "—",
+            "align": "right"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_line_lod",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 224,
+            "width": 330,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_label_lod",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 226,
+            "width": 190,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 11,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "LOD",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_value_lod",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 946,
+            "y": 226,
+            "width": 130,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "—",
+            "align": "right"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_line_chunks",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 251,
+            "width": 330,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_label_chunks",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 253,
+            "width": 190,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 11,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "LOADED CHUNKS",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_value_chunks",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 946,
+            "y": 253,
+            "width": 130,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "—",
+            "align": "right"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_line_playtime",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 278,
+            "width": 330,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_label_playtime",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 746,
+            "y": 280,
+            "width": 190,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 11,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "PLAYTIME",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "status_value_playtime",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 946,
+            "y": 280,
+            "width": 130,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "—",
+            "align": "right"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_card",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 300,
+            "y": 340,
+            "width": 800,
+            "height": 118
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              8,
+              15,
+              19,
+              241
+            ],
+            "border": [
+              80,
+              98,
+              106,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 318,
+            "y": 351,
+            "width": 500,
+            "height": 19
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 12,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "D I S P L A Y",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_line_resolution",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 318,
+            "y": 372,
+            "width": 762,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_label_resolution",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 375,
+            "width": 210,
+            "height": 21
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Render resolution",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_value_resolution",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 560,
+            "y": 375,
+            "width": 505,
+            "height": 21
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "—",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_line_scaling",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 318,
+            "y": 397,
+            "width": 762,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_label_scaling",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 400,
+            "width": 210,
+            "height": 21
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Viewport scaling",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_value_scaling",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 560,
+            "y": 400,
+            "width": 505,
+            "height": 21
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "—",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_line_sky",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 318,
+            "y": 422,
+            "width": 762,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_label_sky",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 425,
+            "width": 210,
+            "height": 21
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "HDR sky",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_display_value_sky",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 560,
+            "y": 425,
+            "width": 505,
+            "height": 21
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "—",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_controls_card",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 300,
+            "y": 469,
+            "width": 800,
+            "height": 181
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              8,
+              15,
+              19,
+              241
+            ],
+            "border": [
+              80,
+              98,
+              106,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_controls_heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 318,
+            "y": 480,
+            "width": 500,
+            "height": 19
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 12,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "C O N T R O L S",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_controls_rule",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 318,
+            "y": 505,
+            "width": 762,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_key_1",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 513,
+            "width": 125,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_action_1",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 452,
+            "y": 513,
+            "width": 180,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_key_2",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 543,
+            "width": 125,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_action_2",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 452,
+            "y": 543,
+            "width": 180,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_key_3",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 573,
+            "width": 125,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_action_3",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 452,
+            "y": 573,
+            "width": 180,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_key_4",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 603,
+            "width": 125,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_action_4",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 452,
+            "y": 603,
+            "width": 180,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_key_5",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 697,
+            "y": 513,
+            "width": 125,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_action_5",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 827,
+            "y": 513,
+            "width": 180,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_key_6",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 697,
+            "y": 543,
+            "width": 125,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_action_6",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 827,
+            "y": 543,
+            "width": 180,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_key_7",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 697,
+            "y": 573,
+            "width": 125,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_action_7",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 827,
+            "y": 573,
+            "width": 180,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_key_8",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 697,
+            "y": 603,
+            "width": 125,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_action_8",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 827,
+            "y": 603,
+            "width": 180,
+            "height": 23
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "overview_controls_split",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 692,
+            "y": 516,
+            "width": 1,
+            "height": 112
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              118,
+              138,
+              145,
+              100
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_overview"
+    },
+    {
+      "id": "settings_card",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 300,
+            "y": 91,
+            "width": 800,
+            "height": 514
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              8,
+              15,
+              19,
+              241
+            ],
+            "border": [
+              80,
+              98,
+              106,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_settings"
+    },
+    {
+      "id": "settings_heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 112,
+            "width": 500,
+            "height": 30
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 24,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Settings",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_settings"
+    },
+    {
+      "id": "settings_desc",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 148,
+            "width": 650,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Choose what appears during regular play.",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_settings"
+    },
+    {
+      "id": "hud_divider",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 185,
+            "width": 750,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_settings"
+    },
+    {
+      "id": "hud_heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 200,
+            "width": 500,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 12,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "GAME HUD",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_settings"
+    },
+    {
+      "id": "show_performance",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 238,
+            "width": 620,
+            "height": 36
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "checkbox",
+            "label": "Show performance panel during play",
+            "checked": true
+          }
+        }
+      },
+      "parent": "page_settings"
+    },
+    {
+      "id": "hud_hint",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 284,
+            "width": 650,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Press ` to show or hide ECS tools.",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_settings"
+    },
+    {
+      "id": "display_card",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 300,
+            "y": 91,
+            "width": 800,
+            "height": 514
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              8,
+              15,
+              19,
+              241
+            ],
+            "border": [
+              80,
+              98,
+              106,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "display_heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 112,
+            "width": 600,
+            "height": 30
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 24,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Display",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "display_desc",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 148,
+            "width": 700,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Choose the render size and how it fills the viewport.",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "divider",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 185,
+            "width": 750,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "aspect_caption",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 206,
+            "width": 135,
+            "height": 30
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Aspect ratio",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "aspect_16_9",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 465,
+            "y": 206,
+            "width": 85,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "16:9"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "aspect_16_10",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 556,
+            "y": 206,
+            "width": 90,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "16:10"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "aspect_21_9",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 652,
+            "y": 206,
+            "width": 85,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "21:9"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "aspect_custom",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 743,
+            "y": 206,
+            "width": 180,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Custom"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "resolution_caption",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 260,
+            "width": 190,
+            "height": 30
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Render resolution",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "resolution_previous",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 525,
+            "y": 258,
+            "width": 44,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "‹"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "resolution_current",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 574,
+            "y": 258,
+            "width": 145,
+            "height": 32
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "1280 × 720",
+            "align": "center"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "resolution_native",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 725,
+            "y": 258,
+            "width": 92,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Native"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "resolution_next",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 823,
+            "y": 258,
+            "width": 44,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "›"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "width_caption",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 315,
+            "width": 55,
+            "height": 28
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Width",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "resolution_width",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 380,
+            "y": 312,
+            "width": 108,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              240
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "text_input",
+            "text": "1280",
+            "max_chars": 5
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "times",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 496,
+            "y": 315,
+            "width": 20,
+            "height": 28
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "×",
+            "align": "center"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "height_caption",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 526,
+            "y": 315,
+            "width": 54,
+            "height": 28
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Height",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "resolution_height",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 584,
+            "y": 312,
+            "width": 108,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              240
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "text_input",
+            "text": "720",
+            "max_chars": 5
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "resolution_apply",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 704,
+            "y": 312,
+            "width": 164,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Apply custom"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "scaling_caption",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 369,
+            "width": 190,
+            "height": 32
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Viewport scaling",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "scaling_toggle",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 525,
+            "y": 368,
+            "width": 343,
+            "height": 34
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              15,
+              23,
+              28,
+              220
+            ],
+            "border": [
+              72,
+              89,
+              97,
+              175
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 15,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "button",
+            "label": "Fit · show bars"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "feedback",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 424,
+            "width": 700,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              176,
+              120,
+              255
+            ],
+            "font_size": 12,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_display"
+    },
+    {
+      "id": "controls_card",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 300,
+            "y": 91,
+            "width": 800,
+            "height": 555
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              8,
+              15,
+              19,
+              241
+            ],
+            "border": [
+              80,
+              98,
+              106,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 112,
+            "width": 600,
+            "height": 30
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 24,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Controls",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_desc",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 148,
+            "width": 700,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Current bindings and movement settings.",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_rule",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 185,
+            "width": 750,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_key_1",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 326,
+            "y": 202,
+            "width": 130,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_action_1",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 461,
+            "y": 202,
+            "width": 180,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_key_2",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 326,
+            "y": 233,
+            "width": 130,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_action_2",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 461,
+            "y": 233,
+            "width": 180,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_key_3",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 326,
+            "y": 264,
+            "width": 130,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_action_3",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 461,
+            "y": 264,
+            "width": 180,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_key_4",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 326,
+            "y": 295,
+            "width": 130,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_action_4",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 461,
+            "y": 295,
+            "width": 180,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_key_5",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 676,
+            "y": 202,
+            "width": 130,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_action_5",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 811,
+            "y": 202,
+            "width": 180,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_key_6",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 676,
+            "y": 233,
+            "width": 130,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_action_6",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 811,
+            "y": 233,
+            "width": 180,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_key_7",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 676,
+            "y": 264,
+            "width": 130,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_action_7",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 811,
+            "y": 264,
+            "width": 180,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_key_8",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 676,
+            "y": 295,
+            "width": 130,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_action_8",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 811,
+            "y": 295,
+            "width": 180,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_tuning_rule",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 345,
+            "width": 750,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_speed",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 366,
+            "width": 650,
+            "height": 36
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              22,
+              30,
+              35,
+              230
+            ],
+            "border": [
+              75,
+              91,
+              95,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "slider",
+            "label": "Movement speed",
+            "min": 0.1,
+            "max": 100,
+            "value": 4
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_sensitivity",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 410,
+            "width": 650,
+            "height": 36
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              22,
+              30,
+              35,
+              230
+            ],
+            "border": [
+              75,
+              91,
+              95,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "slider",
+            "label": "Mouse sensitivity",
+            "min": 0.0001,
+            "max": 0.03,
+            "value": 0.003
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_invert",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 456,
+            "width": 620,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "checkbox",
+            "label": "Invert vertical look",
+            "checked": false
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_footer",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 512,
+            "width": 680,
+            "height": 28
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Mouse buttons: left to fire · right to aim",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "graphics_card",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 300,
+            "y": 91,
+            "width": 800,
+            "height": 514
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              8,
+              15,
+              19,
+              241
+            ],
+            "border": [
+              80,
+              98,
+              106,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_graphics"
+    },
+    {
+      "id": "graphics_heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 112,
+            "width": 600,
+            "height": 30
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 24,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Graphics",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_graphics"
+    },
+    {
+      "id": "graphics_desc",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 148,
+            "width": 700,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Scene streaming and environment settings.",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_graphics"
+    },
+    {
+      "id": "graphics_rule",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 185,
+            "width": 750,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_graphics"
+    },
+    {
+      "id": "graphics_distance",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 210,
+            "width": 650,
+            "height": 36
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              22,
+              30,
+              35,
+              230
+            ],
+            "border": [
+              75,
+              91,
+              95,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "slider",
+            "label": "Draw distance",
+            "min": 10,
+            "max": 1000,
+            "value": 150
+          }
+        }
+      },
+      "parent": "page_graphics"
+    },
+    {
+      "id": "graphics_sky",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 262,
+            "width": 600,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "checkbox",
+            "label": "Show HDR sky",
+            "checked": true
+          }
+        }
+      },
+      "parent": "page_graphics"
+    },
+    {
+      "id": "graphics_auto",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 309,
+            "width": 600,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "checkbox",
+            "label": "Automatic level of detail",
+            "checked": true
+          }
+        }
+      },
+      "parent": "page_graphics"
+    },
+    {
+      "id": "graphics_lod",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 353,
+            "width": 650,
+            "height": 36
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              22,
+              30,
+              35,
+              230
+            ],
+            "border": [
+              75,
+              91,
+              95,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "slider",
+            "label": "Manual LOD (0 = finest)",
+            "min": 0,
+            "max": 1,
+            "value": 0
+          }
+        }
+      },
+      "parent": "page_graphics"
+    },
+    {
+      "id": "graphics_hint",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 405,
+            "width": 700,
+            "height": 25
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_graphics"
+    },
+    {
+      "id": "audio_card",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 300,
+            "y": 91,
+            "width": 800,
+            "height": 514
+          },
+          "z": 110,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              8,
+              15,
+              19,
+              241
+            ],
+            "border": [
+              80,
+              98,
+              106,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 5
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_audio"
+    },
+    {
+      "id": "audio_heading",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 112,
+            "width": 600,
+            "height": 30
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 24,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Audio",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_audio"
+    },
+    {
+      "id": "audio_desc",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 148,
+            "width": 700,
+            "height": 22
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Adjust the scene sound-effects layer.",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_audio"
+    },
+    {
+      "id": "audio_rule",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 185,
+            "width": 750,
+            "height": 1
+          },
+          "z": 111,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              122,
+              139,
+              141,
+              62
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "rectangle"
+          }
+        }
+      },
+      "parent": "page_audio"
+    },
+    {
+      "id": "audio_gain",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 210,
+            "width": 650,
+            "height": 36
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              22,
+              30,
+              35,
+              230
+            ],
+            "border": [
+              75,
+              91,
+              95,
+              180
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "slider",
+            "label": "Sound effects",
+            "min": 0,
+            "max": 1,
+            "value": 0.8
+          }
+        }
+      },
+      "parent": "page_audio"
+    },
+    {
+      "id": "audio_mute",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 264,
+            "width": 600,
+            "height": 32
+          },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              235,
+              239,
+              239,
+              255
+            ],
+            "font_size": 14,
+            "rounding": 4
+          },
+          "widget": {
+            "type": "checkbox",
+            "label": "Mute sound effects",
+            "checked": false
+          }
+        }
+      },
+      "parent": "page_audio"
+    },
+    {
+      "id": "audio_hint",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 322,
+            "y": 320,
+            "width": 690,
+            "height": 27
+          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
+          "style": {
+            "fill": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "border": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "text": [
+              155,
+              171,
+              177,
+              255
+            ],
+            "font_size": 13,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "Changes apply to the current scene.",
+            "align": "left"
+          }
+        }
+      },
+      "parent": "page_audio"
     },
     {
       "id": "hint",
@@ -267,17 +7245,15 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 28,
-            "y": 234,
-            "width": 324,
-            "height": 22
+            "x": 300,
+            "y": 669,
+            "width": 800,
+            "height": 20
           },
-          "z": 111,
-          "widget": {
-            "type": "text",
-            "text": "ESC to resume",
-            "align": "center"
-          },
+          "z": 113,
+          "visible": true,
+          "enabled": false,
+          "draggable": false,
           "style": {
             "fill": [
               0,
@@ -291,13 +7267,19 @@
               0,
               0
             ],
-            "font_size": 12,
             "text": [
-              157,
-              178,
-              181,
+              155,
+              171,
+              177,
               255
-            ]
+            ],
+            "font_size": 11,
+            "rounding": 0
+          },
+          "widget": {
+            "type": "text",
+            "text": "ESC  to resume",
+            "align": "right"
           }
         }
       },

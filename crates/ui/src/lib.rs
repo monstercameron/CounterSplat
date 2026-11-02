@@ -159,6 +159,11 @@ pub enum Widget {
         end: [f32; 2],
         thickness: f32,
     },
+    /// Connected points in local element coordinates, useful for callouts and paths.
+    Polyline {
+        points: Vec<[f32; 2]>,
+        thickness: f32,
+    },
     /// A bounded, normalized-to-range line chart. Points are ordered left to right.
     LineGraph {
         points: Vec<[f32; 2]>,
@@ -342,6 +347,19 @@ impl UiElement {
             {
                 Err("UI line is invalid")
             }
+            Widget::Polyline { points, thickness }
+                if points.len() < 2
+                    || points.len() > 256
+                    || !thickness.is_finite()
+                    || *thickness <= 0.0
+                    || *thickness > 256.0
+                    || !points
+                        .iter()
+                        .flatten()
+                        .all(|v| v.is_finite() && v.abs() <= 1_000_000.0) =>
+            {
+                Err("UI polyline needs bounded finite points and thickness")
+            }
             Widget::LineGraph {
                 points,
                 x_min,
@@ -509,6 +527,27 @@ mod tests {
             min: 0.0,
             max: 1.0,
             logarithmic: false,
+        };
+        assert!(node.validate().is_err());
+    }
+    #[test]
+    fn polyline_validation_rejects_invalid_geometry() {
+        let mut node = UiElement {
+            widget: Widget::Polyline {
+                points: vec![[0.0, 0.0], [20.0, 10.0]],
+                thickness: 1.2,
+            },
+            ..Default::default()
+        };
+        assert!(node.validate().is_ok());
+        node.widget = Widget::Polyline {
+            points: vec![[0.0, 0.0]],
+            thickness: 1.0,
+        };
+        assert!(node.validate().is_err());
+        node.widget = Widget::Polyline {
+            points: vec![[0.0, 0.0], [f32::NAN, 1.0]],
+            thickness: 1.0,
         };
         assert!(node.validate().is_err());
     }

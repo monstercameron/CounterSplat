@@ -691,7 +691,13 @@ fn build_ui(
                             (1.0, image_ratio / area_ratio)
                         };
                         let uv = egui::Rect::from_center_size(Pos2::new(0.5, 0.5), Vec2::new(u, v));
-                        painter.image(texture.id(), area, uv, Color32::WHITE);
+                        // The image follows the ECS text alpha, allowing UI groups to fade.
+                        painter.image(
+                            texture.id(),
+                            area,
+                            uv,
+                            Color32::from_white_alpha(style.text.0[3]),
+                        );
                     } else {
                         painter.text(
                             area.center(),
@@ -716,6 +722,16 @@ fn build_ui(
                         [area.min, area.min + Vec2::new(end[0], end[1])],
                         Stroke::new(*thickness, color(style.fill)),
                     );
+                }
+                Widget::Polyline { points, thickness } => {
+                    let positions = points
+                        .iter()
+                        .map(|point| area.min + Vec2::new(point[0], point[1]))
+                        .collect();
+                    painter.add(egui::Shape::line(
+                        positions,
+                        Stroke::new(*thickness, color(style.fill)),
+                    ));
                 }
                 Widget::LineGraph {
                     points,

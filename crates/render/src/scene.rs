@@ -105,6 +105,31 @@ impl Pipelines {
     }
 }
 
+/// A bounded local light applied to splat colors in world space.
+/// The scan has no reconstructed normals or shadows, so this is a subtle color response.
+#[derive(Debug, Clone, Copy)]
+pub struct LocalLight {
+    pub position: [f32; 3],
+    pub radius: f32,
+    pub color: [f32; 3],
+    pub intensity: f32,
+}
+impl LocalLight {
+    pub fn is_valid(&self) -> bool {
+        self.position
+            .iter()
+            .all(|value| value.is_finite() && value.abs() <= 10_000_000.0)
+            && self.radius.is_finite()
+            && (0.001..=10_000.0).contains(&self.radius)
+            && self
+                .color
+                .iter()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+            && self.intensity.is_finite()
+            && (0.0..=2.0).contains(&self.intensity)
+    }
+}
+
 /// A splat asset resident on the GPU, with its bind groups and sorter.
 pub struct GsplatScene {
     device: wgpu::Device,
@@ -128,6 +153,7 @@ pub struct GsplatScene {
     compaction_scratch: std::cell::RefCell<Option<wgpu::Buffer>>,
     splat_width: u32,
     uniform_cache: std::cell::RefCell<BTreeMap<String, Vec<u8>>>,
+    frame_effects: std::cell::RefCell<[f32; 12]>,
     io_metrics: std::cell::RefCell<crate::metrics::Metrics>,
 }
 
@@ -345,7 +371,11 @@ fn assemble(
             if buffers.contains_key(&b.name) {
                 continue;
             }
-            let size = if ty == "mat4x4f" { 64 } else { 16 };
+            let size = match ty.as_str() {
+                "mat4x4f" => 64,
+                "FrameEffects" => 48,
+                _ => 16,
+            };
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&b.name),
                 size,
@@ -495,6 +525,7 @@ fn assemble(
         compaction_scratch: Default::default(),
         splat_width,
         uniform_cache: Default::default(),
+        frame_effects: Default::default(),
         io_metrics: Default::default(),
     })
 }
@@ -749,9 +780,16 @@ impl GsplatScene {
 
     /// Set renderer-neutral camera effects. The vector contains exposure EV,
     /// focus distance in world units, circle-of-confusion scale in pixels, and
-    /// shutter fraction of the previous submitted frame. Zero disables each effect.
+    /// shutter duration divided by the previous submitted frame interval. This
+    /// scale may exceed one for exposures longer than a display frame. Zero disables each effect.
     pub fn set_camera_effects(&self, queue: &wgpu::Queue, effects: [f32; 4], previous_clip: &Mat4) {
-        self.set_uniform(queue, "lens_effects", f32s_le_bytes(&effects).as_ref());
+        let mut frame = self.frame_effects.borrow_mut();
+        frame[..4].copy_from_slice(&effects);
+        self.set_uniform(
+            queue,
+            "frame_effects",
+            f32s_le_bytes(frame.as_slice()).as_ref(),
+        );
         if effects[3] > 0.0 {
             self.set_uniform(
                 queue,
@@ -759,6 +797,25 @@ impl GsplatScene {
                 f32s_le_bytes(previous_clip).as_ref(),
             );
         }
+    }
+
+    /// Update one optional world-space light without coupling the renderer to ECS or Lua.
+    /// Invalid inputs are treated as no light. The camera and light share a uniform
+    /// so the portable per-stage binding limit remains unchanged.
+    pub fn set_local_light(&self, queue: &wgpu::Queue, light: Option<LocalLight>) {
+        let mut frame = self.frame_effects.borrow_mut();
+        frame[4..].fill(0.0);
+        if let Some(light) = light.filter(LocalLight::is_valid) {
+            frame[4..7].copy_from_slice(&light.position);
+            frame[7] = light.radius;
+            frame[8..11].copy_from_slice(&light.color);
+            frame[11] = light.intensity;
+        }
+        self.set_uniform(
+            queue,
+            "frame_effects",
+            f32s_le_bytes(frame.as_slice()).as_ref(),
+        );
     }
 
     pub fn active_slots(&self) -> u32 {

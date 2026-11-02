@@ -1,0 +1,5 @@
+# Level impact effects
+
+`ImpactEffects` is a scene-owned ECS component, nested under **Scene visuals**. Select **Impact effects** in the entity inspector to enable or disable the effects, marks, or smoke, and to tune their radius and lifetime. The Lua script `assets/scripts/impact_effects.lua` listens to `projectile.impact`; only confirmed level hits create effects. Marks remain for 30 seconds by default and smoke rises, expands, and fades in about 1.3 seconds. Counts are capped at 96 marks and 160 smoke puffs.
+
+Hit positions and normals come from the level voxel collision worker. Marks are oriented on the returned voxel face and placed slightly outside it; the WebGPU renderer draws them and camera-facing smoke in world space. The renderer creates a splat depth surface while effects are present so nearer splats can occlude them. Gaussian splats do not provide a precise mesh surface, so placement and occlusion are approximations based on voxel and splat depth. Level collision must be available and enabled for projectile hits to produce effects.

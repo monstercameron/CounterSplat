@@ -102,6 +102,17 @@ fn binding(
 }
 
 impl SceneUi {
+    /// Update a named gameplay UI texture without exposing the renderer to Lua.
+    pub fn set_image(
+        &mut self,
+        key: &str,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), &'static str> {
+        self.renderer
+            .set_image_rgba(key, [width as usize, height as usize], rgba)
+    }
     pub fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
@@ -110,10 +121,11 @@ impl SceneUi {
         let mut world = World::new();
         register(&mut world)?;
         countersplat_scene_ecs::register(&mut world)?;
+        countersplat_audio_ecs::register(&mut world)?;
         let entities = countersplat_scene_ecs::instantiate_layers(
             &mut world,
             manifest,
-            &["ui", "player", "level", "scene"],
+            &["ui", "player", "level", "scene", "audio"],
         )?;
         let player = *entities
             .get("player")
@@ -364,6 +376,28 @@ impl SceneUi {
         lens.validate().map_err(str::to_owned)?;
         Ok(lens)
     }
+    /// Read a bounded script-owned visual light without allocating on the idle path.
+    pub fn local_light(&self) -> Option<countersplat_render::scene::LocalLight> {
+        let value = self.world.get_dynamic_resource("render.local_light")?;
+        let vector = |name: &str| {
+            let a = value.get(name)?.as_array()?;
+            if a.len() != 3 {
+                return None;
+            }
+            Some([
+                a[0].as_f64()? as f32,
+                a[1].as_f64()? as f32,
+                a[2].as_f64()? as f32,
+            ])
+        };
+        let light = countersplat_render::scene::LocalLight {
+            position: vector("position")?,
+            radius: value.get("radius")?.as_f64()? as f32,
+            color: vector("color")?,
+            intensity: value.get("intensity")?.as_f64()? as f32,
+        };
+        light.is_valid().then_some(light)
+    }
     pub fn image_correction(&self) -> Option<ImageCorrection> {
         countersplat_scene_ecs::extract_image_correction(&self.world)
     }
@@ -397,7 +431,8 @@ impl SceneUi {
             .ok()
             .is_some_and(|frame| {
                 frame.nodes.iter().any(|node| {
-                    x >= node.clip.x
+                    node.enabled
+                        && x >= node.clip.x
                         && x < node.clip.x + node.clip.width
                         && y >= node.clip.y
                         && y < node.clip.y + node.clip.height

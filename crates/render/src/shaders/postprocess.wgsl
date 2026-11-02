@@ -5,6 +5,8 @@ struct Grade {
     tint_shadows_highlights_vignette: vec4f,
     bloom_threshold_grain_enabled: vec4f,
     filmic_reserved: vec4f,
+    tonal_warmth: vec4f,
+    presentation: vec4f, // UV offset, pixel-perfect flag, reserved
 };
 @group(0) @binding(0) var source: texture_2d<f32>;
 @group(0) @binding(1) var linear_sampler: sampler;
@@ -69,9 +71,16 @@ fn noise(pixel: vec2f) -> f32 {
 }
 
 @fragment fn correct(in: VertexOut) -> @location(0) vec4f {
-    let uv = (in.uv - vec2f(0.5)) * grade.filmic_reserved.yz + vec2f(0.5);
-    if any(uv < vec2f(0.0)) || any(uv > vec2f(1.0)) { return vec4f(0.0, 0.0, 0.0, 1.0); }
-    var scene = textureSampleLevel(source, linear_sampler, uv, 0.0);
+    let uv = (in.uv - vec2f(0.5)) * grade.filmic_reserved.yz + vec2f(0.5) + grade.presentation.xy;
+    if any(uv < vec2f(0.0)) || any(uv >= vec2f(1.0)) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+    let dimensions = vec2f(textureDimensions(source));
+    var sample_uv = uv;
+    if grade.presentation.z > 0.5 {
+        // Snap the whole color pipeline to source texel centers, including
+        // bloom, grain and vignette, so every replicated pixel is identical.
+        sample_uv = (floor(uv * dimensions) + vec2f(0.5)) / dimensions;
+    }
+    var scene = textureSampleLevel(source, linear_sampler, sample_uv, 0.0);
     if grade.bloom_threshold_grain_enabled.w < 0.5 { return scene; }
     // A bounded four-neighbor unsharp mask in linear HDR. Limit the detail
     // contribution so high-contrast highlights cannot create extreme halos.
@@ -79,10 +88,10 @@ fn noise(pixel: vec2f) -> f32 {
     if sharpness > 0.0 {
         let texel = 1.0 / vec2f(textureDimensions(source));
         let adjacent = (
-            textureSampleLevel(source, linear_sampler, uv + vec2f(texel.x, 0.0), 0.0).rgb +
-            textureSampleLevel(source, linear_sampler, uv - vec2f(texel.x, 0.0), 0.0).rgb +
-            textureSampleLevel(source, linear_sampler, uv + vec2f(0.0, texel.y), 0.0).rgb +
-            textureSampleLevel(source, linear_sampler, uv - vec2f(0.0, texel.y), 0.0).rgb
+            textureSampleLevel(source, linear_sampler, sample_uv + vec2f(texel.x, 0.0), 0.0).rgb +
+            textureSampleLevel(source, linear_sampler, sample_uv - vec2f(texel.x, 0.0), 0.0).rgb +
+            textureSampleLevel(source, linear_sampler, sample_uv + vec2f(0.0, texel.y), 0.0).rgb +
+            textureSampleLevel(source, linear_sampler, sample_uv - vec2f(0.0, texel.y), 0.0).rgb
         ) * 0.25;
         let limit = max(scene.rgb, vec3f(0.04)) * 0.25;
         let detail = clamp(scene.rgb - adjacent, -limit, limit);
@@ -90,17 +99,21 @@ fn noise(pixel: vec2f) -> f32 {
     }
     let p = grade.exposure_contrast_saturation_temperature;
     let q = grade.tint_shadows_highlights_vignette;
-    var color = max(min(scene.rgb, vec3f(60000.0)) * exp2(p.x) + textureSampleLevel(bloom, linear_sampler, uv, 0.0).rgb * grade.bloom_threshold_grain_enabled.x, vec3f(0.0));
+    var color = max(min(scene.rgb, vec3f(60000.0)) * exp2(p.x) + textureSampleLevel(bloom, linear_sampler, sample_uv, 0.0).rgb * grade.bloom_threshold_grain_enabled.x, vec3f(0.0));
     color *= exp2(vec3f(p.w * 0.30, q.x * 0.15, -p.w * 0.30));
     let luma = luminance(color);
     let shadow_weight = 1.0 - smoothstep(0.08, 0.50, luma);
     let highlight_weight = smoothstep(0.30, 1.20, luma);
+    // Independent, continuous split toning keeps neutral colors neutral when both are zero.
+    // Negative warmth cools toward cyan; positive warmth adds a gentle amber bias.
+    let tonal_warmth = grade.tonal_warmth.x * shadow_weight + grade.tonal_warmth.y * highlight_weight;
+    color *= exp2(vec3f(tonal_warmth * 0.30, -tonal_warmth * 0.05, -tonal_warmth * 0.30));
     color *= exp2((q.y * shadow_weight + q.z * highlight_weight) * 0.65);
     color = mix(vec3f(luminance(color)), color, p.z);
     color = vec3f(0.18) * pow(max(color, vec3f(0.0)) / 0.18, vec3f(p.y));
     if grade.filmic_reserved.x > 0.5 { color = filmic(color); }
-    let edge = smoothstep(0.35, 0.75, length(uv - vec2f(0.5)));
+    let edge = smoothstep(0.35, 0.75, length(sample_uv - vec2f(0.5)));
     color *= 1.0 - q.w * edge;
-    color += vec3f(noise(in.position.xy) * grade.bloom_threshold_grain_enabled.z);
+    color += vec3f(noise(select(in.position.xy, floor(sample_uv * dimensions), grade.presentation.z > 0.5)) * grade.bloom_threshold_grain_enabled.z);
     return vec4f(max(color, vec3f(0.0)), scene.a);
 }

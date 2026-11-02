@@ -53,9 +53,19 @@ local function notice(message)
     local id=ids.weapon_impact_notice
     local ui=id and ecs.get(id,'UiElement')
     if not ui then return end
-    ui.widget.text=message; ui.visible=true; ecs.set(id,'UiElement',ui)
     notice_time=1.1
+    ui.widget.text=message
+    ui.visible=ecs.get_resource('hud.editor_visible')==true
+    ecs.set(id,'UiElement',ui)
 end
+-- Debug notices follow the ECS tools, even if toggled while a notice is live.
+engine.events.on('hud.editor_visibility_changed',function(event)
+    local id=ids.weapon_impact_notice
+    local ui=id and ecs.get(id,'UiElement')
+    if not ui then return end
+    local visible=type(event)=='table' and event.visible==true and notice_time>0
+    if ui.visible~=visible then ui.visible=visible; ecs.set(id,'UiElement',ui) end
+end)
 
 local function add_trail(a,b,ttl)
     if #trails>=MAX_TRAILS then table.remove(trails,1) end
@@ -80,38 +90,89 @@ local function finish(p, reason)
     end
 end
 
--- Sphere hitboxes are optional ECS data, independent of rendering. Pick the
--- earliest entity hit; the returned voxel result can still be closer.
+-- The shared Lua hitbox API returns the closest zone for each target.
 local function entity_hit(p, a, b)
     local best=nil
-    local d=difference(b,a)
-    local aa=d[1]*d[1]+d[2]*d[2]+d[3]*d[3]
-    if aa<1e-20 then return nil end
     for _,id in ipairs(ecs.query({'Hitbox'})) do
         if id~=p.owner and id~=p.source and id~=p.entity and ecs.is_alive(id) then
-            local hitbox=ecs.get(id,'Hitbox')
-            local pose=ecs.get(id,'Transform') or ecs.get(id,'PlayerCamera')
-            if hitbox and hitbox.enabled~=false and pose and vector(pose.position) and
-                type(hitbox.radius)=='number' and hitbox.radius==hitbox.radius and hitbox.radius>0 and hitbox.radius<=1000 then
-                local offset=vector(hitbox.offset) and hitbox.offset or {0,0,0}
-                local center=vec(pose.position[1]+offset[1],pose.position[2]+offset[2],pose.position[3]+offset[3])
-                local m=difference(a,center)
-                local mb=m[1]*d[1]+m[2]*d[2]+m[3]*d[3]
-                local c=m[1]*m[1]+m[2]*m[2]+m[3]*m[3]-hitbox.radius*hitbox.radius
-                local disc=mb*mb-aa*c
-                local t=nil
-                if c<=0 then t=0 elseif disc>=0 then t=(-mb-math.sqrt(disc))/aa end
-                if t and t>=0 and t<=1 and (not best or t<best.fraction) then
-                    local point=interpolate(a,b,t)
-                    local n=difference(point,center); local size=length(n)
-                    if size>1e-9 then n=vec(n[1]/size,n[2]/size,n[3]/size)
-                    else local l=math.sqrt(aa); n=vec(-d[1]/l,-d[2]/l,-d[3]/l) end
-                    best={fraction=t,position=point,normal=n,target=id}
-                end
-            end
+            local hit=engine.hitbox.trace_segment(id,ecs.get(id,'Hitbox'),a,b)
+            if hit and (not best or hit.fraction<best.fraction) then best=hit end
         end
     end
     return best
+end
+
+-- Closest distance between a projectile segment and the player's upright
+-- capsule centerline. Only the already-confirmed part of the path is checked,
+-- so a wall hit cannot suppress someone on the other side of the wall.
+local function player_capsule()
+    local camera=ecs.get(ids.player,'PlayerCamera')
+    local rig=ecs.get(ids.player,'PlayerRig')
+    local body=ecs.get(ids.player,'PhysicsBody')
+    if not camera or not vector(camera.position) then return nil end
+    local units=number(rig and rig.units_per_meter,1,.01,100)
+    local radius=number(body and body.radius,.25*units,.01,1000)
+    local center=camera.position[2]+number(body and body.collision_offset_y,-.85*units,-1000,1000)
+    local half=number(body and body.capsule_half_height,.55*units,0,1000)
+    return {x=camera.position[1],z=camera.position[3],low=center-half,high=center+half,
+        radius=radius,units=units}
+end
+
+local function player_proximity(a,b,capsule)
+    if not capsule then return nil end
+    local x,z,low,high=capsule.x,capsule.z,capsule.low,capsule.high
+    local dx,dy,dz=b[1]-a[1],b[2]-a[2],b[3]-a[3]
+    local length2=dx*dx+dy*dy+dz*dz
+    if length2<1e-20 then return nil end
+    local best,best_t=math.huge,0
+    local function sample(t)
+        t=clamp(t,0,1)
+        local px,py,pz=a[1]+dx*t,a[2]+dy*t,a[3]+dz*t
+        local vertical=py<low and py-low or py>high and py-high or 0
+        local distance=(px-x)^2+vertical*vertical+(pz-z)^2
+        if distance<best then best,best_t=distance,t end
+    end
+    sample(0); sample(1)
+    local horizontal=dx*dx+dz*dz
+    if horizontal>1e-20 then sample(-((a[1]-x)*dx+(a[3]-z)*dz)/horizontal) end
+    -- The nearest point can also lie above/below either end cap.
+    for _,y in ipairs({low,high}) do
+        sample(-((a[1]-x)*dx+(a[2]-y)*dy+(a[3]-z)*dz)/length2)
+    end
+    return math.max(0,math.sqrt(best)-capsule.radius)/capsule.units,best_t
+end
+
+local function emit_near_miss(p)
+    local candidate=p.near_player
+    if not candidate or p.suppressed_player then return end
+    p.suppressed_player=true
+    p.near_player=nil
+    ecs.emit('combat.near_miss',{target=ids.player,owner=p.owner,source=p.source,
+        projectile=p.entity,shot=p.shot,distance_m=candidate.distance,
+        intensity=clamp(1-candidate.distance/candidate.range,.05,1)})
+end
+
+local function report_near_miss(p,a,b,hit,capsule)
+    if p.suppressed_player or p.owner==ids.player or not ecs.is_alive(ids.player) then return end
+    if hit and hit.target==ids.player then
+        -- A projectile that was approaching the player is a hit, not a miss.
+        p.near_player=nil
+        return
+    end
+    local receiver=ecs.get(ids.player,'SuppressionReceiver')
+    if not receiver or receiver.enabled==false then p.near_player=nil; return end
+    local range=number(receiver.near_miss_radius_m,1.25,0,5)
+    if range<=0 then p.near_player=nil; return end
+    local health=ecs.get(ids.player,'Health')
+    if health and type(health.current)=='number' and health.current<=0 then p.near_player=nil; return end
+    local distance,t=player_proximity(a,b,capsule)
+    if not distance then return end
+    if distance<=range and (not p.near_player or distance<p.near_player.distance) then
+        p.near_player={distance=distance,range=range}
+    end
+    -- Wait until the projectile passes its closest point, or strikes something
+    -- else, so a later direct hit does not also produce a near-miss event.
+    if p.near_player and (t<1-1e-7 or hit) then emit_near_miss(p) end
 end
 
 local function apply_damage(p, target, hit)
@@ -119,10 +180,19 @@ local function apply_damage(p, target, hit)
     local health=ecs.get(target,'Health')
     if not health or type(health.current)~='number' or health.current~=health.current or health.current<=0 then return end
     local before=health.current
-    health.current=math.max(0,before-p.damage)
+    local absorbed=0
+    local armor=ecs.get(target,'Armor')
+    if type(armor)=='table' and type(armor.current)=='number' and armor.current==armor.current and armor.current>0 then
+        local rate=type(armor.absorption)=='number' and armor.absorption==armor.absorption and armor.absorption or 0.5
+        absorbed=math.min(armor.current,p.damage*math.max(0,math.min(1,rate)))
+        armor.current=math.max(0,armor.current-absorbed)
+        ecs.set(target,'Armor',armor)
+    end
+    health.current=math.max(0,before-(p.damage-absorbed))
     ecs.set(target,'Health',health)
-    ecs.emit('combat.damage',{target=target,source=p.source,owner=p.owner,amount=before-health.current,
-        remaining=health.current,position=hit.position,shot=p.shot})
+    ecs.emit('combat.damage',{target=target,source=p.source,owner=p.owner,amount=before-health.current+absorbed,
+        health_damage=before-health.current,armor_absorbed=absorbed,armor_remaining=type(armor)=='table' and armor.current or nil,
+        remaining=health.current,position=hit.position,shot=p.shot,zone=hit.zone})
     if before>0 and health.current<=0 then
         ecs.emit('combat.death',{target=target,source=p.source,owner=p.owner,shot=p.shot})
     end
@@ -138,6 +208,7 @@ local function resolve(p, status, voxel)
     if status=='hit' and voxel and (not hit or voxel.fraction<=hit.fraction) then hit=voxel end
     local fraction=hit and hit.fraction or 1
     local position=hit and hit.position or pending.finish
+    report_near_miss(p,pending.start,position,hit,pending.player_capsule)
     if p.tracers then
         add_trail(pending.start,position,0.10)
         if hit then
@@ -154,16 +225,17 @@ local function resolve(p, status, voxel)
     p.backlog=math.max(0,p.backlog-pending.dt)
     if hit then
         local target=hit.target
-        local event={entity=p.entity,owner=p.owner,source=p.source,shot=p.shot,
+        local event={entity=p.entity,owner=p.owner,source=p.source,shot=p.shot,stance=p.stance,
             position=copy(position),normal=copy(hit.normal),travel_seconds=p.age,
             distance_m=p.distance/p.units,damage=p.damage,kind=target and 'entity' or 'level'}
-        if target then event.target=target end
+        if target then event.target=target; event.zone=hit.zone end
         ecs.set_resource('combat.last_impact',event)
         ecs.emit('projectile.impact',event)
         notice(('%s  %.1f m  %.0f ms'):format(target and 'TARGET HIT' or 'LEVEL IMPACT',event.distance_m,event.travel_seconds*1000))
         apply_damage(p,target,event)
         finish(p)
     elseif p.age+1e-7>=p.lifetime or p.distance+1e-5>=p.range then
+        emit_near_miss(p)
         finish(p,p.age+1e-7>=p.lifetime and 'lifetime' or 'range')
     else
         if status=='unavailable' and not p.warned_unavailable then
@@ -190,6 +262,7 @@ ecs.on('weapon.shot',function(event)
     local speed=number(settings.speed_mps,715,1,3000)*units
     local id=ecs.spawn()
     local p={entity=id,source=event.entity,owner=event.player,shot=event.shot or 0,units=units,
+        stance=(event.stance=='ads' or event.stance=='hip') and event.stance or nil,
         position=copy(event.origin),velocity=vec(event.direction[1]/magnitude*speed,event.direction[2]/magnitude*speed,event.direction[3]/magnitude*speed),
         gravity=number(settings.gravity_mps2,9.81,0,100)*units,
         lifetime=number(settings.max_lifetime_s,3,0.05,10),range=number(settings.max_range_m,1200,1,5000)*units,
@@ -261,7 +334,8 @@ ecs.system('combat.projectiles',function(dt)
                     sequence=sequence+1
                     local token='projectile-'..sequence
                     p.pending={token=token,start=copy(p.position),finish=endpoint,dt=duration,wait=0,
-                        target=entity_hit(p,p.position,endpoint)}
+                        target=entity_hit(p,p.position,endpoint),
+                        player_capsule=p.owner~=ids.player and not p.suppressed_player and player_capsule() or nil}
                     if ecs.get_resource('voxel.capture_movement')==true then
                         engine.physics.trace_segment(id,p.position,endpoint,token)
                     else resolve(p,'unavailable') end

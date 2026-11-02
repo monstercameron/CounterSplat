@@ -7,6 +7,7 @@ pub mod camera;
 pub mod env;
 pub mod first_person;
 pub mod gpu_timing;
+pub mod impact;
 pub mod metrics;
 pub mod postprocess;
 pub mod presentation;
@@ -39,7 +40,7 @@ pub fn bind_group_entries(bindings: &[Binding]) -> BTreeMap<u32, Vec<wgpu::BindG
                 // uniforms are consumed by one stage each.
                 visibility: if matches!(
                     b.name.as_str(),
-                    "sh_zero_reserved" | "lens_effects" | "previous_clip_from_model"
+                    "sh_zero_reserved" | "frame_effects" | "previous_clip_from_model"
                 ) {
                     wgpu::ShaderStages::VERTEX
                 } else {

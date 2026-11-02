@@ -54,16 +54,30 @@
       "storage": "dynamic"
     },
     "WeaponAnimation": { "storage": "dynamic" },
+    "WeaponRecoil": { "storage": "dynamic" },
+    "AimStability": { "storage": "dynamic" },
+    "AimStabilityState": { "storage": "dynamic" },
+    "SuppressionReceiver": { "storage": "dynamic" },
     "WeaponState": {
       "storage": "dynamic"
     },
     "WeaponConfig": {
       "storage": "dynamic"
     },
+    "WeaponOptic": { "storage": "dynamic" },
     "Ballistics": { "storage": "dynamic" },
+    "ImpactEffects": { "storage": "dynamic" },
+    "MuzzleLight": { "storage": "dynamic" },
     "Projectile": { "storage": "dynamic" },
     "Hitbox": { "storage": "dynamic" },
+    "TrainingTarget": { "storage": "dynamic" },
+    "AudioLayer": { "storage": "native" },
+    "AudioEmitter": { "storage": "native" },
     "Health": { "storage": "dynamic" },
+    "Armor": { "storage": "dynamic" },
+    "Stamina": { "storage": "dynamic" },
+    "Inventory": { "storage": "dynamic" },
+    "InspectionHud": { "storage": "dynamic" },
     "PlayerPosture": {
       "storage": "dynamic"
     }
@@ -4935,6 +4949,11 @@
         "uri": "../images/first-person/playback/runFromLow/0018.webp",
         "load": "streamable"
       },
+      "sound-rifle-shot": { "kind": "sound", "uri": "../sound/first-person/rifle-shot.mp3", "load": "preload" },
+      "sound-rifle-reload": { "kind": "sound", "uri": "../sound/first-person/rifle-reload.mp3", "load": "preload" },
+      "sound-dry-fire": { "kind": "sound", "uri": "../sound/first-person/dry-fire.mp3", "load": "preload" },
+      "sound-bullet-impact": { "kind": "sound", "uri": "../sound/first-person/bullet-impact.mp3", "load": "preload" },
+      "sound-footstep": { "kind": "sound", "uri": "../sound/first-person/footstep.mp3", "load": "preload" },
       "first-person-footage": {
         "kind": "first_person_manifest",
         "uri": "../images/first-person/playback/manifest.json",
@@ -5025,12 +5044,16 @@
         "autoload": false,
         "load": "preload"
       },
+      "weapon-optics": { "language": "lua", "uri": "../scripts/weapon_optics.lua", "autoload": false, "load": "preload" },
+      "aim-stability": { "language": "lua", "uri": "../scripts/aim_stability.lua", "autoload": false, "load": "preload" },
       "first-person-controller": {
         "language": "lua",
         "uri": "../scripts/first_person_controller.lua",
         "autoload": false,
         "load": "preload"
       },
+      "editor-overlay": { "language": "lua", "uri": "../scripts/editor_overlay.lua", "autoload": false, "load": "preload" },
+      "inspection-hud": { "language": "lua", "uri": "../scripts/inspection_hud.lua", "autoload": false, "load": "preload" },
       "ballistics": {
         "language": "lua",
         "uri": "../scripts/ballistics.lua",
@@ -5042,7 +5065,13 @@
         "uri": "../scripts/player_posture.lua",
         "autoload": false,
         "load": "preload"
-      }
+      },
+      "hitboxes": { "language": "lua", "uri": "../scripts/hitboxes.lua", "autoload": false, "load": "preload" },
+      "training-target": { "language": "lua", "uri": "../scripts/training_target.lua", "autoload": false, "load": "preload" },
+      "game-audio": { "language": "lua", "uri": "../scripts/game_audio.lua", "autoload": false, "load": "preload" },
+      "impact-effects": { "language": "lua", "uri": "../scripts/impact_effects.lua", "autoload": false, "load": "preload" },
+      "muzzle-light": { "language": "lua", "uri": "../scripts/muzzle_light.lua", "autoload": false, "load": "preload" },
+      "flash-lighting": { "language": "lua", "uri": "../scripts/flash_lighting.lua", "autoload": false, "load": "preload" }
     },
     "preview": {
       "level_asset": "level",
@@ -5062,8 +5091,7 @@
         "sky_rotation": "sky_rotation",
         "counter": "counter",
         "graph": "graph",
-        "graph_scale": "graph_scale",
-        "back_to_levels": "back_to_levels"
+        "graph_scale": "graph_scale"
       },
       "browser_scripts": [
         "gameplay-navigation",
@@ -5074,17 +5102,42 @@
         "physics-system",
         "neural-camera",
         "camera-bob",
+        "weapon-optics",
         "camera-zoom",
         "inspector-tuning",
         "camera-lens",
         "image-correction",
         "entity-inspector",
+        "editor-overlay",
+        "aim-stability",
         "first-person-controller",
-        "ballistics"
+        "inspection-hud",
+        "hitboxes",
+        "training-target",
+        "ballistics",
+        "impact-effects",
+        "muzzle-light",
+        "flash-lighting",
+        "game-audio"
       ],
       "player_spawn": "level",
       "entity_browser_expanded": ["player", "game_ui", "scene_visuals"],
       "level_entity": "active_level"
+    },
+    "training_range": {
+      "level_ids": ["58d333ae"],
+      "targets": ["training_target_left", "training_target_center", "training_target_right"]
+    },
+    "first_person_magazine": {
+      "frame_size": [1280, 720],
+      "tracks": {
+        "lowReady": [[1, 715, 635], [5, 715, 634], [13, 715, 632], [21, 715, 632], [29, 715, 631], [37, 715, 633], [45, 714, 633], [53, 715, 635], [61, 715, 636], [69, 715, 636], [77, 714, 636], [85, 715, 636], [93, 715, 635], [96, 715, 635]],
+        "crouchWalkLow": [[1, 715, 632], [5, 715, 622], [9, 715, 598], [13, 716, 586], [17, 716, 584], [21, 716, 585], [25, 715, 592], [29, 715, 608], [33, 715, 625], [37, 715, 641], [41, 715, 643], [45, 715, 641], [49, 715, 637], [53, 715, 618], [57, 715, 601], [61, 716, 584], [65, 716, 584], [69, 716, 586], [73, 715, 590], [77, 715, 604], [81, 715, 629], [85, 715, 639], [89, 715, 643], [93, 715, 642], [97, 715, 635]],
+        "crouchEnterLow": [[1, 715, 635], [2, 715, 635], [3, 715, 636], [4, 715, 638], [5, 715, 643], [6, 715, 642], [7, 715, 628], [8, 716, 588], [9, 716, 545], [10, 716, 523], [11, 716, 518], [12, 716, 529], [13, 715, 561], [14, 715, 585], [15, 715, 612], [16, 715, 633], [17, 715, 642], [18, 716, 643], [19, 715, 640], [20, 715, 636], [21, 715, 634], [22, 715, 635]],
+        "crouchExitLow": [[1, 715, 635], [2, 715, 634], [3, 715, 636], [4, 715, 640], [5, 716, 643], [6, 715, 642], [7, 715, 633], [8, 715, 612], [9, 715, 585], [10, 715, 561], [11, 716, 529], [12, 716, 518], [13, 716, 523], [14, 716, 545], [15, 716, 588], [16, 715, 628], [17, 715, 642], [18, 715, 643], [19, 715, 638], [20, 715, 636], [21, 715, 635], [22, 715, 635]],
+        "raising": [[1, 712, 630], [2, 706, 617], [3, 700, 610], [4, 694, 598], [5, 687, 585], [6, 681, 576], [7, 675, 571], [8, 666, 552]],
+        "crouchIdleLow": [[1, 715, 635], [97, 715, 635]]
+      }
     },
     "first_person_clips": {
       "raising": {
@@ -5162,15 +5215,80 @@
       "fireADS": {
         "frames": 7,
         "duration": 0.14,
-        "enabled": false
+        "enabled": true
       }
     }
   },
   "entities": [
+    { "id": "audio_root", "layer": "audio", "components": { "AudioLayer": { "name": "sound", "mix": { "gain": 0.8 } } } },
+    { "id": "audio_shot", "layer": "audio", "parent": "audio_root", "components": { "AudioEmitter": { "asset": "sound-rifle-shot", "settings": { "gain": 0.75 } } } },
+    { "id": "audio_reload", "layer": "audio", "parent": "audio_root", "components": { "AudioEmitter": { "asset": "sound-rifle-reload", "settings": { "gain": 0.65 } } } },
+    { "id": "audio_dry", "layer": "audio", "parent": "audio_root", "components": { "AudioEmitter": { "asset": "sound-dry-fire", "settings": { "gain": 0.65 } } } },
+    { "id": "audio_impact", "layer": "audio", "parent": "audio_root", "components": { "AudioEmitter": { "asset": "sound-bullet-impact", "settings": { "gain": 0.55 } } } },
+    { "id": "audio_footstep", "layer": "audio", "parent": "audio_root", "components": { "AudioEmitter": { "asset": "sound-footstep", "settings": { "gain": 0.45 } } } },
     { "id": "scene_visuals", "layer": "scene", "components": {} },
+    { "id": "impact_effects", "layer": "scene", "parent": "scene_visuals", "components": {
+      "ImpactEffects": { "enabled": true, "decals_enabled": true, "smoke_enabled": true,
+        "decal_radius_m": 0.09, "decal_lifetime_s": 30.0,
+        "smoke_radius_m": 0.09, "smoke_lifetime_s": 1.3 }
+    } },
     { "id": "game_ui", "layer": "ui", "components": {} },
     { "id": "editor_ui", "layer": "ui", "parent": "game_ui", "components": {} },
     { "id": "hud_ui", "layer": "ui", "parent": "game_ui", "components": {} },
+    {"id": "inspection_hud", "layer": "ui", "parent": "hud_ui", "components": {"InspectionHud": {"enabled": true, "duration_s": 2.8, "fade_in_s": 0.12, "fade_out_s": 0.35, "ammo_fire_seconds": 1.0, "map_enabled": true, "map_radius_m": 12.0, "map_height_m": 0.9144, "map_thickness_m": 0.4}, "UiElement": {"rect": {"x": 0, "y": 0, "width": 1050, "height": 720}, "z": 60, "visible": false, "enabled": false, "draggable": false, "clip_children": true, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0]}, "widget": {"type": "panel"}}}},
+    {"id": "training_hit_backdrop", "layer": "ui", "parent": "hud_ui", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 265, "height": 26}, "z": 71, "visible": false, "enabled": false, "draggable": false, "style": {"fill": [8, 15, 18, 205], "border": [224, 190, 120, 90], "rounding": 4}, "widget": {"type": "rectangle"}}}},
+    {"id": "training_hit_notice", "layer": "ui", "parent": "hud_ui", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 250, "height": 22}, "z": 72, "visible": false, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [255, 228, 166, 255], "font_size": 14}, "widget": {"type": "text", "text": "", "align": "left"}}}},
+    {"id": "ammo_hud", "layer": "ui", "parent": "hud_ui", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 1050, "height": 720}, "z": 60, "visible": false, "enabled": false, "draggable": false, "clip_children": true, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0]}, "widget": {"type": "panel"}}}},
+    {"id": "inspect_leader", "layer": "ui", "parent": "ammo_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 61, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 255], "border": [0, 0, 0, 0], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 0}, "widget": {"type": "polyline", "points": [[1, 1], [2, 2]], "thickness": 1.5}}}},
+    {"id": "inspect_card", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 62, "enabled": false, "draggable": false, "style": {"fill": [8, 22, 28, 178], "border": [111, 195, 190, 90], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 5}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_accent", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [126, 221, 210, 235], "border": [0, 0, 0, 0], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 0}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_title", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [162, 192, 190, 255], "font_size": 13, "rounding": 0}, "widget": {"type": "text", "text": "", "align": "left"}}}},
+    {"id": "inspect_rounds", "layer": "ui", "parent": "ammo_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 26, "rounding": 0}, "widget": {"type": "text", "text": "", "align": "left"}}}},
+    {"id": "inspect_reserve", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 190], "font_size": 13, "rounding": 0}, "widget": {"type": "text", "text": "", "align": "left"}}}},
+    {"id": "inspect_mode", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 230], "font_size": 13, "rounding": 0}, "widget": {"type": "text", "text": "", "align": "right"}}}},
+    {"id": "inspect_rule", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [110, 156, 154, 100], "border": [0, 0, 0, 0], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 0}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_health_label", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [154, 184, 181, 255], "font_size": 12, "rounding": 0}, "widget": {"type": "text", "text": "", "align": "left"}}}},
+    {"id": "inspect_health_value", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 16, "rounding": 0}, "widget": {"type": "text", "text": "", "align": "right"}}}},
+    {"id": "inspect_armor_label", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [154, 184, 181, 255], "font_size": 12, "rounding": 0}, "widget": {"type": "text", "text": "", "align": "left"}}}},
+    {"id": "inspect_armor_value", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 16, "rounding": 0}, "widget": {"type": "text", "text": "", "align": "right"}}}},
+    {"id": "inspect_health_track", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [245, 245, 240, 70], "border": [0, 0, 0, 0], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 0}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_health_fill", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 245], "border": [0, 0, 0, 0], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 0}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_armor_track", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [245, 245, 240, 70], "border": [0, 0, 0, 0], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 0}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_armor_fill", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 245], "border": [0, 0, 0, 0], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 0}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_target_ring", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 64, "enabled": false, "draggable": false, "style": {"fill": [9, 26, 32, 150], "border": [151, 240, 225, 245], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 0}, "widget": {"type": "circle"}}}},
+    {"id": "inspect_target_dot", "layer": "ui", "parent": "ammo_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 65, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 255], "border": [0, 0, 0, 0], "text": [0, 0, 0, 0], "font_size": 15, "rounding": 0}, "widget": {"type": "circle"}}}},
+    {"id": "inspect_compass_ring", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 61, "enabled": false, "draggable": false, "style": {"fill": [10, 16, 19, 100], "border": [248, 247, 242, 170], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "circle"}}}},
+    {"id": "inspect_minimap", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 62, "visible": false, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [255, 255, 255, 255], "rounding": 0}, "widget": {"type": "image", "source": "level-minimap"}}}},
+    {"id": "inspect_map_status", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "visible": false, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [215, 226, 224, 215], "font_size": 10, "rounding": 0}, "widget": {"type": "text", "align": "center", "text": ""}}}},
+    {"id": "inspect_compass_north", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 11, "rounding": 2}, "widget": {"type": "text", "align": "center", "text": ""}}}},
+    {"id": "inspect_compass_arrow", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 245], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "polyline", "points": [[0, 0], [1, 1]], "thickness": 1.7}}}},
+    {"id": "inspect_objective_icon", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [223, 178, 72, 255], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "polyline", "points": [[0, 0], [1, 1]], "thickness": 1.7}}}},
+    {"id": "inspect_objective_title", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "text", "align": "left", "text": ""}}}},
+    {"id": "inspect_objective_detail", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 11, "rounding": 2}, "widget": {"type": "text", "align": "left", "text": ""}}}},
+    {"id": "inspect_health_icon_h", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 255], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_health_icon_v", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 255], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_armor_icon", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 245], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "polyline", "points": [[0, 0], [1, 1]], "thickness": 1.7}}}},
+    {"id": "inspect_stamina_icon", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 245], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "polyline", "points": [[0, 0], [1, 1]], "thickness": 1.7}}}},
+    {"id": "inspect_stamina_value", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 16, "rounding": 2}, "widget": {"type": "text", "align": "right", "text": ""}}}},
+    {"id": "inspect_stamina_track", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [245, 245, 240, 70], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_stamina_fill", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 245], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_speed_icon", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 245], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "polyline", "points": [[0, 0], [1, 1]], "thickness": 1.7}}}},
+    {"id": "inspect_speed_value", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 13, "rounding": 2}, "widget": {"type": "text", "align": "right", "text": ""}}}},
+    {"id": "inspect_speed_track", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [245, 245, 240, 70], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_speed_fill", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 245], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_slot1_box", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 61, "enabled": false, "draggable": false, "style": {"fill": [16, 20, 23, 145], "border": [245, 245, 240, 55], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_slot1_number", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 11, "rounding": 2}, "widget": {"type": "text", "align": "center", "text": ""}}}},
+    {"id": "inspect_slot1_name", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 14, "rounding": 2}, "widget": {"type": "text", "align": "left", "text": ""}}}},
+    {"id": "inspect_slot2_box", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 61, "enabled": false, "draggable": false, "style": {"fill": [16, 20, 23, 145], "border": [245, 245, 240, 55], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_slot2_number", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 11, "rounding": 2}, "widget": {"type": "text", "align": "center", "text": ""}}}},
+    {"id": "inspect_slot2_name", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 14, "rounding": 2}, "widget": {"type": "text", "align": "left", "text": ""}}}},
+    {"id": "inspect_slot3_box", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 61, "enabled": false, "draggable": false, "style": {"fill": [16, 20, 23, 145], "border": [245, 245, 240, 55], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_slot3_number", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 11, "rounding": 2}, "widget": {"type": "text", "align": "center", "text": ""}}}},
+    {"id": "inspect_slot3_name", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 14, "rounding": 2}, "widget": {"type": "text", "align": "left", "text": ""}}}},
+    {"id": "inspect_slot4_box", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 61, "enabled": false, "draggable": false, "style": {"fill": [16, 20, 23, 145], "border": [245, 245, 240, 55], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "rectangle"}}}},
+    {"id": "inspect_slot4_number", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 11, "rounding": 2}, "widget": {"type": "text", "align": "center", "text": ""}}}},
+    {"id": "inspect_slot4_name", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 14, "rounding": 2}, "widget": {"type": "text", "align": "left", "text": ""}}}},
+    {"id": "inspect_weapon_icon", "layer": "ui", "parent": "inspection_hud", "components": {"UiElement": {"rect": {"x": 0, "y": 0, "width": 20, "height": 20}, "z": 63, "enabled": false, "draggable": false, "style": {"fill": [248, 247, 242, 245], "border": [0, 0, 0, 0], "text": [248, 247, 242, 255], "font_size": 15, "rounding": 2}, "widget": {"type": "polyline", "points": [[0, 0], [1, 1]], "thickness": 1.7}}}},
     { "id": "player_ui", "layer": "ui", "parent": "game_ui", "components": {} },
     { "id": "scene_ui", "layer": "ui", "parent": "game_ui", "components": {} },
     {
@@ -5196,18 +5314,20 @@
           "enabled": true,
           "priority": 0,
           "filmic": true,
-          "exposure_ev": 0.0,
-          "contrast": 1.04,
-          "saturation": 0.96,
-          "temperature": 0.04,
-          "tint": 0.0,
-          "shadows": 0.06,
-          "highlights": 0.0,
-          "bloom_intensity": 0.16,
-          "bloom_threshold": 0.9,
-          "vignette": 0.12,
-          "grain": 0.0,
-          "sharpness": 0.2
+          "exposure_ev": -0.08,
+          "contrast": 1.07,
+          "saturation": 1.02,
+          "temperature": 0.02,
+          "tint": -0.02,
+          "shadow_warmth": -0.32,
+          "highlight_warmth": 0.2,
+          "shadows": -0.04,
+          "highlights": -0.1,
+          "bloom_intensity": 0.1,
+          "bloom_threshold": 1.0,
+          "vignette": 0.14,
+          "grain": 0.002,
+          "sharpness": 0.24
         }
       }
     },
@@ -5241,14 +5361,14 @@
         "UiElement": {
           "rect": {
             "height": 323.0,
-            "width": 274.0,
-            "x": 20.0,
-            "y": 20.0
+            "width": 360,
+            "x": 16,
+            "y": 184
           },
           "z": 10,
           "collapsible": {
             "title": "Scene view",
-            "collapsed": false,
+            "collapsed": true,
             "header_height": 36.0
           },
           "style": {
@@ -5262,7 +5382,7 @@
               17,
               37,
               51,
-              235
+              255
             ],
             "rounding": 7.0
           },
@@ -5280,7 +5400,7 @@
         "UiElement": {
           "rect": {
             "height": 20.0,
-            "width": 235.0,
+            "width": 326,
             "x": 18.0,
             "y": 9.0
           },
@@ -5323,7 +5443,7 @@
         "UiElement": {
           "rect": {
             "height": 26.0,
-            "width": 238.0,
+            "width": 326,
             "x": 17.0,
             "y": 38.0
           },
@@ -5344,7 +5464,7 @@
         "UiElement": {
           "rect": {
             "height": 24.0,
-            "width": 238.0,
+            "width": 326,
             "x": 17.0,
             "y": 73.0
           },
@@ -5409,7 +5529,7 @@
         "UiElement": {
           "rect": {
             "height": 1.0,
-            "width": 238.0,
+            "width": 326,
             "x": 17.0,
             "y": 159.0
           },
@@ -5455,7 +5575,7 @@
         "UiElement": {
           "rect": {
             "height": 21.0,
-            "width": 238.0,
+            "width": 326,
             "x": 17.0,
             "y": 165.0
           },
@@ -5498,7 +5618,7 @@
         "UiElement": {
           "rect": {
             "height": 17.0,
-            "width": 238.0,
+            "width": 326,
             "x": 17.0,
             "y": 188.0
           },
@@ -5541,7 +5661,7 @@
         "UiElement": {
           "rect": {
             "height": 22.0,
-            "width": 238.0,
+            "width": 326,
             "x": 17.0,
             "y": 210.0
           },
@@ -5562,7 +5682,7 @@
         "UiElement": {
           "rect": {
             "height": 22.0,
-            "width": 238.0,
+            "width": 326,
             "x": 17.0,
             "y": 239.0
           },
@@ -5585,7 +5705,7 @@
         "UiElement": {
           "rect": {
             "height": 15.0,
-            "width": 238.0,
+            "width": 326,
             "x": 17.0,
             "y": 266.0
           },
@@ -5629,8 +5749,8 @@
           "rect": {
             "height": 192.0,
             "width": 236.0,
-            "x": 20.0,
-            "y": 20.0
+            "x": 16,
+            "y": 16
           },
           "anchor": "top_right",
           "z": 10,
@@ -5932,14 +6052,14 @@
           "rect": {
             "height": 154.0,
             "width": 236.0,
-            "x": 20.0,
-            "y": 222.0
+            "x": 16,
+            "y": 216
           },
           "anchor": "top_right",
           "z": 10,
           "collapsible": {
             "title": "HDR sky",
-            "collapsed": false,
+            "collapsed": true,
             "header_height": 32.0
           },
           "style": {
@@ -6073,53 +6193,41 @@
         }
       }
     },
+    { "id": "training_range", "layer": "level", "parent": "active_level", "components": {} },
     {
-      "id": "back_to_levels",
-      "layer": "ui",
-      "parent": "hud_ui",
+      "id": "training_target_left", "layer": "level", "parent": "training_range",
       "components": {
-        "UiElement": {
-          "rect": {
-            "x": 20.0,
-            "y": 18.0,
-            "width": 140.0,
-            "height": 32.0
-          },
-          "anchor": "bottom_left",
-          "z": 30,
-          "style": {
-            "fill": [
-              20,
-              44,
-              52,
-              240
-            ],
-            "border": [
-              111,
-              156,
-              152,
-              210
-            ],
-            "text": [
-              240,
-              248,
-              243,
-              255
-            ],
-            "font_size": 13.0,
-            "rounding": 6.0
-          },
-          "widget": {
-            "type": "button",
-            "label": "Levels"
-          }
-        }
+        "Transform": { "position": [0.0, 0.0, 0.0] },
+        "Hitbox": { "enabled": false, "zones": [] },
+        "Health": { "current": 10000.0, "maximum": 10000.0 },
+        "TrainingTarget": { "enabled": true, "visible": true, "distance_m": 4.0, "lateral_m": -1.6 }
+      }
+    },
+    {
+      "id": "training_target_center", "layer": "level", "parent": "training_range",
+      "components": {
+        "Transform": { "position": [0.0, 0.0, 0.0] },
+        "Hitbox": { "enabled": false, "zones": [] },
+        "Health": { "current": 10000.0, "maximum": 10000.0 },
+        "TrainingTarget": { "enabled": true, "visible": true, "distance_m": 5.5, "lateral_m": 0.0 }
+      }
+    },
+    {
+      "id": "training_target_right", "layer": "level", "parent": "training_range",
+      "components": {
+        "Transform": { "position": [0.0, 0.0, 0.0] },
+        "Hitbox": { "enabled": false, "zones": [] },
+        "Health": { "current": 10000.0, "maximum": 10000.0 },
+        "TrainingTarget": { "enabled": true, "visible": true, "distance_m": 7.0, "lateral_m": 1.6 }
       }
     },
     {
       "id": "player",
       "layer": "player",
       "components": {
+        "Health": { "current": 100.0, "maximum": 100.0 },
+        "Armor": { "current": 100.0, "maximum": 100.0, "absorption": 0.5 },
+        "SuppressionReceiver": { "enabled": true, "near_miss_radius_m": 1.25 },
         "PlayerCamera": {},
         "PlayerControls": {
           "jump_speed": 5.0,
@@ -6132,6 +6240,7 @@
           "zoom_factor": 5.0,
           "zoom_response": 12.0,
           "bindings": {
+            "down": "KeyZ",
             "jump": "Space",
             "sprint": "ShiftLeft",
             "crouch": "ControlLeft"
@@ -6155,15 +6264,32 @@
           "auto_align_spawn": true
         },
         "CameraLens": {
-          "aperture_f_number": 5.6,
+          "aperture_f_number": 8.0,
           "shutter_angle_degrees": 180.0,
-          "shutter_fps": 60.0,
-          "iso": 100.0,
+          "shutter_fps": 24.0,
+          "iso": 80.0,
           "exposure_compensation_ev": 0.0,
-          "focus_distance_m": 5.0,
+          "focus_distance_m": 7.5,
           "sensor_height_mm": 24.0,
-          "depth_of_field": false,
-          "motion_blur": false
+          "depth_of_field": true,
+          "motion_blur": true
+        },
+        "Hitbox": {
+          "enabled": true,
+          "anchor": "feet",
+          "scale_from_player_rig": true,
+          "follow_crouch": true,
+          "zones": [
+            { "name": "head", "center": [0.0, 1.68, 0.0], "half_extents": [0.12, 0.12, 0.11] },
+            { "name": "neck", "center": [0.0, 1.51, 0.0], "half_extents": [0.07, 0.05, 0.07] },
+            { "name": "chest", "center": [0.0, 1.27, 0.0], "half_extents": [0.20, 0.20, 0.12] },
+            { "name": "abdomen", "center": [0.0, 0.99, 0.0], "half_extents": [0.16, 0.09, 0.10] },
+            { "name": "pelvis", "center": [0.0, 0.82, 0.0], "half_extents": [0.17, 0.08, 0.11] },
+            { "name": "left_arm", "center": [-0.28, 1.17, 0.0], "half_extents": [0.08, 0.33, 0.08] },
+            { "name": "right_arm", "center": [0.28, 1.17, 0.0], "half_extents": [0.08, 0.33, 0.08] },
+            { "name": "left_leg", "center": [-0.10, 0.41, 0.0], "half_extents": [0.09, 0.40, 0.10] },
+            { "name": "right_leg", "center": [0.10, 0.41, 0.0], "half_extents": [0.09, 0.40, 0.10] }
+          ]
         },
         "PlayerPosture": {
           "enabled": true,
@@ -6178,15 +6304,15 @@
           "active_units_per_meter": 1.0
         },
         "CameraZoomLens": {
-          "aperture_f_number": 5.6,
+          "aperture_f_number": 16.0,
           "shutter_angle_degrees": 180.0,
-          "shutter_fps": 60.0,
-          "iso": 100.0,
+          "shutter_fps": 24.0,
+          "iso": 320.0,
           "exposure_compensation_ev": 0.0,
-          "focus_distance_m": 5.0,
+          "focus_distance_m": 15.0,
           "sensor_height_mm": 24.0,
-          "depth_of_field": false,
-          "motion_blur": false
+          "depth_of_field": true,
+          "motion_blur": true
         }
       }
     },
@@ -6217,12 +6343,12 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 20,
-            "y": 20,
+            "x": 16,
+            "y": 58,
             "width": 360,
             "height": 596
           },
-          "z": 90,
+          "z": 110,
           "widget": {
             "type": "panel"
           },
@@ -6241,7 +6367,7 @@
             ],
             "rounding": 7
           },
-          "anchor": "bottom_right",
+          "anchor": "top_left",
           "collapsible": {
             "title": "Player controls",
             "collapsed": true,
@@ -6261,10 +6387,10 @@
             "width": 335,
             "height": 18
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
-            "text": "Click scene to lock mouse · ~ unlocks · Esc menu",
+            "text": "Q inspect · ` ECS tools / unlock mouse · Esc menu",
             "align": "left"
           },
           "style": {
@@ -6303,7 +6429,7 @@
             "width": 160,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "checkbox",
             "label": "Movement",
@@ -6324,7 +6450,7 @@
             "width": 170,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "checkbox",
             "label": "Mouse look",
@@ -6345,7 +6471,7 @@
             "width": 330,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "slider",
             "label": "Speed",
@@ -6368,7 +6494,7 @@
             "width": 330,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "slider",
             "label": "Sprint",
@@ -6391,7 +6517,7 @@
             "width": 330,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "slider",
             "label": "Look sensitivity",
@@ -6415,7 +6541,7 @@
             "width": 330,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "slider",
             "label": "Jump speed",
@@ -6438,7 +6564,7 @@
             "width": 330,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "slider",
             "label": "Jump gravity",
@@ -6461,7 +6587,7 @@
             "width": 220,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "checkbox",
             "label": "Invert mouse Y",
@@ -6482,7 +6608,7 @@
             "width": 335,
             "height": 18
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Click a binding, then press the desired key",
@@ -6524,7 +6650,7 @@
             "width": 66,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Forward",
@@ -6566,7 +6692,7 @@
             "width": 88,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "W"
@@ -6589,7 +6715,7 @@
             "width": 66,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Back",
@@ -6631,7 +6757,7 @@
             "width": 88,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "S"
@@ -6654,7 +6780,7 @@
             "width": 66,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Left",
@@ -6696,7 +6822,7 @@
             "width": 88,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "A"
@@ -6719,7 +6845,7 @@
             "width": 66,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Right",
@@ -6761,7 +6887,7 @@
             "width": 88,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "D"
@@ -6784,7 +6910,7 @@
             "width": 66,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Up",
@@ -6826,7 +6952,7 @@
             "width": 88,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "E"
@@ -6849,7 +6975,7 @@
             "width": 66,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Down",
@@ -6891,7 +7017,7 @@
             "width": 88,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "Q"
@@ -6914,7 +7040,7 @@
             "width": 66,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Sprint",
@@ -6956,7 +7082,7 @@
             "width": 88,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "Left Shift"
@@ -6979,7 +7105,7 @@
             "width": 66,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Jump",
@@ -7021,7 +7147,7 @@
             "width": 88,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "Space"
@@ -7044,7 +7170,7 @@
             "width": 335,
             "height": 17
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "",
@@ -7086,7 +7212,7 @@
             "width": 332,
             "height": 28
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "Reset controls"
@@ -7110,7 +7236,7 @@
             "width": 330,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "slider",
             "label": "Field of view",
@@ -7128,9 +7254,9 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 20,
-            "y": 362,
-            "width": 274,
+            "x": 16,
+            "y": 142,
+            "width": 360,
             "height": 305
           },
           "z": 30,
@@ -7142,7 +7268,7 @@
               17,
               37,
               51,
-              235
+              255
             ],
             "border": [
               116,
@@ -7154,7 +7280,7 @@
           },
           "collapsible": {
             "title": "Level assets",
-            "collapsed": false,
+            "collapsed": true,
             "header_height": 34
           }
         }
@@ -7169,7 +7295,7 @@
           "rect": {
             "x": 14,
             "y": 5,
-            "width": 246,
+            "width": 332,
             "height": 22
           },
           "z": 31,
@@ -7211,7 +7337,7 @@
           "rect": {
             "x": 14,
             "y": 27,
-            "width": 246,
+            "width": 332,
             "height": 19
           },
           "z": 31,
@@ -7253,7 +7379,7 @@
           "rect": {
             "x": 14,
             "y": 49,
-            "width": 246,
+            "width": 332,
             "height": 23
           },
           "z": 31,
@@ -7274,7 +7400,7 @@
           "rect": {
             "x": 14,
             "y": 74,
-            "width": 246,
+            "width": 332,
             "height": 24
           },
           "z": 31,
@@ -7297,7 +7423,7 @@
           "rect": {
             "x": 14,
             "y": 99,
-            "width": 246,
+            "width": 332,
             "height": 20
           },
           "z": 31,
@@ -7339,7 +7465,7 @@
           "rect": {
             "x": 14,
             "y": 121,
-            "width": 246,
+            "width": 332,
             "height": 24
           },
           "z": 31,
@@ -7362,7 +7488,7 @@
           "rect": {
             "x": 14,
             "y": 149,
-            "width": 246,
+            "width": 332,
             "height": 22
           },
           "z": 31,
@@ -7383,7 +7509,7 @@
           "rect": {
             "x": 14,
             "y": 173,
-            "width": 246,
+            "width": 332,
             "height": 22
           },
           "z": 31,
@@ -7404,7 +7530,7 @@
           "rect": {
             "x": 14,
             "y": 197,
-            "width": 246,
+            "width": 332,
             "height": 22
           },
           "z": 31,
@@ -7425,7 +7551,7 @@
           "rect": {
             "x": 14,
             "y": 221,
-            "width": 246,
+            "width": 332,
             "height": 24
           },
           "z": 31,
@@ -7911,7 +8037,7 @@
             "width": 330,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "slider",
             "label": "Eye height (m)",
@@ -7934,7 +8060,7 @@
             "width": 330,
             "height": 22
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "slider",
             "label": "Scale vs level",
@@ -7952,9 +8078,9 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 310,
-            "y": 20,
-            "width": 260,
+            "x": 16,
+            "y": 100,
+            "width": 360,
             "height": 430
           },
           "z": 100,
@@ -7967,7 +8093,7 @@
               13,
               29,
               37,
-              245
+              255
             ],
             "border": [
               116,
@@ -7979,7 +8105,7 @@
           },
           "collapsible": {
             "title": "ECS entities",
-            "collapsed": false,
+            "collapsed": true,
             "header_height": 34
           }
         }
@@ -8746,8 +8872,8 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 20,
-            "y": 65,
+            "x": 16,
+            "y": 16,
             "width": 360,
             "height": 610
           },
@@ -8755,7 +8881,7 @@
           "widget": {
             "type": "panel"
           },
-          "anchor": "bottom_right",
+          "anchor": "top_left",
           "style": {
             "fill": [
               13,
@@ -8787,7 +8913,7 @@
           "rect": {
             "x": 12,
             "y": 4,
-            "width": 330,
+            "width": 76,
             "height": 20
           },
           "z": 121,
@@ -8821,6 +8947,8 @@
       },
       "parent": "camera_panel"
     },
+    {"id": "camera_optic", "layer": "ui", "parent": "camera_panel", "components": {"UiElement": {"rect": {"x": 96, "y": 2, "width": 246, "height": 22}, "z": 121, "widget": {"type": "button", "label": "Optic: Iron sights · 1.25×"}, "style": {"font_size": 12}}}},
+    {"id": "camera_zoom_info", "layer": "ui", "parent": "camera_panel", "components": {"UiElement": {"rect": {"x": 12, "y": 26, "width": 330, "height": 22}, "z": 121, "visible": false, "enabled": false, "draggable": false, "style": {"fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [180, 205, 204, 255], "font_size": 12}, "widget": {"type": "text", "align": "left", "text": "Iron sights · 1.25× ADS"}}}},
     {
       "id": "camera_fov",
       "layer": "ui",
@@ -8858,10 +8986,11 @@
           "z": 121,
           "widget": {
             "type": "slider",
-            "label": "Zoom magnification",
-            "value": 5.0,
+            "label": "Scope magnification",
+            "value": 4.0,
             "min": 1,
-            "max": 10
+            "max": 100,
+            "logarithmic": true
           },
           "visible": false,
           "enabled": false
@@ -9016,7 +9145,7 @@
           "widget": {
             "type": "slider",
             "label": "Iris f/",
-            "value": 5.6,
+            "value": 8.0,
             "min": 1,
             "max": 32,
             "logarithmic": true
@@ -9040,7 +9169,7 @@
           "widget": {
             "type": "slider",
             "label": "Shutter angle",
-            "value": 180,
+            "value": 180.0,
             "min": 1,
             "max": 360
           }
@@ -9063,9 +9192,9 @@
           "widget": {
             "type": "slider",
             "label": "Shutter time (ms)",
-            "value": 8.333333333333334,
+            "value": 20.833333333333332,
             "min": 0.04,
-            "max": 16.666666666666668,
+            "max": 41.666666666666664,
             "logarithmic": true
           }
         }
@@ -9129,7 +9258,7 @@
           "widget": {
             "type": "slider",
             "label": "Shutter FPS",
-            "value": 60,
+            "value": 24.0,
             "min": 1,
             "max": 240,
             "logarithmic": true
@@ -9153,7 +9282,7 @@
           "widget": {
             "type": "slider",
             "label": "ISO",
-            "value": 100,
+            "value": 80.0,
             "min": 25,
             "max": 6400,
             "logarithmic": true
@@ -9242,7 +9371,7 @@
           "widget": {
             "type": "slider",
             "label": "Focus distance (m)",
-            "value": 5,
+            "value": 7.5,
             "min": 0.1,
             "max": 1000,
             "logarithmic": true
@@ -9289,7 +9418,7 @@
           "widget": {
             "type": "checkbox",
             "label": "Depth of field",
-            "checked": false
+            "checked": true
           }
         }
       },
@@ -9310,7 +9439,7 @@
           "widget": {
             "type": "checkbox",
             "label": "Motion blur",
-            "checked": false
+            "checked": true
           }
         }
       },
@@ -9407,16 +9536,16 @@
       "components": {
         "UiElement": {
           "rect": {
-            "x": 400,
-            "y": 65,
+            "x": 16,
+            "y": 226,
             "width": 360,
             "height": 412
           },
-          "z": 125,
+          "z": 8,
           "widget": {
             "type": "panel"
           },
-          "anchor": "bottom_right",
+          "anchor": "top_left",
           "style": {
             "fill": [
               13,
@@ -9451,7 +9580,7 @@
             "width": 155,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "checkbox",
             "label": "Enable grade",
@@ -9472,7 +9601,7 @@
             "width": 155,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "checkbox",
             "label": "Filmic curve",
@@ -9493,11 +9622,11 @@
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Exposure (EV)",
-            "value": 0.0,
+            "value": -0.08,
             "min": -3,
             "max": 3
           }
@@ -9512,15 +9641,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 56,
+            "y": 53,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Contrast",
-            "value": 1.04,
+            "value": 1.07,
             "min": 0.5,
             "max": 1.5
           }
@@ -9535,15 +9664,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 81,
+            "y": 75,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Saturation",
-            "value": 0.96,
+            "value": 1.02,
             "min": 0,
             "max": 2
           }
@@ -9558,15 +9687,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 106,
+            "y": 97,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Warmth",
-            "value": 0.04,
+            "value": 0.02,
             "min": -1,
             "max": 1
           }
@@ -9581,15 +9710,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 131,
+            "y": 119,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Tint",
-            "value": 0.0,
+            "value": -0.02,
             "min": -1,
             "max": 1
           }
@@ -9604,15 +9733,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 156,
+            "y": 141,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Shadows",
-            "value": 0.06,
+            "value": -0.04,
             "min": -1,
             "max": 1
           }
@@ -9627,15 +9756,61 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 181,
+            "y": 185,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Highlights",
-            "value": 0.0,
+            "value": -0.1,
+            "min": -1,
+            "max": 1
+          }
+        }
+      },
+      "parent": "image_panel"
+    },
+    {
+      "id": "image_shadow_warmth",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 163,
+            "width": 330,
+            "height": 22
+          },
+          "z": 9,
+          "widget": {
+            "type": "slider",
+            "label": "Shadow warmth",
+            "value": -0.32,
+            "min": -1,
+            "max": 1
+          }
+        }
+      },
+      "parent": "image_panel"
+    },
+    {
+      "id": "image_highlight_warmth",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": {
+            "x": 12,
+            "y": 207,
+            "width": 330,
+            "height": 22
+          },
+          "z": 9,
+          "widget": {
+            "type": "slider",
+            "label": "Highlight warmth",
+            "value": 0.2,
             "min": -1,
             "max": 1
           }
@@ -9650,15 +9825,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 206,
+            "y": 229,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Bloom strength",
-            "value": 0.16,
+            "value": 0.1,
             "min": 0,
             "max": 2
           }
@@ -9673,15 +9848,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 231,
+            "y": 251,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Bloom threshold",
-            "value": 0.9,
+            "value": 1.0,
             "min": 0.1,
             "max": 4,
             "logarithmic": true
@@ -9697,15 +9872,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 256,
+            "y": 273,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Vignette",
-            "value": 0.12,
+            "value": 0.14,
             "min": 0,
             "max": 1
           }
@@ -9720,15 +9895,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 281,
+            "y": 295,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Film grain",
-            "value": 0.0,
+            "value": 0.002,
             "min": 0,
             "max": 0.2
           }
@@ -9743,15 +9918,15 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 310,
+            "y": 317,
             "width": 330,
             "height": 22
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "slider",
             "label": "Sharpening",
-            "value": 0.2,
+            "value": 0.24,
             "min": 0,
             "max": 2
           }
@@ -9766,11 +9941,11 @@
         "UiElement": {
           "rect": {
             "x": 12,
-            "y": 337,
+            "y": 341,
             "width": 330,
             "height": 28
           },
-          "z": 126,
+          "z": 9,
           "widget": {
             "type": "button",
             "label": "Reset cinematic grade"
@@ -9784,6 +9959,36 @@
       "layer": "player",
       "parent": "player",
       "components": {
+        "MuzzleLight": { "enabled": true, "intensity": 0.32, "radius_m": 3.0,
+          "duration_s": 0.09, "offset_m": 0.65, "red": 1.0, "green": 0.68, "blue": 0.35 },
+        "AimStability": {
+          "enabled": true,
+          "idle_sway_deg": 0.16,
+          "sway_frequency_hz": 0.38,
+          "walk_multiplier": 2.2,
+          "crouch_multiplier": 0.6,
+          "ads_multiplier": 0.8,
+          "single_heat_per_shot": 0.04,
+          "burst_heat_per_shot": 0.1,
+          "auto_heat_per_shot": 0.18,
+          "heat_sway_deg": 0.45,
+          "heat_recovery_s": 0.9,
+          "under_fire_sway_deg": 0.55,
+          "under_fire_recovery_s": 1.6,
+          "flinch_deg": 0.22,
+          "walk_recoil_multiplier": 1.2,
+          "crouch_recoil_multiplier": 0.72,
+          "heat_recoil_multiplier": 0.35,
+          "response_s": 0.18
+        },
+        "WeaponRecoil": {
+          "enabled": true,
+          "vertical_degrees": 0.55,
+          "horizontal_degrees": 0.12,
+          "ads_multiplier": 0.85,
+          "hip_multiplier": 1.1,
+          "rise_seconds": 0.045
+        },
         "WeaponAnimation": {
           "idle_enabled": true,
           "idle_strength": 1.0,
@@ -9808,6 +10013,7 @@
           "damage": 35.0,
           "show_tracers": true
         },
+        "WeaponOptic": { "kind": "iron", "scope_magnification": 4.0 },
         "WeaponState": {
           "state": "lowReady",
           "mode": "single",
@@ -9846,51 +10052,6 @@
       }
     },
     {
-      "id": "weapon_hud",
-      "layer": "ui",
-      "parent": "hud_ui",
-      "components": {
-        "UiElement": {
-          "rect": {
-            "x": 180.0,
-            "y": 18.0,
-            "width": 470.0,
-            "height": 32.0
-          },
-          "anchor": "bottom_left",
-          "z": 30,
-          "style": {
-            "fill": [
-              20,
-              44,
-              52,
-              210
-            ],
-            "border": [
-              111,
-              156,
-              152,
-              170
-            ],
-            "text": [
-              240,
-              248,
-              243,
-              255
-            ],
-            "font": "monospace",
-            "font_size": 12.0,
-            "rounding": 6.0
-          },
-          "widget": {
-            "type": "text",
-            "align": "left",
-            "text": "30 / 90   SINGLE   |   LMB fire   R reload   V mode   F stow"
-          }
-        }
-      }
-    },
-    {
       "id": "label_key_crouch",
       "layer": "ui",
       "components": {
@@ -9901,7 +10062,7 @@
             "width": 66,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "text",
             "text": "Crouch",
@@ -9943,7 +10104,7 @@
             "width": 88,
             "height": 24
           },
-          "z": 91,
+          "z": 111,
           "widget": {
             "type": "button",
             "label": "Left Ctrl"

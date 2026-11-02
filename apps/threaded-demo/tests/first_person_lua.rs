@@ -395,7 +395,7 @@ fn sprint_interrupts_passive_hip_recovery_after_the_visible_shot() {
 }
 
 #[test]
-fn ads_uses_the_approved_pose_and_procedural_recoil_when_its_clip_is_disabled() {
+fn ads_shots_show_authored_flash_then_return_to_the_aimed_pose() {
     let f = Fixture::new();
     f.mouse("right", true);
     f.tick(30);
@@ -405,7 +405,18 @@ fn ads_uses_the_approved_pose_and_procedural_recoil_when_its_clip_is_disabled() 
     f.mouse("left", false);
     f.tick(6);
     let frames = f.world.borrow_mut().drain_events("first_person.frame");
-    assert!(frames.iter().all(|event| event["clip"] != "fireADS"));
+    assert!(
+        frames
+            .iter()
+            .any(|event| event["clip"] == "fireADS" && event["index"] == 1),
+        "each aimed shot must display the muzzle-flash frame"
+    );
+    f.tick(12);
+    let recovered = f.world.borrow_mut().drain_events("first_person.frame");
+    assert!(
+        recovered.iter().any(|event| event["clip"] == "raising"),
+        "the aimed pose must return after the flash"
+    );
     assert!(
         frames
             .iter()
@@ -598,4 +609,32 @@ fn cached_weapon_settings_follow_live_ecs_edits() {
     );
     f.tick(40);
     assert_eq!(f.state()["shots"], 1);
+}
+#[test]
+fn aim_takes_priority_over_sprint_and_returns_to_sprint_after_release() {
+    let f = Fixture::new();
+    f.key("KeyW", true);
+    f.key("ShiftLeft", true);
+    f.tick(35);
+    assert_eq!(f.state()["state"], "run");
+    f.mouse("right", true);
+    f.tick(45);
+    assert_eq!(
+        f.state()["state"],
+        "ads",
+        "aiming while running must enter ADS"
+    );
+    f.tick(30);
+    assert_eq!(
+        f.state()["state"],
+        "ads",
+        "held Shift must not interrupt ADS"
+    );
+    f.mouse("right", false);
+    f.tick(45);
+    assert_eq!(
+        f.state()["state"],
+        "run",
+        "held Shift may sprint after ADS is released"
+    );
 }

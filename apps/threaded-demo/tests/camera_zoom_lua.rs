@@ -55,6 +55,10 @@ impl Fixture {
             .unwrap()
             .collapsed = false;
         let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+        lua.execute(
+            &std::fs::read_to_string(root.join("assets/scripts/weapon_optics.lua")).unwrap(),
+        )
+        .unwrap();
         for script in scripts {
             lua.execute(
                 &std::fs::read_to_string(root.join("assets/scripts").join(script)).unwrap(),
@@ -90,7 +94,7 @@ fn magnification(camera: &PlayerCamera) -> f32 {
         / (camera.render_fov_degrees().to_radians() / 2.0).tan()
 }
 #[test]
-fn right_hold_smoothly_reaches_optical_five_x_and_restores_the_base_fov() {
+fn right_hold_smoothly_reaches_iron_sight_magnification_and_restores_fov() {
     let f = Fixture::new(&["camera_zoom.lua"]);
     f.world
         .borrow_mut()
@@ -125,18 +129,18 @@ fn right_hold_smoothly_reaches_optical_five_x_and_restores_the_base_fov() {
         .unwrap();
     f.lua.run_systems(0.02).unwrap();
     let first = magnification(&f.camera());
-    assert!(first > 1.0 && first < 5.0, "zoom must ease in: {first}");
+    assert!(first > 1.0 && first < 1.25, "zoom must ease in: {first}");
     f.lua.run_systems(0.08).unwrap();
     let second = magnification(&f.camera());
     assert!(
-        second > first && second < 5.0,
+        second > first && second < 1.25,
         "zoom must move smoothly toward its target"
     );
     for _ in 0..100 {
         f.lua.run_systems(1.0 / 60.0).unwrap();
     }
     let zoomed = f.camera();
-    assert!((magnification(&zoomed) - 5.0).abs() < 0.001, "{zoomed:?}");
+    assert!((magnification(&zoomed) - 1.25).abs() < 0.001, "{zoomed:?}");
     assert_eq!(zoomed.fov_degrees, 75.0);
     assert_eq!(zoomed.position, [0.0; 3]);
     // Changing the base FOV while zoomed preserves the requested optical factor.
@@ -146,7 +150,7 @@ fn right_hold_smoothly_reaches_optical_five_x_and_restores_the_base_fov() {
         .unwrap()
         .fov_degrees = 90.0;
     f.lua.run_systems(1.0 / 60.0).unwrap();
-    assert!((magnification(&f.camera()) - 5.0).abs() < 0.001);
+    assert!((magnification(&f.camera()) - 1.25).abs() < 0.001);
     f.lua
         .dispatch(
             "input.mouse_button",
@@ -156,7 +160,7 @@ fn right_hold_smoothly_reaches_optical_five_x_and_restores_the_base_fov() {
     f.lua.run_systems(0.02).unwrap();
     let returning = magnification(&f.camera());
     assert!(
-        returning > 1.0 && returning < 5.0,
+        returning > 1.0 && returning < 1.25,
         "zoom must ease out: {returning}"
     );
     for _ in 0..100 {
@@ -193,34 +197,50 @@ fn zoom_transition_is_independent_of_tick_rate() {
     assert!((magnification(&slower.camera()) - magnification(&faster.camera())).abs() < 0.0001);
 }
 #[test]
-fn zoom_settings_are_exposed_in_the_player_inspector() {
+fn zoom_response_is_exposed_in_the_player_inspector() {
     let f = Fixture::new(&[
         "player_controls.lua",
         "camera_bob.lua",
         "camera_zoom.lua",
         "entity_inspector.lua",
     ]);
-    f.action("inspector_export_next", UiEventKind::Clicked);
-    f.action("inspector_export_next", UiEventKind::Clicked);
-    f.action("inspector_export_4", UiEventKind::NumberChanged(7.0));
-    f.action("inspector_export_next", UiEventKind::Clicked);
-    f.action("inspector_export_1", UiEventKind::NumberChanged(18.0));
-    let controls = f
+    let player = f.ids["player"];
+    let exports = f
         .world
         .borrow()
-        .get::<PlayerControls>(f.ids["player"])
+        .get_dynamic_resource("engine.exports")
         .unwrap()
         .clone();
-    assert!((controls.zoom_factor - 7.0).abs() < 0.001);
-    assert!((controls.zoom_response - 18.0).abs() < 0.001);
+    let entries = exports[player.to_string()].as_array().unwrap();
+    let index = entries
+        .iter()
+        .position(|e| e["name"] == "zoom_response")
+        .unwrap();
+    for _ in 0..index / 4 {
+        f.action("inspector_export_next", UiEventKind::Clicked);
+    }
+    f.action(
+        &format!("inspector_export_{}", index % 4 + 1),
+        UiEventKind::NumberChanged(18.0),
+    );
+    assert!(
+        (f.world
+            .borrow()
+            .get::<PlayerControls>(player)
+            .unwrap()
+            .zoom_response
+            - 18.0)
+            .abs()
+            < 0.001
+    );
     assert_eq!(
         f.world
             .borrow_mut()
             .drain_events("player.controls_changed")
             .len(),
-        2
+        1
     );
-    f.lua.execute("local p=ecs.get_resource('scene.entities').player; assert(not pcall(function() engine.set_export(p,'zoom_factor',11) end))").unwrap();
+    f.lua.execute("local p=ecs.get_resource('scene.entities').player; assert(not pcall(function() engine.set_export(p,'zoom_response',31) end))").unwrap();
 }
 
 #[test]
@@ -231,6 +251,7 @@ fn zoom_blends_the_rendered_lens_without_overwriting_either_profile() {
         let standard = world.get_mut::<CameraLens>(f.ids["player"]).unwrap();
         standard.aperture_f_number = 4.0;
         standard.iso = 100.0;
+        standard.depth_of_field = false;
         let zoom = &mut world.get_mut::<CameraZoomLens>(f.ids["player"]).unwrap().0;
         zoom.aperture_f_number = 8.0;
         zoom.iso = 400.0;
@@ -326,51 +347,117 @@ fn lens_cache_invalidates_after_removal_and_reinsertion() {
 }
 
 #[test]
-fn cached_controls_follow_validated_edits_and_component_lifecycle() {
+fn changing_optics_during_ads_uses_their_actual_power() {
     let f = Fixture::new(&["camera_zoom.lua"]);
-    let player = f.ids["player"];
-    // Populate the script's reader, then change its data through normal ECS APIs.
-    f.lua.run_systems(1.0 / 60.0).unwrap();
+    let weapon = f.ids["first_person"];
     f.lua
-        .execute(
-            r#"
-        local p = ecs.get_resource("scene.entities").player
-        local read = engine.component_reader(p, "PlayerControls")
-        local current = read()
-        local edit = ecs.get(p, "PlayerControls")
-        edit.zoom_factor = -5
-        assert(not pcall(function() ecs.set(p, "PlayerControls", edit) end))
-        assert(read().zoom_factor == current.zoom_factor)
-        ecs.set_field(p, "PlayerControls", "zoom_factor", 7)
-        assert(read().zoom_factor == 7)
-        local removed = ecs.remove(p, "PlayerControls")
-        assert(read() == nil)
-        removed.zoom_factor = 3
-        ecs.set(p, "PlayerControls", removed)
-        assert(read().zoom_factor == 3)
-    "#,
-        )
-        .unwrap();
-    f.lua
-        .dispatch(
-            "input.mouse_button",
-            &json!({
-                "button":"right", "pressed":true, "gameplay":true
-            }),
-        )
+        .dispatch("weapon.aim", &json!({"pressed":true}))
         .unwrap();
     for _ in 0..100 {
         f.lua.run_systems(1.0 / 60.0).unwrap();
     }
-    assert!((magnification(&f.camera()) - 3.0).abs() < 0.001);
-    // Native mutable access must invalidate the same reader as script edits.
-    f.world
-        .borrow_mut()
-        .get_mut::<PlayerControls>(player)
-        .unwrap()
-        .zoom_factor = 6.0;
+    assert!((magnification(&f.camera()) - 1.25).abs() < 0.001);
+    f.lua.execute("local w=ecs.get_resource('scene.entities').first_person; engine.optics.set(w,{kind='red_dot'})").unwrap();
+    for _ in 0..100 {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert!((magnification(&f.camera()) - 1.5).abs() < 0.001);
+    f.lua.execute("local w=ecs.get_resource('scene.entities').first_person; engine.optics.set(w,{kind='scope',scope_magnification=6})").unwrap();
+    f.lua.run_systems(0.02).unwrap();
+    assert!(magnification(&f.camera()) > 1.5 && magnification(&f.camera()) < 6.0);
     for _ in 0..100 {
         f.lua.run_systems(1.0 / 60.0).unwrap();
     }
     assert!((magnification(&f.camera()) - 6.0).abs() < 0.001);
+    f.world
+        .borrow_mut()
+        .set_dynamic(
+            weapon,
+            "WeaponOptic",
+            json!({"kind":"scope","scope_magnification":12.0}),
+        )
+        .unwrap();
+    for _ in 0..100 {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert!((magnification(&f.camera()) - 12.0).abs() < 0.001);
+    f.lua.execute("local w=ecs.get_resource('scene.entities').first_person; assert(not pcall(function() engine.optics.set(w,{kind='scope',scope_magnification=101}) end)); assert(not pcall(function() engine.optics.set(w,{kind='invalid'}) end))").unwrap();
+    assert_eq!(
+        f.world.borrow().get_dynamic(weapon, "WeaponOptic").unwrap()["scope_magnification"],
+        12.0
+    );
+    f.lua
+        .dispatch("weapon.aim", &json!({"pressed":false}))
+        .unwrap();
+    for _ in 0..100 {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert_eq!(f.camera().view_fov_degrees, None);
+}
+
+#[test]
+fn stowed_weapons_do_not_zoom_and_legacy_camera_factor_does_not_override_sights() {
+    let f = Fixture::new(&["camera_zoom.lua"]);
+    let player = f.ids["player"];
+    let weapon = f.ids["first_person"];
+    f.world
+        .borrow_mut()
+        .get_mut::<PlayerControls>(player)
+        .unwrap()
+        .zoom_factor = 8.0;
+    f.lua
+        .dispatch(
+            "input.mouse_button",
+            &json!({"button":"right","pressed":true,"gameplay":true}),
+        )
+        .unwrap();
+    for _ in 0..100 {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert!((magnification(&f.camera()) - 1.25).abs() < 0.001);
+    f.world
+        .borrow_mut()
+        .set_dynamic(weapon, "WeaponState", json!({"state":"noGun"}))
+        .unwrap();
+    for _ in 0..100 {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+    assert_eq!(f.camera().view_fov_degrees, None);
+}
+
+#[test]
+fn optic_events_validate_changes_and_report_the_equipped_scope() {
+    let f = Fixture::new(&["camera_zoom.lua"]);
+    let weapon = f.ids["first_person"];
+    f.lua
+        .dispatch(
+            "weapon.optic_set",
+            &json!({"kind":"scope","scope_magnification":40.0}),
+        )
+        .unwrap();
+    assert_eq!(
+        f.world.borrow().get_dynamic(weapon, "WeaponOptic").unwrap()["scope_magnification"],
+        40.0
+    );
+    assert_eq!(
+        f.world.borrow_mut().drain_events("weapon.optic_changed")[0]["kind"],
+        "scope"
+    );
+    f.lua
+        .dispatch(
+            "weapon.optic_set",
+            &json!({"kind":"scope","scope_magnification":101.0}),
+        )
+        .unwrap();
+    assert_eq!(
+        f.world.borrow().get_dynamic(weapon, "WeaponOptic").unwrap()["scope_magnification"],
+        40.0
+    );
+    assert_eq!(
+        f.world
+            .borrow_mut()
+            .drain_events("weapon.optic_error")
+            .len(),
+        1
+    );
 }

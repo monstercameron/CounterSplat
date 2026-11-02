@@ -16,6 +16,7 @@ use countersplat_core::{inflight::InFlight, rate::Rate, scheduler::Scheduler, ti
 use countersplat_render::{
     camera, env, first_person,
     gpu_timing::{GpuFrameTimer, GpuTiming},
+    impact::ImpactRenderer,
     postprocess,
     scene::{self, GsplatScene, Pipelines, View},
     stream::{DrawRegion, LevelStream, StreamSettings},
@@ -57,7 +58,7 @@ fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureVi
 /// Previous submitted camera, used only for bounded camera-motion blur.
 struct PreviousCamera {
     time: Duration,
-    clip: camera::Mat4,
+    view_from_model: camera::Mat4,
     position: [f32; 3],
     direction: [f32; 3],
 }
@@ -106,6 +107,8 @@ pub struct Viewer {
     stream: LevelStream,
     voxel_debug: VoxelDebug,
     tracers: TracerRenderer,
+    hitbox_lines: TracerRenderer,
+    impacts: ImpactRenderer,
     scheduler: Scheduler,
     frame_limit: Option<u32>,
     gpu_frames: InFlight,
@@ -315,6 +318,8 @@ impl Viewer {
         let first_person = first_person::FirstPersonLayer::new(&device, postprocess::SCENE_FORMAT);
         let voxel_debug = VoxelDebug::new(&device, postprocess::SCENE_FORMAT);
         let tracers = TracerRenderer::new(&device, postprocess::SCENE_FORMAT);
+        let hitbox_lines = TracerRenderer::new(&device, postprocess::SCENE_FORMAT);
+        let impacts = ImpactRenderer::new(&device, postprocess::SCENE_FORMAT);
         let pipelines = Pipelines::new(&device, postprocess::SCENE_FORMAT).map_err(js_error)?;
         let rows = stream.palette_texture_rows(device.limits().max_texture_dimension_2d);
         let pool = scene::pool_with_centroid_rows(
@@ -373,6 +378,8 @@ impl Viewer {
             stream,
             voxel_debug,
             tracers,
+            hitbox_lines,
+            impacts,
             scheduler: Scheduler::new(fixed, rate),
             frame_limit: None,
             gpu_frames: InFlight::new(2).expect("positive in-flight frame limit"),
@@ -441,11 +448,43 @@ impl Viewer {
         };
     }
 
+    /// Choose aspect-preserving presentation, including integer pixel replication.
+    pub fn set_viewport_scaling(&mut self, mode: &str) -> Result<(), JsValue> {
+        self.viewport_scale = match mode {
+            "fill" => postprocess::ViewportScale::Fill,
+            "fit" => postprocess::ViewportScale::Fit,
+            "pixel" => postprocess::ViewportScale::PixelPerfect,
+            _ => return Err(js_error("unknown viewport scaling mode")),
+        };
+        Ok(())
+    }
+
     /// Set the canvas width in CSS points for high-DPI UI and pointer mapping.
     pub fn ui_set_width(&mut self, width: f32) {
         if width.is_finite() && (1.0..=1_000_000.0).contains(&width) {
             self.ui_css_width = width;
         }
+    }
+    /// Install a decoded level preview for the ECS pause-menu image widget.
+    pub fn install_menu_preview(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), JsValue> {
+        self.menu.set_preview(width, height, rgba).map_err(js_error)
+    }
+    /// Install or replace a decoded image in the gameplay ECS canvas layer.
+    pub fn set_gameplay_ui_image(
+        &mut self,
+        key: &str,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), JsValue> {
+        self.ui
+            .set_image(key, width, height, rgba)
+            .map_err(js_error)
     }
     /// Set which ECS UI scene owns input and is drawn over the game.
     pub fn set_menu_visible(&mut self, visible: bool) {
@@ -923,7 +962,8 @@ impl Viewer {
             [0, 1, 2].map(|axis| player_camera.position[axis] + target[axis] - eye[axis]);
         let local_target = camera::transform_point(&inverse, base_target);
         let local_direction = [0, 1, 2].map(|axis| local_target[axis] - local_eye[axis]);
-        let clip = camera::mul(&view.projection, &camera::mul(&view.view, &view.model));
+        let view_from_model = camera::mul(&view.view, &view.model);
+        let clip = camera::mul(&view.projection, &view_from_model);
         if let Some(profile) = profile.as_mut() {
             profile.mark("scheduler_camera");
         }
@@ -1010,13 +1050,23 @@ impl Viewer {
                     && (0.001..=0.2).contains(&delta)
                     && displacement <= 20.0 * units_per_meter
                     && direction_dot > 0.5)
-                    .then_some((lens.shutter_seconds() / delta).clamp(0.0, 1.0))
+                    .then(|| camera::shutter_motion_scale(lens.shutter_seconds(), delta))
             })
             .unwrap_or(0.0);
-        let previous_clip = self
-            .previous_camera
-            .as_ref()
-            .map_or(&clip, |previous| &previous.clip);
+        // Use today's projection for both views: changing focal length must not
+        // be mistaken for camera movement and produce a radial zoom smear.
+        let previous_clip = self.previous_camera.as_ref().map_or(clip, |previous| {
+            camera::mul(&view.projection, &previous.view_from_model)
+        });
+        // Lua supplies a short-lived world light; the renderer only consumes its snapshot.
+        self.pool.set_local_light(
+            &self.queue,
+            if self.menu_visible {
+                None
+            } else {
+                self.ui.local_light()
+            },
+        );
         self.pool.set_camera_effects(
             &self.queue,
             [
@@ -1028,7 +1078,7 @@ impl Viewer {
                 ),
                 shutter_fraction,
             ],
-            previous_clip,
+            &previous_clip,
         );
         self.pool
             .prepare(&self.queue, &mut encoder, &view, &view.model);
@@ -1065,9 +1115,31 @@ impl Viewer {
             if !self.menu_visible {
                 self.tracers
                     .draw(&self.queue, &mut pass, &view.view, &view.projection);
+                self.hitbox_lines
+                    .draw(&self.queue, &mut pass, &view.view, &view.projection);
             }
             if !self.menu_visible && self.ui.show_voxels() {
                 self.voxel_debug
+                    .draw(&self.queue, &mut pass, &view.view, &view.projection);
+            }
+        }
+        // Gaussian colour is blended without depth writes. Generate a depth
+        // surface only while impacts exist so marks and smoke respect occlusion.
+        if !self.menu_visible && !self.impacts.is_empty() {
+            {
+                let mut pass = scene::depth_pass(&mut encoder, &self.depth, "impact splat depth");
+                self.pool.draw_depth(&mut pass, &self.pipelines);
+            }
+            {
+                let mut pass = scene::color_pass(
+                    &mut encoder,
+                    self.postprocess.scene_view(),
+                    &self.depth,
+                    false,
+                    false,
+                    "impact decals and smoke",
+                );
+                self.impacts
                     .draw(&self.queue, &mut pass, &view.view, &view.projection);
             }
         }
@@ -1093,6 +1165,8 @@ impl Viewer {
                 saturation: grade.saturation,
                 temperature: grade.temperature,
                 tint: grade.tint,
+                shadow_warmth: grade.shadow_warmth,
+                highlight_warmth: grade.highlight_warmth,
                 shadows: grade.shadows,
                 highlights: grade.highlights,
                 bloom_intensity: grade.bloom_intensity,
@@ -1165,7 +1239,7 @@ impl Viewer {
         self.queue.present(frame);
         self.previous_camera = Some(PreviousCamera {
             time: now,
-            clip,
+            view_from_model,
             position: eye,
             direction: camera_direction,
         });
@@ -1184,6 +1258,18 @@ impl Viewer {
     /// Replace the script-provided projectile visual snapshot; no game rules live here.
     pub fn set_projectile_traces(&mut self, segments: Vec<f32>) -> Result<(), JsValue> {
         self.tracers.set(&self.queue, &segments).map_err(js_error)
+    }
+
+    /// Replace a script-provided snapshot of world-space hitbox debug lines.
+    pub fn set_hitbox_debug_lines(&mut self, segments: Vec<f32>) -> Result<(), JsValue> {
+        self.hitbox_lines
+            .set(&self.queue, &segments)
+            .map_err(js_error)
+    }
+
+    /// Replace the Lua-provided world-space impact sprite snapshot.
+    pub fn set_impact_sprites(&mut self, sprites: Vec<f32>) -> Result<(), JsValue> {
+        self.impacts.set(&self.queue, &sprites).map_err(js_error)
     }
 
     /// Install a bounded, world-space snapshot of occupied voxel centers for the debug overlay.
@@ -1304,6 +1390,22 @@ impl VoxelCollisionData {
     }
     pub fn resolution(&self) -> f32 {
         self.inner.resolution()
+    }
+    /// Build a bounded north-up occupancy raster on the worker-owned collider.
+    pub fn horizontal_slice(
+        &self,
+        center: Vec<f32>,
+        height: f32,
+        radius: f32,
+        thickness: f32,
+        size: u32,
+    ) -> Result<Vec<u8>, JsValue> {
+        let center = center
+            .try_into()
+            .map_err(|_| js_error("expected map X/Z center"))?;
+        self.inner
+            .horizontal_slice(center, height, radius, thickness, size)
+            .map_err(js_error)
     }
     pub fn move_sphere(
         &self,

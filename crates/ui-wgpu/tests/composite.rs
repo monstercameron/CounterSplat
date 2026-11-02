@@ -94,6 +94,24 @@ fn draws_shapes_and_fonts_over_the_scene_without_clearing_it() {
                 },
             ),
             node(
+                "faded image",
+                Rect::new(26.0, 52.0, 22.0, 12.0),
+                UiElement {
+                    rect: Rect::new(26.0, 52.0, 22.0, 12.0),
+                    widget: Widget::Image {
+                        source: "level".into(),
+                    },
+                    style: Style {
+                        fill: Color::TRANSPARENT,
+                        border: Color::TRANSPARENT,
+                        text: Color([255, 255, 255, 128]),
+                        rounding: 0.0,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ),
+            node(
                 "shape",
                 shape,
                 UiElement {
@@ -218,6 +236,11 @@ fn draws_shapes_and_fonts_over_the_scene_without_clearing_it() {
         pixel(10, 58)[1] > 200 && pixel(10, 58)[0] < 30,
         "UI image did not composite: {:?}",
         pixel(10, 58)
+    );
+    assert!(
+        pixel(36, 58)[1] > 80 && pixel(36, 58)[1] < 230 && pixel(36, 58)[2] > 50,
+        "UI image opacity should blend with the scene: {:?}",
+        pixel(36, 58)
     );
     let text_pixels = (8..40)
         .flat_map(|y| (65..120).map(move |x| (x, y)))

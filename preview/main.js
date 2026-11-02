@@ -5,7 +5,11 @@ import { VoxelRuntime } from '/pkg/voxel_runtime.js';
 import { MouseCapture } from '/pkg/mouse_capture.js';
 import { GameplayMouseButtons, GameplayFireButton } from '/pkg/mouse_buttons.js';
 import { FirstPersonFrames } from '/pkg/first_person_frames.js';
-import { attachDisplayPanel, viewportSize, sceneResolution, MAX_RENDER_DIMENSION } from '/pkg/display_settings.js';
+import { layoutKey, migrateGameplayLayout } from '/pkg/ui_layout_preferences.js';
+import { SceneAudio } from '/pkg/scene_audio.js';
+import { MinimapRuntime } from '/pkg/minimap_runtime.js';
+import { createDisplaySettings, createHudPreferences, ASPECT_RATIOS, inferAspect, resolutionOptions,
+  presentationMapping, viewportSize, sceneResolution, MAX_RENDER_DIMENSION } from '/pkg/display_settings.js';
 import { publishPlayerRigData, savePlayerRig } from '/pkg/player_rig.js';
 import { ChunkDecoderPool, chunkDecoderCount } from '/pkg/chunk_decoder_pool.js';
 import { preloadChunks } from '/pkg/chunk_preload.js';
@@ -20,6 +24,9 @@ const canvas = document.getElementById('canvas');
 const status = document.getElementById('status');
 const message = document.getElementById('message');
 const metrics = document.getElementById('metrics');
+const sceneAudio = new SceneAudio();
+// The selector click or a later key press unlocks audio without delaying input.
+for (const name of ['pointerdown', 'keydown']) window.addEventListener(name, () => sceneAudio.unlock(), {capture:true});
 // Profiling is opt-in and publishes read-only diagnostics on the existing metrics node.
 const profileOptions = new URLSearchParams(location.search);
 const stackRequested = profileOptions.get('stack_profile') === '1';
@@ -45,21 +52,27 @@ const resetLayoutButton = document.getElementById('reset-layout');
 const inFlight = new Set();
 const mouseCapture = new MouseCapture(canvas, document);
 let active = null;
-let displayPanel = null;
+let displayPanel = null, hudPreferences = null;
+let displayViewport = {width:1, height:1};
 let arrangeMode = false;
 let mode = 'boot';
 let generation = 0;
 let lastStatus = 0;
-let aspectOwner = null, publishedAspect = null;
+let aspectOwner = null, publishedAspect = null, viewportOwner = null, publishedViewport = null;
+let menuViewportOwner = null, menuViewportWidth = 0, menuViewportHeight = 0;
 let stopped = false;
 let selectorBytes, catalogBytes, sceneCatalogBytes, gameplayBytes, menuBytes, catalog, gameplayScene, menuScene;
 let selectorUrl, sceneCatalogUrl, gameplayUrl, defaultGameplayUrl, defaultGameplayBytes, menuUrl, engineApi, gameplayScripts, menuScripts, luaFactory;
 let gameplayLua = null, menuLua = null, lastScriptTime = null;
+let pendingLightPresentation = null;
 const gameplayMouse = new GameplayMouseButtons(pressed => gameplayLua?.emit('input.mouse_button', {button:'right', pressed, gameplay:true}));
 const gameplayFire = new GameplayFireButton(pressed => gameplayLua?.emit('input.mouse_button', {button:'left', pressed, gameplay:true}));
-let firstPersonFrames = null;
+let firstPersonFrames = null, minimapRuntime = null;
+let inspectionPoseEnabled = false, lastInspectionPresentation = null;
 let dragLook = false, lastEscapeTime = -Infinity;
 const playerControlsKey = 'countersplat.player-controls.v1';
+const opticKey = 'countersplat.weapon-optic.first-person.v1';
+let activeWeaponId = null, gameplayEntityIds = null;
 const cameraLensKey = 'countersplat.camera-lens.v1';
 const cameraZoomLensKey = 'countersplat.camera-zoom-lens.v1';
 const cameraControllerKey = 'countersplat.camera-controller.v1';
@@ -67,7 +80,7 @@ const imageCorrectionKey = 'countersplat.image-correction.v1';
 let loadingAbort = null, preloadedSceneAssets = new Map();
 const MAX_PRELOAD_BYTES = 512 * 1024 * 1024;
 let selectedId = '', selectedSceneId = '';
-const previewImages = new Map();
+const previewImages = new Map(), previewPending = new Map();
 let currentLevel = null;
 let levelBase = null;
 let chunkMetas = [];
@@ -80,10 +93,14 @@ let skyErrorUntil = 0;
 let localSkyId = 'preview-local-0';
 
 // Scene definitions remain JSON; browser-local offsets are optional user preferences.
-function layoutKey(scene) { return `countersplat.ui-layout.${scene}.v1`; }
 function restoreLayout(target, scene) {
   try {
-    const saved = localStorage.getItem(layoutKey(scene));
+    const key = layoutKey(scene);
+    let saved = localStorage.getItem(key);
+    if (saved === null && scene === 'gameplay') {
+      saved = migrateGameplayLayout(localStorage.getItem('countersplat.ui-layout.gameplay.v1'));
+      if (saved !== null) localStorage.setItem(key, saved);
+    }
     if (saved !== null) target.ui_restore_layout(saved);
   } catch (error) { console.warn('Could not restore UI layout:', error); }
 }
@@ -92,7 +109,7 @@ function saveLayout(target, scene) {
   catch (error) { console.warn('Could not save UI layout:', error); }
 }
 function layoutScene() { return mode === 'menu' ? 'menu' : mode === 'gameplay' ? 'gameplay' : 'selector'; }
-function resetPlayerInput() { gameplayMouse.reset(); gameplayFire.reset(); if (gameplayLua) gameplayLua.emit('input.reset', {}); }
+function resetPlayerInput() { gameplayMouse.reset(); gameplayFire.reset(); pendingLightPresentation = null; if (gameplayLua) gameplayLua.emit('input.reset', {}); }
 function releaseMouseLook() {
   dragLook = false;
   mouseCapture.release();
@@ -176,25 +193,98 @@ function savePlayerControls(settings) {
   try { localStorage.setItem(playerControlsKey, JSON.stringify(settings)); }
   catch (error) { console.warn('Could not save player controls:', error); }
 }
+// Persist only the currently equipped first-person weapon; Lua validates restored data.
+function saveWeaponOptic(setting) {
+  if (setting.entity !== activeWeaponId) return;
+  try { localStorage.setItem(opticKey, JSON.stringify({kind:setting.kind, scope_magnification:setting.scope_magnification})); }
+  catch (error) { console.warn('Could not save weapon optic:', error); }
+}
+function restoreWeaponOptic(runtime) {
+  try {
+    const raw=localStorage.getItem(opticKey);
+    if (raw && raw.length <= 4096) runtime.dispatch('weapon.optic_set', JSON.parse(raw));
+  } catch (error) { console.warn('Could not restore weapon optic:', error); }
+}
 const gameplayInputChannels = new EventChannels(GAMEPLAY_INPUT_CHANNELS);
 const gameplayEventChannels = new EventChannels(GAMEPLAY_EVENT_CHANNELS);
-const tickEventChannels = new EventChannels(['weapon.shot', 'weapon.dry_fire', 'projectile.spawned',
-  'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death']);
+const scriptEventChannels = new EventChannels(['engine.event']);
+const tickEventChannels = new EventChannels(['weapon.shot', 'weapon.dry_fire', 'weapon.reload_started', 'projectile.spawned',
+  'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death',
+  'combat.near_miss', 'combat.suppression', 'engine.event']);
 const outputChannels = new EventChannels(['player.controls_changed', 'camera.lens_changed', 'camera.zoom_lens_changed',
-  'camera.controller_changed', 'image.correction_changed', 'first_person.frame']);
-const trailingOutputChannels = new EventChannels(['projectile.visuals', 'player.rig_changed']);
+  'camera.controller_changed', 'image.correction_changed', 'first_person.frame', 'audio.layer', 'audio.play', 'lighting.flash_started', 'weapon.optic_changed', 'hud.pose_tracking', 'hud.map_request']);
+const trailingOutputChannels = new EventChannels(['projectile.visuals', 'player.rig_changed', 'impact.visuals', 'hitbox.visuals']);
 const outputConsumers = [
   savePlayerControls, saveCameraLens, saveCameraZoomLens, saveCameraController, saveImageCorrection,
-  frame => {
-    firstPersonFrames?.request(frame);
-    metrics.dataset.weapon = JSON.stringify({clip:frame.clip,index:frame.index,
-      motion_x:frame.motion_x,motion_y:frame.motion_y,motion_roll:frame.motion_roll});
-  },
+  () => {}, // First-person frames are handled as a batch below.
+  event => sceneAudio.setLayer(event), event => sceneAudio.play(event),
+  event => { if (Number.isSafeInteger(event.id) && event.id > 0) pendingLightPresentation = event.id; },
+  saveWeaponOptic,
+  event => { inspectionPoseEnabled = event.enabled === true; lastInspectionPresentation = null; },
+  event => { ensureMinimapRuntime()?.request(event); },
 ];
+function ensureMinimapRuntime() {
+  if (!active || !gameplayLua || !levelBase) return null;
+  if (!minimapRuntime) {
+    const game=active, lua=gameplayLua;
+    try { minimapRuntime=new MinimapRuntime(game,levelBase,()=>active===game && gameplayLua===lua,
+      result=>lua.dispatch('hud.map_result',result),undefined,currentLevel?.rotate_z_180 !== false); }
+    catch (error) { console.warn('Level map:',error); lua.dispatch('hud.map_result',{status:'unavailable'}); }
+  }
+  return minimapRuntime;
+}
+function publishInspectionPresentation(runtime) {
+  if (!inspectionPoseEnabled) return;
+  const pose=firstPersonFrames?.presentation() ?? {visible:false};
+  const signature=JSON.stringify(pose);
+  if (signature !== lastInspectionPresentation) {
+    lastInspectionPresentation=signature;
+    runtime.dispatch('hud.weapon_presentation',pose);
+  }
+}
+function reportWeaponFrame(frame) {
+  if (frame) metrics.dataset.weapon = JSON.stringify({clip:frame.clip,index:frame.index,
+    motion_x:frame.motion_x,motion_y:frame.motion_y,motion_roll:frame.motion_roll});
+}
 function consumeGameplayOutput(index, events) {
+  if (index === 5) { reportWeaponFrame(firstPersonFrames?.requestBatch(events)); return; }
   for (const event of events) outputConsumers[index](event);
 }
 function consumeTrailingOutput(index, events) {
+  if (index === 3) {
+    const snapshot = events[events.length - 1];
+    if (!snapshot) return;
+    const packed = [];
+    for (const line of (Array.isArray(snapshot.segments) ? snapshot.segments : []).slice(0, 1024)) {
+      if (!Array.isArray(line.start) || line.start.length !== 3 ||
+          !Array.isArray(line.finish) || line.finish.length !== 3 ||
+          ![...line.start, ...line.finish, line.alpha].every(Number.isFinite) ||
+          [...line.start, ...line.finish].some(value => Math.abs(value) > 10_000_000) ||
+          line.alpha < 0 || line.alpha > 1) continue;
+      packed.push(...line.start, ...line.finish, line.alpha);
+    }
+    active.set_hitbox_debug_lines(new Float32Array(packed));
+    return;
+  }
+  if (index === 2) {
+    const snapshot = events[events.length - 1];
+    if (!snapshot) return;
+    const decals = Array.isArray(snapshot.decals) ? snapshot.decals.slice(0, 96) : [];
+    const smoke = Array.isArray(snapshot.smoke) ? snapshot.smoke.slice(0, 160) : [];
+    const packed = [];
+    for (const [kind, sprites] of [[0, decals], [1, smoke]]) {
+      for (const sprite of sprites) {
+        if (!Array.isArray(sprite.position) || sprite.position.length !== 3 ||
+            !Array.isArray(sprite.normal) || sprite.normal.length !== 3 ||
+            ![...sprite.position, ...sprite.normal, sprite.radius, sprite.opacity, sprite.variation].every(Number.isFinite)) continue;
+        packed.push(...sprite.position, sprite.radius, ...sprite.normal, kind,
+          sprite.opacity, sprite.variation, 0, 0);
+      }
+    }
+    active.set_impact_sprites(new Float32Array(packed));
+    metrics.dataset.impactEffects = JSON.stringify({decals:decals.length, smoke:smoke.length});
+    return;
+  }
   if (index === 1) {
     for (const rig of events) savePlayerRig(currentLevel, rig);
     return;
@@ -213,7 +303,8 @@ function dispatchGameplayEvents(runtime) {
 function closeScripts() {
   inputLatency?.clearPending();
   gameplayLua?.close(); menuLua?.close();
-  gameplayLua = null; menuLua = null; lastScriptTime = null;
+  gameplayLua = null; menuLua = null; lastScriptTime = null; pendingLightPresentation = null; activeWeaponId = null;
+  inspectionPoseEnabled = false; lastInspectionPresentation = null; gameplayEntityIds = null;
 }
 function sceneAsset(scene, base, id) {
   const asset = scene.resources?.assets?.[id];
@@ -222,15 +313,86 @@ function sceneAsset(scene, base, id) {
   if (url.origin !== location.origin) throw new Error('Scene asset must be local to this preview.');
   return url.href;
 }
+// The ECS pause menu requests changes; the host validates device limits and
+// persists preferences, then sends the accepted values back to the scene.
+function menuSettings(error = '') {
+  const preferences=displayPanel.preferences;
+  const current=sceneResolution(preferences,displayViewport);
+  const aspect=preferences.mode==='viewport' ? inferAspect(current.width,current.height) : preferences.aspect;
+  const mapping=presentationMapping(current,displayViewport,preferences.scaling);
+  const warning=preferences.scaling==='pixel' ? (mapping.cropped ?
+    'Pixel perfect: 1× cropped · choose a smaller resolution to fit.' :
+    `Pixel perfect: ${mapping.factor}× · whole pixels`) : '';
+  const ratio=preferences.mode==='viewport' ? current :
+    {width:preferences.ratio_width ?? current.width,height:preferences.ratio_height ?? current.height};
+  const read=(role,name)=>{
+    const id=gameplayEntityIds?.[role];
+    if (!active || !id) return null;
+    try { return JSON.parse(active.ecs_operation('gameplay',JSON.stringify({op:'get',id,name}))).value ?? null; }
+    catch { return null; }
+  };
+  const controls=read('player','PlayerControls'), level=read('active_level','LevelSettings');
+  const assets=read('active_level','LevelAssets'), sky=read('skybox','Skybox'), layer=read('audio_root','AudioLayer');
+  let stats={};
+  try { if (active && currentLevel) stats=JSON.parse(active.status()); } catch { /* Optional status. */ }
+  const ticks=Number(stats.ticks);
+  const game={name:currentLevel?.name,format:currentLevel?.format,resident_splats:stats.resident_splats,
+    chunks_loaded:stats.lod_chunks_loaded,
+    playtime_seconds:Number.isFinite(ticks) && active ? ticks*active.script_tick_seconds() : null};
+  return {display:{...preferences,aspect,actual_width:current.width,actual_height:current.height,
+    ratio_width:ratio.width,ratio_height:ratio.height}, show_performance:hudPreferences.showPerformance,
+    game,controls,graphics:{lod:level?.lod,draw_distance:level?.draw_distance,lod_count:assets?.lod_count,sky_enabled:sky?.enabled},
+    audio:{gain:layer?.mix?.gain,muted:layer?.mix?.muted},
+    aspects:ASPECT_RATIOS, presets:resolutionOptions(aspect,current,displayViewport,active?.max_texture_dimension() ?? MAX_RENDER_DIMENSION,ratio),
+    error:error || warning};
+}
+function processMenuSettings(runtime) {
+  for (const request of runtime.drain('settings.aspect_request')) {
+    const result=displayPanel.setAspect(request.aspect,displayViewport);
+    runtime.dispatch('menu.settings', menuSettings(result.error || ''));
+  }
+  for (const request of runtime.drain('settings.display_request')) {
+    const result = displayPanel.set(request);
+    runtime.dispatch('menu.settings', menuSettings(result.error || ''));
+  }
+  for (const request of runtime.drain('settings.hud_request')) {
+    if (hudPreferences.set(request.show_performance)) {
+      gameplayLua?.dispatch('hud.preferences_changed', {show_performance:hudPreferences.showPerformance});
+    }
+    runtime.dispatch('menu.settings', menuSettings());
+  }
+  const allowed={controls_speed:'number_changed',controls_sensitivity:'number_changed',controls_invert:'bool_changed',
+    level_draw_distance:'number_changed',level_auto:'bool_changed',level_lod:'number_changed',
+    sky_enabled:'bool_changed',audio_gain:'number_changed',audio_muted:'bool_changed'};
+  for (const request of runtime.drain('settings.gameplay_request')) {
+    const kind=allowed[request.target];
+    const valid=kind && request.kind===kind && (kind==='number_changed' ?
+      typeof request.value==='number' && Number.isFinite(request.value) : typeof request.value==='boolean');
+    if (valid && gameplayLua) {
+      if (request.target==='sky_enabled') gameplayLua.dispatch('settings.sky_request',{enabled:request.value});
+      else if (request.target==='audio_gain') gameplayLua.dispatch('settings.sound_request',{gain:request.value});
+      else if (request.target==='audio_muted') gameplayLua.dispatch('settings.sound_request',{muted:request.value});
+      else if (gameplayEntityIds?.[request.target]) gameplayLua.dispatch('ui.action',
+        {id:gameplayEntityIds[request.target],kind:{type:kind,value:request.value}});
+      for (const event of gameplayLua.drain('player.controls_changed')) savePlayerControls(event);
+      for (const event of gameplayLua.drain('audio.layer')) sceneAudio.setLayer(event);
+    }
+    runtime.dispatch('menu.settings',menuSettings());
+  }
+}
 function processSceneRequests(runtime) {
   for (const request of runtime.drain('engine.scene')) {
     if (mode === 'gameplay' && request.action === 'push' && sceneAsset(gameplayScene, gameplayUrl, request.scene) === menuUrl.href) {
-      gameplayMouse.reset(); gameplayFire.reset();
+      gameplayMouse.reset(); gameplayFire.reset(); pendingLightPresentation = null;
+      // Keep the ammo callout's pose subscription across pause/resume.
+      lastInspectionPresentation = null;
       runtime.dispatch('input.reset', {});
-      voxelRuntime?.suspend(); inputLatency?.clearPending();
+      voxelRuntime?.suspend(); inputLatency?.clearPending(); sceneAudio.stopVoices();
       releaseMouseLook();
       active.ui_focus(false); active.ui_pointer_gone();
       active.set_menu_visible(true); active.set_paused(true); mode = 'menu';
+      menuLua?.dispatch('menu.opened', {});
+      menuLua?.dispatch('menu.settings', menuSettings());
       restoreLayout(active, 'menu');
       if (document.activeElement === canvas) active.ui_focus(true);
       status.textContent = 'Paused';
@@ -414,8 +576,10 @@ function startSkyWorker(game, token, preloaded) {
   }
 }
 function stopWorkers() {
+  sceneAudio.clear();
   firstPersonFrames?.close(); firstPersonFrames = null;
   voxelRuntime?.stop(); voxelRuntime = null;
+  minimapRuntime?.stop(); minimapRuntime = null;
   if (decoder) decoder.stop();
   if (skyDecoder) skyDecoder.terminate();
   decoder = null;
@@ -452,28 +616,35 @@ async function mapLimit(values, limit, task) {
   await Promise.all(Array.from({length: Math.min(limit, values.length)}, worker));
   return results;
 }
-// Decode small local level previews once, then upload them to the canvas UI texture registry.
-async function populateSelectorPreviews(selector) {
-  await mapLimit(catalog.levels, 4, async level => {
-    if (!/^[0-9a-f]{8}$/.test(level.id) || level.thumbnail !== `assets/levels/${level.id}/preview.webp`) return;
+// Decode catalog previews once. Both selector and paused gameplay use the
+// same bounded local image cache and canvas texture upload.
+async function loadLevelPreview(level) {
+  if (!/^[0-9a-f]{8}$/.test(level.id) || level.thumbnail !== `assets/levels/${level.id}/preview.webp`) return null;
+  if (previewImages.has(level.id)) return previewImages.get(level.id);
+  if (previewPending.has(level.id)) return previewPending.get(level.id);
+  const task=(async()=>{
+    const bytes=await getBytes(`/${level.thumbnail}`,undefined,true);
+    if (!bytes.length || bytes.length>4*1024*1024) return null;
+    const bitmap=await createImageBitmap(new Blob([bytes],{type:'image/webp'}),
+      {resizeWidth:320,resizeHeight:320,resizeQuality:'high'});
     try {
-      let image = previewImages.get(level.id);
-      if (!image) {
-        const bytes = await getBytes(`/${level.thumbnail}`, undefined, true);
-        if (!bytes.length || bytes.length > 4 * 1024 * 1024) return;
-        const bitmap = await createImageBitmap(new Blob([bytes], {type:'image/webp'}),
-          {resizeWidth:320, resizeHeight:320, resizeQuality:'high'});
-        try {
-          const buffer = document.createElement('canvas'); buffer.width = bitmap.width; buffer.height = bitmap.height;
-          const context = buffer.getContext('2d', {willReadFrequently:true});
-          if (!context || !buffer.width || !buffer.height || buffer.width > 1024 || buffer.height > 1024) return;
-          context.drawImage(bitmap, 0, 0);
-          image = {width:buffer.width, height:buffer.height, rgba:new Uint8Array(context.getImageData(0,0,buffer.width,buffer.height).data)};
-          previewImages.set(level.id, image);
-        } finally { bitmap.close(); }
-      }
-      if (active === selector) selector.install_level_preview(level.id, image.width, image.height, image.rgba);
-    } catch (error) { console.warn(`Preview unavailable for ${level.id}:`, error); }
+      const buffer=document.createElement('canvas');buffer.width=bitmap.width;buffer.height=bitmap.height;
+      const context=buffer.getContext('2d',{willReadFrequently:true});
+      if (!context || !buffer.width || !buffer.height || buffer.width>1024 || buffer.height>1024) return null;
+      context.drawImage(bitmap,0,0);
+      const image={width:buffer.width,height:buffer.height,rgba:new Uint8Array(context.getImageData(0,0,buffer.width,buffer.height).data)};
+      previewImages.set(level.id,image);return image;
+    } finally { bitmap.close(); }
+  })();
+  previewPending.set(level.id,task);
+  try { return await task; } finally { previewPending.delete(level.id); }
+}
+async function populateSelectorPreviews(selector) {
+  await mapLimit(catalog.levels,4,async level=>{
+    try {
+      const image=await loadLevelPreview(level);
+      if (image && active===selector) selector.install_level_preview(level.id,image.width,image.height,image.rgba);
+    } catch (error) { console.warn(`Preview unavailable for ${level.id}:`,error); }
   });
 }
 async function launchLevel(id, sceneId = '') {
@@ -579,9 +750,17 @@ async function launchLevel(id, sceneId = '') {
     restoreCameraController(pendingGame);
     restoreImageCorrection(pendingGame);
     publishPlayerRigData(pendingGame, selected);
+    pendingGame.ecs_operation('gameplay', JSON.stringify({op:'set_resource', name:'hud.preferences',
+      value:{show_performance:hudPreferences.showPerformance}}));
+    // Publish selected level identity as data for scene-owned systems.
+    pendingGame.ecs_operation('gameplay', JSON.stringify({op:'set_resource', name:'scene.level',
+      value:{id:selected.id, name:selected.name}}));
     gameplayScripts = scripts.gameplay; menuScripts = scripts.menu; engineApi = scripts.engine;
     if (frameProfiler) { frameProfiler.reset(); inputLatency.reset(); profileState = null; }
     gameplayLua = await LuaScene.create(luaFactory, pendingGame, 'gameplay', engineApi, gameplayScripts, !!frameProfiler);
+    gameplayEntityIds = JSON.parse(pendingGame.ecs_operation('gameplay', JSON.stringify({op:'get_resource', name:'scene.entities'}))).value ?? null;
+    activeWeaponId = gameplayEntityIds?.first_person ?? null;
+    restoreWeaponOptic(gameplayLua);
     menuLua = await LuaScene.create(luaFactory, pendingGame, 'menu', engineApi, menuScripts);
     if (generation !== token) { closeScripts(); pendingGame.free(); pendingGame = null; return; }
     active = pendingGame;
@@ -591,8 +770,14 @@ async function launchLevel(id, sceneId = '') {
     restoreLayout(active, 'gameplay');
     active.ui_set_arrange_mode(arrangeMode);
     currentLevel = selected;
+    const previewOwner=active;
+    void loadLevelPreview(selected).then(image=>{
+      if (image && active===previewOwner) previewOwner.install_menu_preview(image.width,image.height,image.rgba);
+    }).catch(error=>console.warn(`Preview unavailable for ${selected.id}:`,error));
     chunkMetas = metas;
     preloadedSceneAssets = sceneAssets;
+    await sceneAudio.load(chosenScene, chosenUrl, sceneAssets);
+    if (generation !== token) return;
     const footage = chosenScene.resources?.assets?.['first-person-footage'];
     if (footage) {
       if (footage.kind !== 'first_person_manifest' || loadPolicy(footage.load) !== 'preload') throw new Error('First-person footage manifest must be a preloaded scene asset.');
@@ -622,6 +807,8 @@ async function launchLevel(id, sceneId = '') {
     });
     startSkyWorker(game, token, new Set(skies.map(sky => sky.id)));
     voxelRuntime = new VoxelRuntime(game, levelBase, () => generation === token && active === game);
+    // Prewarm only scans without voxel files: their fallback decodes SOG means.
+    if (selected.collision === false) ensureMinimapRuntime();
     if (frameProfiler) voxelRuntime.enableLatencyProfile();
     status.textContent = 'Streaming scan';
     message.hidden = true;
@@ -783,11 +970,10 @@ function attachInput() {
   // Forward physical key events to the current ECS world. Lua decides what they mean.
   const gameKey = event => {
     if (mode === 'gameplay' && event.code === 'Backquote' && event.type === 'keydown' && !event.repeat &&
-        (mouseCapture.locked || mouseCapture.requested || dragLook)) {
-      event.preventDefault();
+        document.activeElement === canvas && !active.ui_wants_keyboard() && !arrangeMode) {
+      // The Lua overlay receives the same key; releasing capture keeps its controls reachable.
       releaseMouseLook();
-      if (active) active.ui_pointer_gone();
-      return;
+      active.ui_pointer_gone();
     }
     const script = mode === 'gameplay' ? gameplayLua : mode === 'menu' ? menuLua : null;
     if (!script || event.isComposing || event.key.length > 128) return;
@@ -841,18 +1027,40 @@ function tick(timestamp) {
       const bounds = canvas.getBoundingClientRect();
       if (bounds.width < 1 || bounds.height < 1) { requestAnimationFrame(tick); return; }
       const output = viewportSize(bounds.width, bounds.height, window.devicePixelRatio || 1, active.max_texture_dimension());
+      const viewportChanged = output.width !== displayViewport.width || output.height !== displayViewport.height;
+      if (viewportChanged) displayViewport = output;
       active.ui_set_width(bounds.width);
       active.resize(output.width,output.height);
-      displayPanel.updateViewport(output);
+      if (mode === 'menu' && menuLua && (active !== menuViewportOwner ||
+          bounds.width !== menuViewportWidth || bounds.height !== menuViewportHeight)) {
+        menuLua.dispatch('menu.viewport', {width:bounds.width, height:bounds.height});
+        menuViewportOwner = active; menuViewportWidth = bounds.width; menuViewportHeight = bounds.height;
+      }
+      if (mode === 'menu' && menuLua && viewportChanged) menuLua.dispatch('menu.settings', menuSettings());
       if (mode === 'gameplay' || mode === 'menu') {
         const render = sceneResolution(displayPanel.preferences, output);
         active.set_render_resolution(render.width,render.height);
-        active.set_viewport_fill(displayPanel.preferences.scaling === 'fill');
+        active.set_viewport_scaling(displayPanel.preferences.scaling);
         // Lua projects the filmed weapon sight through this render aspect.
         const aspect = render.width / render.height;
         if (mode === 'gameplay' && (active !== aspectOwner || aspect !== publishedAspect)) {
           active.ecs_operation('gameplay', JSON.stringify({op:'set_resource',name:'render.scene_aspect',value:aspect}));
           aspectOwner = active; publishedAspect = aspect;
+        }
+        // UI scripts use the same logical viewport and presentation mapping as the canvas.
+        if (mode === 'gameplay') {
+          const scaling = displayPanel.preferences.scaling;
+          if (active !== viewportOwner || !publishedViewport || bounds.width !== publishedViewport.width ||
+              bounds.height !== publishedViewport.height || aspect !== publishedViewport.scene_aspect || scaling !== publishedViewport.scaling ||
+              output.width !== publishedViewport.output_width || output.height !== publishedViewport.output_height ||
+              render.width !== publishedViewport.render_width || render.height !== publishedViewport.render_height) {
+            const mapping=presentationMapping(render,output,scaling);
+            publishedViewport = {width:bounds.width, height:bounds.height, scene_aspect:aspect, scaling,
+              output_width:output.width, output_height:output.height, render_width:render.width, render_height:render.height,
+              uv_scale:mapping.scale, uv_offset:mapping.offset};
+            active.ecs_operation('gameplay', JSON.stringify({op:'set_resource',name:'render.viewport',value:publishedViewport}));
+            viewportOwner = active;
+          }
         }
       }
       let earlyInputMs = 0;
@@ -867,7 +1075,19 @@ function tick(timestamp) {
       const timedRenderer = stackFrame?.before ? active : null;
       timedRenderer?.arm_frame_timing();
       const renderStart = frameProfiler ? performance.now() : 0;
+      // Decoding may finish between animation frames; update the Lua callout
+      // before submitting the texture that was just installed.
+      if (mode === 'gameplay' && gameplayLua) publishInspectionPresentation(gameplayLua);
       submitted = active.frame(timestamp);
+      if (submitted && mode === 'gameplay') {
+        reportWeaponFrame(firstPersonFrames?.presented());
+        if (pendingLightPresentation !== null && gameplayLua) {
+          // Acknowledge only a submitted frame; Lua owns the pulse and its fade.
+          const id = pendingLightPresentation; pendingLightPresentation = null;
+          gameplayLua.dispatch('lighting.flash_presented', {id});
+          metrics.dataset.lightFlash = JSON.stringify({id, presented:true});
+        }
+      }
       if (submitted && frameProfiler && mode === 'gameplay') {
         voxelRuntime?.markFrame(); inputLatency.markSubmitted();
       }
@@ -905,6 +1125,7 @@ function tick(timestamp) {
             const outputStart = frameProfiler ? performance.now() : 0;
             runtime.consumePending(outputChannels, consumeGameplayOutput);
             firstPersonFrames?.update(timestamp);
+            publishInspectionPresentation(runtime);
             runtime.consumePending(trailingOutputChannels, consumeTrailingOutput);
             if (frameProfiler) stages.output_ms = performance.now() - outputStart;
             const voxelStart = frameProfiler ? performance.now() : 0;
@@ -914,6 +1135,8 @@ function tick(timestamp) {
           }
         } else {
           runtime.run(dt);
+          runtime.dispatchPending(scriptEventChannels);
+          processMenuSettings(runtime);
           processSceneRequests(runtime);
         }
         if (mode === 'gameplay' && active) {
@@ -947,6 +1170,7 @@ function tick(timestamp) {
             try { posture = JSON.parse(active.ecs_operation('gameplay', JSON.stringify({op:'get', id:voxelRuntime.player, name:'PlayerPosture'}))).value; }
             catch (error) { console.debug('Player posture diagnostics:', error); }
           }
+          metrics.dataset.audio = JSON.stringify(sceneAudio.diagnostics());
           metrics.dataset.player = JSON.stringify({camera:state.player_camera, physics:state.player_physics, rig:state.player_rig, posture});
           metrics.dataset.display = JSON.stringify({...state.display, scaling:displayPanel.preferences.scaling});
           metrics.dataset.lens = JSON.stringify(state.camera_lens ?? null);
@@ -1007,7 +1231,8 @@ async function start() {
   active = await Selector.create(canvas, selectorBytes, catalogBytes, sceneCatalogBytes, '', '');
   let displayStorage = null;
   try { displayStorage = window.localStorage; } catch { /* Persistence is optional. */ }
-  displayPanel = attachDisplayPanel(document, displayStorage, () => active?.max_texture_dimension() ?? MAX_RENDER_DIMENSION);
+  displayPanel = createDisplaySettings(displayStorage, () => active?.max_texture_dimension() ?? MAX_RENDER_DIMENSION);
+  hudPreferences = createHudPreferences(displayStorage);
   restoreLayout(active, 'selector');
   mode = 'selector';
   void populateSelectorPreviews(active);

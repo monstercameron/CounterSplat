@@ -84,9 +84,8 @@ fn gameplay_scene_authors_ownership_without_moving_ui_panels() {
         ("sky_panel", "scene_ui"),
         ("image_panel", "scene_ui"),
         ("scene_panel", "scene_ui"),
-        ("weapon_hud", "hud_ui"),
+        ("inspection_hud", "hud_ui"),
         ("weapon_impact_notice", "hud_ui"),
-        ("back_to_levels", "hud_ui"),
         ("ecs_list", "ecs_panel"),
         ("camera_fov", "camera_panel"),
     ] {
@@ -113,8 +112,7 @@ fn gameplay_scene_authors_ownership_without_moving_ui_panels() {
         "ecs_panel",
         "camera_panel",
         "image_panel",
-        "back_to_levels",
-        "weapon_hud",
+        "inspection_hud",
         "weapon_impact_notice",
     ] {
         let element = world.get::<countersplat_ui::UiElement>(ids[id]).unwrap();

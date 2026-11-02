@@ -66,6 +66,8 @@ fn ui_and_exports_change_the_scene_grade_and_reset_to_scene_defaults() {
     };
     action("image_exposure", UiEventKind::NumberChanged(1.25));
     action("image_bloom", UiEventKind::NumberChanged(0.7));
+    action("image_shadow_warmth", UiEventKind::NumberChanged(-0.5));
+    action("image_highlight_warmth", UiEventKind::NumberChanged(0.3));
     action("image_sharpness", UiEventKind::NumberChanged(1.25));
     action("image_enabled", UiEventKind::BoolChanged(false));
     let grade = world
@@ -75,6 +77,8 @@ fn ui_and_exports_change_the_scene_grade_and_reset_to_scene_defaults() {
         .clone();
     assert_eq!(grade.exposure_ev, 1.25);
     assert_eq!(grade.bloom_intensity, 0.7);
+    assert_eq!(grade.shadow_warmth, -0.5);
+    assert_eq!(grade.highlight_warmth, 0.3);
     assert_eq!(grade.sharpness, 1.25);
     assert!(!grade.enabled);
     assert!(!world

@@ -14,6 +14,9 @@ pub struct ImageCorrection {
     pub saturation: f32,
     pub temperature: f32,
     pub tint: f32,
+    /// Shadow and highlight color temperatures: negative is cool, positive is warm.
+    pub shadow_warmth: f32,
+    pub highlight_warmth: f32,
     pub shadows: f32,
     pub highlights: f32,
     pub bloom_intensity: f32,
@@ -34,6 +37,8 @@ impl Default for ImageCorrection {
             saturation: 0.96,
             temperature: 0.04,
             tint: 0.0,
+            shadow_warmth: 0.0,
+            highlight_warmth: 0.0,
             shadows: 0.06,
             highlights: 0.0,
             bloom_intensity: 0.16,
@@ -52,6 +57,8 @@ impl ImageCorrection {
             || !in_range(self.saturation, 0.0, 2.0)
             || !in_range(self.temperature, -1.0, 1.0)
             || !in_range(self.tint, -1.0, 1.0)
+            || !in_range(self.shadow_warmth, -1.0, 1.0)
+            || !in_range(self.highlight_warmth, -1.0, 1.0)
             || !in_range(self.shadows, -1.0, 1.0)
             || !in_range(self.highlights, -1.0, 1.0)
             || !in_range(self.bloom_intensity, 0.0, 2.0)
@@ -70,6 +77,15 @@ impl ImageCorrection {
 mod tests {
     use super::*;
     #[test]
+    fn older_grades_deserialize_with_neutral_tonal_warmth() {
+        let grade: ImageCorrection = serde_json::from_str(r#"{"exposure_ev":-0.25}"#).unwrap();
+        assert_eq!(grade.exposure_ev, -0.25);
+        assert_eq!(grade.shadow_warmth, 0.0);
+        assert_eq!(grade.highlight_warmth, 0.0);
+        assert!(grade.validate().is_ok());
+    }
+
+    #[test]
     fn validates_finite_and_bounded_image_settings() {
         let mut grade = ImageCorrection::default();
         assert!(grade.validate().is_ok());
@@ -80,6 +96,9 @@ mod tests {
         assert!(grade.validate().is_err());
         grade.exposure_ev = 0.0;
         grade.sharpness = 2.1;
+        assert!(grade.validate().is_err());
+        grade.sharpness = 0.0;
+        grade.shadow_warmth = -1.1;
         assert!(grade.validate().is_err());
     }
 }

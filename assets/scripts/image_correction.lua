@@ -11,6 +11,8 @@ local definitions = {
     {"image_temperature", "temperature", "Warmth", -1, 1},
     {"image_tint", "tint", "Tint", -1, 1},
     {"image_shadows", "shadows", "Shadows", -1, 1},
+    {"image_shadow_warmth", "shadow_warmth", "Shadow warmth", -1, 1},
+    {"image_highlight_warmth", "highlight_warmth", "Highlight warmth", -1, 1},
     {"image_highlights", "highlights", "Highlights", -1, 1},
     {"image_bloom", "bloom_intensity", "Bloom strength", 0, 2},
     {"image_threshold", "bloom_threshold", "Bloom threshold", 0.01, 16},

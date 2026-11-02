@@ -26,6 +26,8 @@ elseif spawn_source == "scene" or not ecs.get_resource("player.spawn_camera") th
 end
 
 local held = {}
+-- Sprint and the weapon controller share the same aim input events.
+local aiming = false
 -- The free-fly player can make one ballistic hop at a time. The physics host
 -- still resolves every movement intent against the active level's voxels.
 local jump = nil
@@ -240,8 +242,16 @@ local function cancel_binding()
     sync_controls(ecs.get(player, "PlayerControls"))
 end
 ecs.on("input.reset", function()
-    held = {}
+    held = {}; aiming = false
     if waiting_for_key then cancel_binding(); notice("") end
+end)
+-- Also accept the script-facing weapon event, so scripted ADS and mouse ADS
+-- apply the same movement rule. A release is honored even outside gameplay.
+ecs.on("weapon.aim", function(event) aiming = event.pressed == true end)
+ecs.on("input.mouse_button", function(event)
+    if event.button == "right" and (event.gameplay or not event.pressed) then
+        aiming = event.pressed == true
+    end
 end)
 ecs.on("input.key", function(event)
     if waiting_for_key then
@@ -250,6 +260,16 @@ ecs.on("input.key", function(event)
         local code = event.code
         if type(code) ~= "string" or #code == 0 or #code > 32 or not code:match("^[%a%d]+$") then
             notice("That key cannot be used as a binding")
+            return
+        end
+        if code == "Backquote" then
+            notice("` is reserved for ECS tools")
+            return
+        end
+        -- Q belongs to the active inspection action; avoid binding two actions to it.
+        local hud = ids.inspection_hud and ecs.get(ids.inspection_hud, "InspectionHud")
+        if hud and hud.enabled ~= false and code == "KeyQ" then
+            notice("Q is reserved for inspection")
             return
         end
         local controls = ecs.get(player, "PlayerControls")
@@ -397,7 +417,7 @@ ecs.system("player.camera", function(dt)
     local rig = assert(read_rig())
     local posture = read_posture()
     local crouched = posture and (posture.crouched or (posture.amount or 0) > 0.001)
-    local multiplier = engine.input.is_down(held, b.sprint) and settings.sprint_multiplier or 1
+    local multiplier = not aiming and engine.input.is_down(held, b.sprint) and settings.sprint_multiplier or 1
     if crouched then
         local factor = posture.crouch_speed_multiplier
         multiplier = type(factor) == "number" and factor == factor and math.max(0.1, math.min(1, factor)) or 0.45

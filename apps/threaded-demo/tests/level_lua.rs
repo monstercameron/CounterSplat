@@ -28,6 +28,15 @@ fn lua_level_panel_controls_manual_and_automatic_lod() {
         &["ui", "player", "level"],
     )
     .unwrap();
+    // The editor panels start collapsed; open this panel before sending UI events.
+    world
+        .borrow_mut()
+        .get_mut::<UiElement>(ids["level_panel"])
+        .unwrap()
+        .collapsible
+        .as_mut()
+        .unwrap()
+        .collapsed = false;
     let level = ids["active_level"];
     world
         .borrow_mut()
@@ -116,4 +125,43 @@ fn lua_level_panel_controls_manual_and_automatic_lod() {
             ..
         }
     ));
+}
+
+#[test]
+fn pause_sky_request_updates_the_gameplay_skybox() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let manifest =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &manifest,
+        &["ui", "player", "level", "scene"],
+    )
+    .unwrap();
+    world
+        .borrow_mut()
+        .insert(
+            ids["active_level"],
+            LevelAssets {
+                name: "Example level".into(),
+                lod_count: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    lua.execute(&std::fs::read_to_string(root.join("assets/scripts/level_settings.lua")).unwrap())
+        .unwrap();
+    lua.dispatch("settings.sky_request", &json!({"enabled":false}))
+        .unwrap();
+    lua.execute("assert(not ecs.get(ecs.get_resource('scene.entities').skybox, 'Skybox').enabled)")
+        .unwrap();
+    lua.dispatch("settings.sky_request", &json!({"enabled":true}))
+        .unwrap();
+    lua.execute("assert(ecs.get(ecs.get_resource('scene.entities').skybox, 'Skybox').enabled)")
+        .unwrap();
 }

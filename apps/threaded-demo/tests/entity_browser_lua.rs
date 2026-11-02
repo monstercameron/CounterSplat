@@ -13,6 +13,20 @@ impl WorldBridge for LocalBridge {
     }
 }
 
+// The authored tool panels start collapsed. Open the list as a user would
+// before testing its interactive rows, scrolling, and live refresh.
+fn open_entity_panel(world: &Rc<RefCell<World>>, panel: countersplat_ecs::Entity) {
+    let events = countersplat_ui_ecs::apply_events(
+        &mut world.borrow_mut(),
+        [UiEvent {
+            id: panel.to_string(),
+            kind: UiEventKind::CollapsedChanged(false),
+        }],
+    );
+    assert_eq!(events.len(), 1, "entity panel should open");
+    world.borrow_mut().drain_events("ui.action");
+}
+
 #[test]
 fn selecting_scrolling_and_removing_entities_updates_the_right_inspector() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -28,6 +42,7 @@ fn selecting_scrolling_and_removing_entities_updates_the_right_inspector() {
         &["ui", "player", "level", "scene"],
     )
     .unwrap();
+    open_entity_panel(&world, ids["ecs_panel"]);
     let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
     for script in ["inspector_tuning.lua", "entity_inspector.lua"] {
         lua.execute(&std::fs::read_to_string(root.join("assets/scripts").join(script)).unwrap())
@@ -333,6 +348,7 @@ fn tree_edits_real_ownership_and_resize_recycles_enough_rows() {
         &["ui", "player", "level", "scene"],
     )
     .unwrap();
+    open_entity_panel(&world, ids["ecs_panel"]);
     let (parent, child, grandchild, other) = {
         let mut w = world.borrow_mut();
         let parent = w.spawn();
@@ -512,6 +528,7 @@ fn hidden_entity_changes_update_the_count_without_rewriting_visible_rows() {
         &["ui", "player", "level", "scene"],
     )
     .unwrap();
+    open_entity_panel(&world, ids["ecs_panel"]);
     let writes = Rc::new(Cell::new(0));
     let lua = LuaRuntime::new(
         CountingBridge {

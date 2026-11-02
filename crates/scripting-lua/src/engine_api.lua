@@ -1,6 +1,74 @@
 -- Script-neutral scene requests travel through the ordinary ECS event queue.
 -- The host validates and carries them out after the current script pass.
-engine = { scene = {}, physics = {}, input = {} }
+engine = { scene = {}, physics = {}, input = {}, audio = {}, events = {} }
+
+-- User-defined event names share one ECS transport channel. Delivery is queued:
+-- an event emitted by a listener is delivered on the next host event pass.
+local event_listeners = {}
+local function event_name(name)
+    assert(type(name)=="string" and #name>0 and #name<=128, "invalid event name")
+    return name
+end
+function engine.events.on(name, callback)
+    name=event_name(name)
+    assert(type(callback)=="function", "event listener must be a function")
+    local listeners=event_listeners[name] or {}
+    event_listeners[name]=listeners
+    listeners[#listeners+1]=callback
+    return callback
+end
+function engine.events.off(name, callback)
+    name=event_name(name)
+    local listeners=event_listeners[name]
+    if not listeners then return false end
+    if callback==nil then event_listeners[name]=nil; return true end
+    for i,listener in ipairs(listeners) do
+        if listener==callback then
+            table.remove(listeners,i)
+            if #listeners==0 then event_listeners[name]=nil end
+            return true
+        end
+    end
+    return false
+end
+function engine.events.emit(name, payload)
+    name=event_name(name)
+    if payload==nil then payload={} end
+    ecs.emit("engine.event",{name=name,payload=payload})
+end
+ecs.on("engine.event", function(message)
+    if type(message)~="table" or type(message.name)~="string" then return end
+    local listeners=event_listeners[message.name]
+    if not listeners then return end
+    -- Keep the current delivery stable if a callback subscribes or unsubscribes.
+    local snapshot={table.unpack(listeners)}
+    for _,callback in ipairs(snapshot) do callback(message.payload) end
+end)
+
+-- Audio commands are ordinary ECS events. Hosts own decoding and playback;
+-- scripts select validated AudioEmitter and AudioLayer components by entity.
+function engine.audio.play(entity, overrides)
+    assert(type(entity) == "string", "audio emitter must be an entity ID")
+    assert(overrides == nil or type(overrides) == "table", "audio overrides must be a table")
+    local emitter = ecs.get(entity, "AudioEmitter")
+    if not emitter or emitter.enabled == false then return false end
+    local settings = emitter.settings
+    if overrides then
+        for key, value in pairs(overrides) do
+            assert(key == "gain" or key == "balance" or key == "rate" or key == "looped", "unknown audio override")
+            settings[key] = value
+        end
+    end
+    ecs.emit("audio.play", {entity=entity, asset=emitter.asset, layer=emitter.layer, settings=settings})
+    return true
+end
+function engine.audio.sync_layer(entity)
+    assert(type(entity) == "string", "audio layer must be an entity ID")
+    local layer = ecs.get(entity, "AudioLayer")
+    if not layer then return false end
+    ecs.emit("audio.layer", {name=layer.name, enabled=layer.enabled, mix=layer.mix})
+    return true
+end
 
 -- A reader retains a private snapshot until the ECS reports a change. Treat
 -- returned tables and their children as read-only; use ecs.get before editing.

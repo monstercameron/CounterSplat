@@ -60,6 +60,7 @@ impl Fixture {
             "player_controls.lua",
             "neural_camera.lua",
             "camera_bob.lua",
+            "weapon_optics.lua",
             "camera_zoom.lua",
         ] {
             lua.execute(&std::fs::read_to_string(root.join("assets/scripts").join(name)).unwrap())

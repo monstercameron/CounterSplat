@@ -584,4 +584,97 @@ fn lens_exposure_focus_and_shutter_change_gpu_output() {
     let motion = metrics(&render());
     assert!(motion.1 > baseline.1 && motion.1 > motion.2,
         "camera translation should spread the splat in the motion direction: {baseline:?} vs {motion:?}");
+
+    // An unchanged camera stays sharp even when its shutter spans multiple frames.
+    let stationary_clip = camera::mul(&view.projection, &view.view);
+    scene.set_camera_effects(&queue, [0.0, 0.0, 0.0, 2.5], &stationary_clip);
+    let stationary = metrics(&render());
+    assert!(
+        (stationary.1 - baseline.1).abs() < 0.01 && (stationary.2 - baseline.2).abs() < 0.01,
+        "stationary view should not smear: {baseline:?} vs {stationary:?}"
+    );
+
+    let mut cadence_widths = Vec::new();
+    for fps in [60.0_f32, 120.0] {
+        let delta = 1.0 / fps;
+        let distance = 24.0 * delta;
+        let old_view = camera::look_at(
+            [-distance, 0.0, 3.0],
+            [-distance, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        );
+        let old_clip = camera::mul(&view.projection, &old_view);
+        let exposure_scale = camera::shutter_motion_scale(1.0 / 48.0, delta);
+        scene.set_camera_effects(&queue, [0.0, 0.0, 0.0, exposure_scale], &old_clip);
+        cadence_widths.push(metrics(&render()).1);
+    }
+    assert!((cadence_widths[0] - cadence_widths[1]).abs() < 0.1,
+        "the same shutter and velocity should produce the same blur at either frame rate: {cadence_widths:?}");
+}
+
+#[test]
+fn local_light_brightens_only_nearby_splats_and_preserves_camera_effects() {
+    use countersplat_render::scene::LocalLight;
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        return;
+    };
+    let pipelines = Pipelines::new(&device, countersplat_render::COLOR_FORMAT).unwrap();
+    let scene = scene::build(&device, &queue, &pipelines, &single_splat(), 0.5).unwrap();
+    let view = View {
+        model: camera::IDENTITY,
+        view: camera::look_at([0.0, 0.0, 3.0], [0.0; 3], [0.0, 1.0, 0.0]),
+        projection: camera::perspective(60f32.to_radians(), 1.0, 0.05, 100.0),
+        width: 128,
+        height: 128,
+        near: 0.05,
+        far: 100.0,
+    };
+    let render = || scene.render_rgba(&device, &queue, &pipelines, &view, None);
+    let brightness = |pixels: &[u8]| -> u64 {
+        pixels
+            .chunks_exact(4)
+            .map(|p| u64::from(p[0]) + u64::from(p[1]) + u64::from(p[2]))
+            .sum()
+    };
+    let baseline = render();
+    let light = LocalLight {
+        position: [0.0, 0.0, 0.0],
+        radius: 2.0,
+        color: [1.0, 0.68, 0.35],
+        intensity: 0.6,
+    };
+    scene.set_local_light(&queue, Some(light));
+    let nearby = render();
+    assert!(
+        brightness(&nearby) > brightness(&baseline) * 105 / 100,
+        "nearby splat should brighten"
+    );
+    scene.set_camera_effects(&queue, [0.0, 0.0, 0.0, 0.0], &camera::IDENTITY);
+    assert_eq!(nearby, render(), "camera updates must preserve the light");
+    scene.set_local_light(
+        &queue,
+        Some(LocalLight {
+            position: [20.0, 0.0, 0.0],
+            ..light
+        }),
+    );
+    assert_eq!(
+        baseline,
+        render(),
+        "a light outside its radius must not affect the splat"
+    );
+    scene.set_local_light(
+        &queue,
+        Some(LocalLight {
+            radius: f32::NAN,
+            ..light
+        }),
+    );
+    assert_eq!(
+        baseline,
+        render(),
+        "invalid light data must disable the effect"
+    );
+    scene.set_local_light(&queue, None);
+    assert_eq!(baseline, render());
 }

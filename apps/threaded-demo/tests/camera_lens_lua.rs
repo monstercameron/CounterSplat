@@ -49,6 +49,8 @@ fn controls_link_shutter_time_and_angle_and_edit_real_camera_components() {
         .unwrap()
         .collapsed = false;
     let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    lua.execute(&std::fs::read_to_string(root.join("assets/scripts/weapon_optics.lua")).unwrap())
+        .unwrap();
     lua.execute(&std::fs::read_to_string(root.join("assets/scripts/camera_lens.lua")).unwrap())
         .unwrap();
     let action = |name: &str, kind: UiEventKind| {
@@ -67,6 +69,7 @@ fn controls_link_shutter_time_and_angle_and_edit_real_camera_components() {
     };
     let lens = || world.borrow().get::<CameraLens>(player).unwrap().clone();
     let camera = || world.borrow().get::<PlayerCamera>(player).unwrap().clone();
+    action("camera_shutter_fps", UiEventKind::NumberChanged(60.0));
     action("camera_shutter_angle", UiEventKind::NumberChanged(90.0));
     assert!((lens().shutter_seconds() - 1.0 / 240.0).abs() < 1e-6);
     let time_ms = match world
@@ -86,9 +89,18 @@ fn controls_link_shutter_time_and_angle_and_edit_real_camera_components() {
     assert!((lens().shutter_angle_degrees - 180.0).abs() < 0.01);
     action("camera_shutter_fps", UiEventKind::NumberChanged(30.0));
     assert!((lens().shutter_seconds() - 1.0 / 60.0).abs() < 1e-6);
+    let before_iris = lens();
     action("camera_aperture", UiEventKind::NumberChanged(2.8));
-    assert!((lens().exposure_multiplier() - 8.0).abs() < 1e-4);
+    let expected_ratio = (before_iris.aperture_f_number / 2.8).powi(2);
+    assert!(
+        (lens().exposure_multiplier() / before_iris.exposure_multiplier() - expected_ratio).abs()
+            < 1e-4
+    );
+    action("camera_dof", UiEventKind::BoolChanged(false));
+    assert!(!lens().depth_of_field);
     action("camera_dof", UiEventKind::BoolChanged(true));
+    action("camera_motion_blur", UiEventKind::BoolChanged(false));
+    assert!(!lens().motion_blur);
     action("camera_motion_blur", UiEventKind::BoolChanged(true));
     assert!(lens().depth_of_field && lens().motion_blur);
     action("camera_roll", UiEventKind::NumberChanged(20.0));
@@ -124,6 +136,22 @@ fn controls_link_shutter_time_and_angle_and_edit_real_camera_components() {
             .visible
     );
     assert!(
+        !world
+            .borrow()
+            .get::<UiElement>(ids["camera_zoom_factor"])
+            .unwrap()
+            .visible
+    );
+    assert!(
+        world
+            .borrow()
+            .get::<UiElement>(ids["camera_zoom_info"])
+            .unwrap()
+            .visible
+    );
+    action("camera_optic", UiEventKind::Clicked); // red dot
+    action("camera_optic", UiEventKind::Clicked); // scope
+    assert!(
         world
             .borrow()
             .get::<UiElement>(ids["camera_zoom_factor"])
@@ -145,9 +173,8 @@ fn controls_link_shutter_time_and_angle_and_edit_real_camera_components() {
     assert_eq!(
         world
             .borrow()
-            .get::<PlayerControls>(player)
-            .unwrap()
-            .zoom_factor,
+            .get_dynamic(ids["first_person"], "WeaponOptic")
+            .unwrap()["scope_magnification"],
         3.0
     );
     assert!(!world
@@ -166,10 +193,10 @@ fn controls_link_shutter_time_and_angle_and_edit_real_camera_components() {
     assert_eq!(
         world
             .borrow()
-            .get::<PlayerControls>(player)
-            .unwrap()
-            .zoom_factor,
-        PlayerControls::default().zoom_factor
+            .get_dynamic(ids["first_person"], "WeaponOptic")
+            .unwrap()["scope_magnification"],
+        3.0,
+        "resetting a camera lens must not change the equipped scope"
     );
     action("camera_lens_zoom", UiEventKind::BoolChanged(false));
     assert!(

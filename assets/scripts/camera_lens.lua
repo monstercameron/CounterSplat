@@ -2,6 +2,8 @@
 -- and PlayerCamera through the same validated ECS adapters as every other system.
 local ids = assert(ecs.get_resource("scene.entities"))
 local player = assert(ids.player)
+local weapon = ids.first_person
+local optics = assert(engine.optics, "load weapon_optics.lua before camera_lens.lua")
 assert(ecs.get(player, "CameraLens"), "camera lens is missing")
 if not ecs.get(player, "CameraZoomLens") then ecs.set(player, "CameraZoomLens", ecs.get(player, "CameraLens")) end
 local editing_zoom = false
@@ -70,13 +72,21 @@ local function sync()
     local camera = assert(ecs.get(player, "PlayerCamera"))
     local controls = assert(ecs.get(player, "PlayerControls"))
     local current = assert(ecs.get(player, profile_name()))
+    local optic = weapon and ecs.get(weapon, "WeaponOptic") or nil
+    local kind = optic and optic.kind or "iron"
+    local magnification = optics.magnification(optic)
+    local names = {iron="Iron sights", red_dot="Red dot", scope="Scope"}
+    local title = names[kind] or names.iron
     show(ids.camera_fov, not editing_zoom)
-    show(ids.camera_zoom_factor, editing_zoom)
+    show(ids.camera_zoom_factor, editing_zoom and kind == "scope")
+    show(ids.camera_zoom_info, editing_zoom and kind ~= "scope")
+    label(ids.camera_optic, string.format("Optic: %s · %.3g×", title, magnification), "label")
+    label(ids.camera_zoom_info, string.format("%s · %.3g× ADS", title, magnification))
     check(ids.camera_lens_zoom, editing_zoom)
     label(ids.camera_exposure_title, editing_zoom and "Zoom lens" or "Standard lens")
     label(ids.camera_reset, editing_zoom and "Reset zoom lens" or "Reset standard lens", "label")
     slider(ids.camera_fov, camera.fov_degrees)
-    slider(ids.camera_zoom_factor, controls.zoom_factor)
+    if optic then slider(ids.camera_zoom_factor, optic.scope_magnification) end
     for id, field in pairs(angles) do slider(id, math.deg(camera[field])) end
     for id, field in pairs(fields) do slider(id, current[field]) end
     for id, field in pairs(switches) do check(id, current[field]) end
@@ -98,6 +108,13 @@ end
 
 ecs.on("ui.action", function(action)
     local id, kind = action.id, action.kind
+    if id == ids.camera_optic and kind.type == "clicked" and weapon then
+        local current = ecs.get(weapon, "WeaponOptic") or {kind="iron", scope_magnification=4}
+        local next_kind = current.kind == "iron" and "red_dot" or current.kind == "red_dot" and "scope" or "iron"
+        optics.set(weapon, {kind=next_kind})
+        sync()
+        return
+    end
     if id == ids.camera_lens_zoom and kind.type == "bool_changed" then
         editing_zoom = kind.value == true
         sync()
@@ -105,24 +122,10 @@ ecs.on("ui.action", function(action)
     end
     if id == ids.camera_reset and kind.type == "clicked" then
         save_lens(assert(ecs.get_resource(editing_zoom and "camera.default_zoom_lens" or "camera.default_lens")))
-        if editing_zoom then
-            local controls, defaults = ecs.get(player, "PlayerControls"), ecs.get_resource("player.default_controls")
-            if controls and defaults then
-                controls.zoom_factor = defaults.zoom_factor
-                if pcall(function() ecs.set(player, "PlayerControls", controls) end) then
-                    ecs.emit("player.controls_changed", controls)
-                end
-            end
-            sync()
-        end
         return
     end
     if id == ids.camera_zoom_factor and kind.type == "number_changed" then
-        local controls = assert(ecs.get(player, "PlayerControls"))
-        controls.zoom_factor = kind.value
-        if pcall(function() ecs.set(player, "PlayerControls", controls) end) then
-            ecs.emit("player.controls_changed", controls)
-        end
+        if weapon then optics.set(weapon, {scope_magnification=kind.value}) end
         sync()
         return
     end

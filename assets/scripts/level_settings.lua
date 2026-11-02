@@ -67,3 +67,12 @@ end)
 
 -- External scripts can edit the same component; keep the panel in sync with those edits.
 ecs.system("level.settings_ui", function() sync_settings() end)
+
+-- The pause scene can request a sky change without owning the gameplay ECS.
+ecs.on("settings.sky_request",function(request)
+    if type(request)~="table" or type(request.enabled)~="boolean" or not ids.skybox then return end
+    local sky=ecs.get(ids.skybox,"Skybox")
+    if not sky then return end
+    sky.enabled=request.enabled
+    ecs.set(ids.skybox,"Skybox",sky)
+end)

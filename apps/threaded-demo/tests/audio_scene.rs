@@ -129,3 +129,111 @@ fn audio_scene_and_lua_drive_a_separate_audio_owner() {
     assert!(frame.right.abs() < 0.001);
     worker.shutdown().unwrap();
 }
+#[test]
+fn gameplay_lua_plays_scene_emitters_for_weapon_and_footsteps() {
+    use serde_json::json;
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scene =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_audio_ecs::register(&mut world.borrow_mut()).unwrap();
+    let ids = countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &scene,
+        &["ui", "player", "audio"],
+    )
+    .unwrap();
+    let player = ids["player"].to_string();
+    let weapon = ids["first_person"].to_string();
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    lua.execute(&std::fs::read_to_string(root.join("assets/scripts/game_audio.lua")).unwrap())
+        .unwrap();
+    assert_eq!(
+        world.borrow_mut().drain_events("audio.layer")[0]["name"],
+        "sound"
+    );
+    for (name, value, asset) in [
+        ("weapon.shot", json!({"player":player}), "sound-rifle-shot"),
+        (
+            "weapon.reload_started",
+            json!({"entity":weapon}),
+            "sound-rifle-reload",
+        ),
+        (
+            "weapon.dry_fire",
+            json!({"entity":weapon}),
+            "sound-dry-fire",
+        ),
+        (
+            "projectile.impact",
+            json!({"owner":player}),
+            "sound-bullet-impact",
+        ),
+    ] {
+        lua.dispatch(name, &value).unwrap();
+        assert_eq!(
+            world.borrow_mut().drain_events("audio.play")[0]["asset"],
+            asset
+        );
+    }
+    world
+        .borrow_mut()
+        .get_mut::<countersplat_scene::PhysicsBody>(ids["player"])
+        .unwrap()
+        .grounded = true;
+    lua.dispatch(
+        "physics.motion_resolved",
+        &json!({"entity":player,"moved":[0,0,1.5]}),
+    )
+    .unwrap();
+    assert_eq!(
+        world.borrow_mut().drain_events("audio.play")[0]["asset"],
+        "sound-footstep"
+    );
+    lua.dispatch("weapon.shot", &json!({"player":"other"}))
+        .unwrap();
+    assert!(world.borrow_mut().drain_events("audio.play").is_empty());
+}
+
+#[test]
+fn pause_requests_update_the_scene_audio_layer() {
+    use serde_json::json;
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scene =
+        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+            .unwrap();
+    let world = Rc::new(RefCell::new(World::new()));
+    countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_audio_ecs::register(&mut world.borrow_mut()).unwrap();
+    countersplat_scene_ecs::instantiate_layers(
+        &mut world.borrow_mut(),
+        &scene,
+        &["ui", "player", "audio"],
+    )
+    .unwrap();
+    let lua = LuaRuntime::new(LocalBridge(world.clone()), ScriptOptions::default()).unwrap();
+    lua.execute(&std::fs::read_to_string(root.join("assets/scripts/game_audio.lua")).unwrap())
+        .unwrap();
+    world.borrow_mut().drain_events("audio.layer");
+    lua.dispatch("settings.sound_request", &json!({"gain":0.35}))
+        .unwrap();
+    let layer = world
+        .borrow_mut()
+        .drain_events("audio.layer")
+        .pop()
+        .unwrap();
+    assert!((layer["mix"]["gain"].as_f64().unwrap() - 0.35).abs() < 0.0001);
+    lua.dispatch("settings.sound_request", &json!({"muted":true}))
+        .unwrap();
+    let layer = world
+        .borrow_mut()
+        .drain_events("audio.layer")
+        .pop()
+        .unwrap();
+    assert_eq!(layer["mix"]["muted"], true);
+    lua.execute("local a=ecs.get(ecs.get_resource('scene.entities').audio_root, 'AudioLayer'); assert(a.mix.muted and math.abs(a.mix.gain-.35)<.0001)").unwrap();
+}

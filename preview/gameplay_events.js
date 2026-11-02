@@ -7,5 +7,5 @@ export const GAMEPLAY_EVENT_CHANNELS = Object.freeze([
   'ui.action', 'editor.entity_selected', 'physics.ready', 'physics.ground_result',
   'physics.clearance_result', 'physics.trace_result', 'physics.motion_resolved', 'physics.motion_error',
   'physics.collision', 'physics.error', 'weapon.trigger', 'weapon.aim', 'weapon.reload',
-  'weapon.equip', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.posture'
+  'weapon.equip', 'weapon.optic_set', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.posture'
 ]);

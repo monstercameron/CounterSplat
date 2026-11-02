@@ -16,6 +16,9 @@ $output = Join-Path $projectRoot '.artifacts/web/pkg'
 if ($LASTEXITCODE -ne 0) { throw 'Browser binding generation failed.' }
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/skybox-worker.js') -Destination (Join-Path $output 'skybox-worker.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/voxel-worker.js') -Destination (Join-Path $output 'voxel-worker.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/minimap-worker.js') -Destination (Join-Path $output 'minimap-worker.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/minimap_runtime.js') -Destination (Join-Path $output 'minimap_runtime.js') -Force
+Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/minimap_splat.js') -Destination (Join-Path $output 'minimap_splat.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/voxel_runtime.js') -Destination (Join-Path $output 'voxel_runtime.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/mouse_capture.js') -Destination (Join-Path $output 'mouse_capture.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/mouse_buttons.js') -Destination (Join-Path $output 'mouse_buttons.js') -Force
@@ -28,7 +31,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/worker_latency.js') -Des
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/frame_stack_profile.js') -Destination (Join-Path $output 'frame_stack_profile.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/player_rig.js') -Destination (Join-Path $output 'player_rig.js') -Force
 Copy-Item -LiteralPath (Join-Path $projectRoot 'preview/chunk_decoder_pool.js') -Destination (Join-Path $output 'chunk_decoder_pool.js') -Force
-foreach ($module in @('chunk_preload.js', 'metadata_client.js', 'metadata_loader.js', 'metadata-worker.js', 'asset_loader.js')) {
+foreach ($module in @('ui_layout_preferences.js', 'scene_audio.js', 'chunk_preload.js', 'metadata_client.js', 'metadata_loader.js', 'metadata-worker.js', 'asset_loader.js')) {
     Copy-Item -LiteralPath (Join-Path $projectRoot "preview/$module") -Destination (Join-Path $output $module) -Force
 }
 $luaOutput = Join-Path $output 'wasmoon'

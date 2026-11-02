@@ -173,6 +173,81 @@ impl VoxelCollider {
         self.local(point)
     }
 
+    /// Rasterize occupied voxel cells in a horizontal world-space slice.
+    ///
+    /// Rows run toward positive world Z and columns toward positive world X;
+    /// the result is north-up, centered on `center_xz`, with one byte per pixel.
+    /// This is a bounded geometry query, independent of the rendering and HUD.
+    pub fn horizontal_slice(
+        &self,
+        center_xz: [f32; 2],
+        height: f32,
+        radius: f32,
+        thickness: f32,
+        size: u32,
+    ) -> Result<Vec<u8>, &'static str> {
+        if !center_xz
+            .iter()
+            .all(|v| v.is_finite() && v.abs() <= 10_000_000.0)
+            || !height.is_finite()
+            || height.abs() > 10_000_000.0
+            || !radius.is_finite()
+            || !(0.1..=100.0).contains(&radius)
+            || !thickness.is_finite()
+            || !(0.01..=2.0).contains(&thickness)
+            || !(16..=256).contains(&size)
+        {
+            return Err("invalid voxel map slice");
+        }
+        let mut pixels = vec![0_u8; (size * size) as usize];
+        let a = self.local([
+            center_xz[0] - radius,
+            height - thickness * 0.5,
+            center_xz[1] - radius,
+        ]);
+        let b = self.local([
+            center_xz[0] + radius,
+            height + thickness * 0.5,
+            center_xz[1] + radius,
+        ]);
+        let resolution = self.resolution();
+        let dims = grid_cells(&self.tree.meta);
+        let mut lo = [0_i32; 3];
+        let mut hi = [0_i32; 3];
+        for axis in 0..3 {
+            let low = ((a[axis].min(b[axis]) - self.tree.meta.grid_min[axis]) / resolution).floor()
+                as i32;
+            let high = ((a[axis].max(b[axis]) - self.tree.meta.grid_min[axis]) / resolution).floor()
+                as i32;
+            if high < 0 || low >= dims[axis] as i32 {
+                return Ok(pixels);
+            }
+            lo[axis] = low.max(0);
+            hi[axis] = high.min(dims[axis] as i32 - 1);
+        }
+        let volume = (0..3)
+            .try_fold(1_u64, |volume, i| {
+                volume.checked_mul((hi[i] - lo[i] + 1) as u64)
+            })
+            .unwrap_or(u64::MAX);
+        if volume > 16_000_000 {
+            return Err("voxel map slice exceeds the safe cell budget");
+        }
+        let pixel_scale = size as f32 / (2.0 * radius);
+        for_each_solid_cell(&self.tree, lo, hi, |cell| {
+            let local = std::array::from_fn(|i| {
+                self.tree.meta.grid_min[i] + (cell[i] as f32 + 0.5) * resolution
+            });
+            let world = self.world(local);
+            let x = ((world[0] - center_xz[0] + radius) * pixel_scale).floor() as i32;
+            let y = ((world[2] - center_xz[1] + radius) * pixel_scale).floor() as i32;
+            if (0..size as i32).contains(&x) && (0..size as i32).contains(&y) {
+                pixels[y as usize * size as usize + x as usize] = 255;
+            }
+        });
+        Ok(pixels)
+    }
+
     /// Sweep a point along a finite segment through the sparse voxel tree.
     ///
     /// The grid is clipped first, then a 3-D DDA visits every crossed cell in

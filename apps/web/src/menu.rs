@@ -83,6 +83,12 @@ impl MenuUi {
     pub fn take_layout_changed(&mut self) -> bool {
         self.layout.take_changed()
     }
+    /// Install an already-decoded scene preview into the menu's canvas UI.
+    pub fn set_preview(&mut self, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
+        self.renderer
+            .set_image_rgba("level-preview", [width as usize, height as usize], rgba)
+            .map_err(str::to_owned)
+    }
     pub fn wants_keyboard(&self) -> bool {
         self.renderer.wants_keyboard()
     }
