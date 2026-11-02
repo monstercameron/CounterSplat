@@ -1,7 +1,7 @@
 // Transfers bounded map requests to an isolated geometry worker. Requests are
 // coalesced while it is busy; an old scene can never install a new texture.
 export class MinimapRuntime {
-  constructor(game, base, isCurrent, onResult, worker = new Worker('/pkg/minimap-worker.js', {type:'module'}), flipXY = true) {
+  constructor(game, base, isCurrent, onResult, worker = new Worker(new URL('./minimap-worker.js', import.meta.url), {type:'module'}), flipXY = true) {
     this.game=game; this.isCurrent=isCurrent; this.onResult=onResult; this.worker=worker;
     this.state='loading'; this.pending=null; this.inFlight=null; this.sequence=0;
     worker.onmessage=({data})=>this.onMessage(data);

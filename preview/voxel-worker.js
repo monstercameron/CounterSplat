@@ -1,5 +1,5 @@
 // The voxel worker owns sparse collision data and CPU queries, separate from the WebGPU owner.
-import init, { VoxelCollisionData } from '/pkg/countersplat_web.js';
+import init, { VoxelCollisionData } from './countersplat_web.js';
 const wasmReady = init();
 let collider = null;
 // Timing is requested only by the local profiler. The measured worker span

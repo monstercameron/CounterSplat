@@ -1,7 +1,11 @@
 # Third-party and source notices
 
-CounterSplat includes code derived from NeuralVisionRacer at commit
-`87e95586eef89acae852d75a92d69b9d8dc5745c`, distributed under Apache License 2.0. See [LICENSE](LICENSE).
+CounterSplat-authored code is available under the [MIT License](LICENSE).
+CounterSplat also includes code derived from NeuralVisionRacer at commit
+`87e95586eef89acae852d75a92d69b9d8dc5745c`, distributed under Apache License 2.0.
+That code retains its license and applicable notices; see
+[third_party/neuralvisionracer/LICENSE](third_party/neuralvisionracer/LICENSE).
+Cargo package metadata reflects the combined licenses.
 
 The WGSL catalogue under `crates/shaders/shaders` and the blue-noise texture under `crates/render/assets` come from
 [PlayCanvas engine](https://github.com/playcanvas/engine), commit `209ce5752527ab5050ec9632ca6dc1272542b70d`,

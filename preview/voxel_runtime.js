@@ -3,7 +3,7 @@ import {WorkerLatency} from './worker_latency.js';
 // Coordinates per-entity ECS bodies with the separate level-collision worker.
 // Lua submits movement intents; this host reconciles each entity's worker result.
 export class VoxelRuntime {
-  constructor(game, base, isCurrent, worker = new Worker('/pkg/voxel-worker.js', {type:'module'})) {
+  constructor(game, base, isCurrent, worker = new Worker(new URL('./voxel-worker.js', import.meta.url), {type:'module'})) {
     this.game = game; this.isCurrent = isCurrent; this.worker = worker;
     const ids = this.call({op:'get_resource', name:'scene.entities'}).value;
     this.level = ids.active_level; this.player = ids.player;

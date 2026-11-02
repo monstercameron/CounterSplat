@@ -1,6 +1,6 @@
 // Map rasterization owns a separate copy of level voxels so a map request never
 // blocks the collision worker or the render thread.
-import init, { VoxelCollisionData, decode_texture } from '/pkg/countersplat_web.js';
+import init, { VoxelCollisionData, decode_texture } from './countersplat_web.js';
 import {decodeSplatCenters, rasterizeSplatSlice, boundedVoxelRadius, selectSplatMapFiles} from './minimap_splat.js';
 const wasmReady = init();
 let collider = null, splats = null;

@@ -16,11 +16,22 @@ export function levelPolicies(value = {}) {
     throw new Error('The level manifest, viewer settings, and chunk metadata must be preloaded.');
   return policies;
 }
-// Scene choices are filenames in the local project scene directory, never arbitrary URLs.
-export function localSceneUrl(filename, origin) {
+// Resolve manifest-rooted paths within this deployment's project directory.
+// This works on localhost, repository subpaths, and custom-domain site roots.
+export function projectResourceUrl(uri, projectBase, relativeTo = projectBase) {
+  const root = new URL(projectBase);
+  if (typeof uri !== 'string' || !uri || uri.startsWith('//') || !root.pathname.endsWith('/'))
+    throw new Error('Invalid project resource URI.');
+  const url = uri.startsWith('/') ? new URL(uri.slice(1), root) : new URL(uri, relativeTo);
+  if (url.origin !== root.origin || !url.pathname.startsWith(root.pathname))
+    throw new Error('Project resource escapes its deployment root.');
+  return url;
+}
+// Scene choices are filenames in the project scene directory, never arbitrary URLs.
+export function localSceneUrl(filename, projectBase) {
   if (typeof filename !== 'string' || !/^[A-Za-z0-9_-]{1,80}\.json$/.test(filename))
     throw new Error('Invalid scene filename.');
-  return new URL(`/assets/scenes/${filename}`, origin);
+  return projectResourceUrl(`assets/scenes/${filename}`, new URL('.', projectBase));
 }
 export function planScripts(scene, base, origin) {
   const scripts = scene.resources?.scripts || {};

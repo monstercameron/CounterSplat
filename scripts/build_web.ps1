@@ -1,4 +1,5 @@
 # Build the browser canvas host and generate matching JavaScript bindings.
+param([switch]$SkipSceneAssets)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $manifest = Join-Path $projectRoot 'Cargo.toml'
@@ -54,6 +55,7 @@ $assetPrefix = [IO.Path]::GetFullPath((Join-Path $projectRoot 'assets')).TrimEnd
 $outputPrefix = [IO.Path]::GetFullPath($output).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 $createdDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($reference in $references) {
+    if ($SkipSceneAssets) { continue }
     $uri = [string]$reference.uri
     if ($uri.StartsWith('/') -or $uri -match '^[a-zA-Z][a-zA-Z0-9+.-]*:') { continue }
     $source = [IO.Path]::GetFullPath((Join-Path $sceneDir $uri))

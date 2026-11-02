@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {loadPolicy, levelPolicies, planScripts, LoadingProgress, describeLevelAssets, localSceneUrl } from '../preview/asset_loader.js';
+import {loadPolicy, levelPolicies, planScripts, LoadingProgress, describeLevelAssets, localSceneUrl, projectResourceUrl } from '../preview/asset_loader.js';
 assert.equal(loadPolicy(), 'preload');
 assert.equal(levelPolicies().splat_chunks, 'streamable');
 assert.equal(levelPolicies({splat_chunks:'preload'}).splat_chunks, 'preload');
@@ -40,3 +40,14 @@ assert.throws(() => describeLevelAssets(example,2,[{means:{files:[null]}}],['0_0
 assert.equal(localSceneUrl('gameplay.json', base.origin).href, 'http://localhost/assets/scenes/gameplay.json');
 assert.throws(() => localSceneUrl('../secret.json', base.origin));
 assert.throws(() => localSceneUrl('https://evil.test/a.json', base.origin));
+
+const pagesRoot = 'https://example.github.io/CounterSplat/game/play/';
+const selector = new URL('assets/scenes/level-selector.json', pagesRoot);
+assert.equal(projectResourceUrl('/assets/levels/catalog.json', pagesRoot, selector).href,
+  pagesRoot + 'assets/levels/catalog.json');
+assert.equal(projectResourceUrl('../scripts/game.lua', pagesRoot, selector).href,
+  pagesRoot + 'assets/scripts/game.lua');
+assert.equal(localSceneUrl('gameplay.json', pagesRoot).href, pagesRoot + 'assets/scenes/gameplay.json');
+assert.throws(() => projectResourceUrl('//evil.test/asset', pagesRoot, selector));
+assert.throws(() => projectResourceUrl('/../escape', pagesRoot, selector));
+assert.throws(() => projectResourceUrl('https://evil.test/asset', pagesRoot, selector));

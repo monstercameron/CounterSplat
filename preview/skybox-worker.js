@@ -1,5 +1,5 @@
 // Decode and project HDR panoramas away from the GPU/canvas owner.
-import init, { decode_skybox_hdr } from '/pkg/countersplat_web.js';
+import init, { decode_skybox_hdr } from './countersplat_web.js';
 const ready = init();
 self.onmessage = async ({data}) => {
   try {

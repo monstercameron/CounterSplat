@@ -1,26 +1,26 @@
 // Browser host: both the selector and gameplay render directly to the WebGPU canvas.
-import init, { Selector, Viewer } from '/pkg/countersplat_web.js';
-import { LuaScene, EventChannels } from '/lua_runtime.js';
-import { VoxelRuntime } from '/pkg/voxel_runtime.js';
-import { MouseCapture } from '/pkg/mouse_capture.js';
-import { GameplayMouseButtons, GameplayFireButton } from '/pkg/mouse_buttons.js';
-import { FirstPersonFrames } from '/pkg/first_person_frames.js';
-import { LineLayers } from '/pkg/line_layers.js';
-import { layoutKey, migrateGameplayLayout } from '/pkg/ui_layout_preferences.js';
-import { PLAYER_CONTROLS_KEY, LEGACY_PLAYER_CONTROLS_KEY, readControlsPreference } from '/pkg/player_controls_preferences.js';
-import { SceneAudio } from '/pkg/scene_audio.js';
-import { MinimapRuntime } from '/pkg/minimap_runtime.js';
+import init, { Selector, Viewer } from './pkg/countersplat_web.js';
+import { LuaScene, EventChannels } from './lua_runtime.js';
+import { VoxelRuntime } from './pkg/voxel_runtime.js';
+import { MouseCapture } from './pkg/mouse_capture.js';
+import { GameplayMouseButtons, GameplayFireButton } from './pkg/mouse_buttons.js';
+import { FirstPersonFrames } from './pkg/first_person_frames.js';
+import { LineLayers } from './pkg/line_layers.js';
+import { layoutKey, migrateGameplayLayout } from './pkg/ui_layout_preferences.js';
+import { PLAYER_CONTROLS_KEY, LEGACY_PLAYER_CONTROLS_KEY, readControlsPreference } from './pkg/player_controls_preferences.js';
+import { SceneAudio } from './pkg/scene_audio.js';
+import { MinimapRuntime } from './pkg/minimap_runtime.js';
 import { createDisplaySettings, createHudPreferences, ASPECT_RATIOS, inferAspect, resolutionOptions,
-  presentationMapping, viewportSize, sceneResolution, MAX_RENDER_DIMENSION } from '/pkg/display_settings.js';
-import { publishPlayerRigData, savePlayerRig } from '/pkg/player_rig.js';
-import { ChunkDecoderPool, chunkDecoderCount } from '/pkg/chunk_decoder_pool.js';
-import { preloadChunks } from '/pkg/chunk_preload.js';
-import { loadMetadataInWorker } from '/pkg/metadata_client.js';
-import { LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl } from '/asset_loader.js';
-import { FrameProfiler } from '/pkg/frame_profile.js';
-import { InputFrameLatency } from '/pkg/input_latency.js';
-import { GAMEPLAY_INPUT_CHANNELS, GAMEPLAY_EVENT_CHANNELS } from '/pkg/gameplay_events.js';
-import { FrameStackCapture, summarizeFrameStacks, medianGpuSample } from '/pkg/frame_stack_profile.js';
+  presentationMapping, viewportSize, sceneResolution, MAX_RENDER_DIMENSION } from './pkg/display_settings.js';
+import { publishPlayerRigData, savePlayerRig } from './pkg/player_rig.js';
+import { ChunkDecoderPool, chunkDecoderCount } from './pkg/chunk_decoder_pool.js';
+import { preloadChunks } from './pkg/chunk_preload.js';
+import { loadMetadataInWorker } from './pkg/metadata_client.js';
+import { LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl, projectResourceUrl } from './asset_loader.js';
+import { FrameProfiler } from './pkg/frame_profile.js';
+import { InputFrameLatency } from './pkg/input_latency.js';
+import { GAMEPLAY_INPUT_CHANNELS, GAMEPLAY_EVENT_CHANNELS } from './pkg/gameplay_events.js';
+import { FrameStackCapture, summarizeFrameStacks, medianGpuSample } from './pkg/frame_stack_profile.js';
 
 const canvas = document.getElementById('canvas');
 const status = document.getElementById('status');
@@ -486,7 +486,7 @@ async function preloadScripts(gameScene, gameBase, menu, menuBase, signal, track
   const gamePlan = planScripts(gameScene, gameBase, location.origin);
   const menuPlan = planScripts(menu, menuBase, location.origin);
   const tasks = [...gamePlan.map(item => ({...item, scope:'game'})), ...menuPlan.map(item => ({...item, scope:'menu'})),
-    {id:'engine-api', url:new URL('/pkg/engine_api.lua', location.href), scope:'engine', execute:true}];
+    {id:'engine-api', url:new URL('./pkg/engine_api.lua', import.meta.url), scope:'engine', execute:true}];
   let done = 0;
   tracker.update('Loading Lua scripts', 0.65, 0.75, 0, tasks.length);
   const decoder = new TextDecoder('utf-8', {fatal:true});
@@ -511,7 +511,7 @@ async function preloadSkies(scene, base, cache, signal, tracker) {
   if (skies.length > 8) throw new Error('The preview supports at most eight skybox assets.');
   tracker.update('Decoding preloaded skies', 0.75, 0.85, 0, Math.max(skies.length, 1));
   if (!skies.length) { tracker.update('Decoding preloaded skies', 0.75, 0.85, 1, 1); return []; }
-  const worker = new Worker('/pkg/skybox-worker.js', {type:'module'});
+  const worker = new Worker(new URL('./pkg/skybox-worker.js', import.meta.url), {type:'module'});
   try {
     const prepared = [];
     for (const [id, asset] of skies) {
@@ -569,7 +569,7 @@ function startSkyWorker(game, token, preloaded) {
   localSkyId = `preview-local-${suffix}`;
   skyRequest = 0;
   skyLoadState = skies.some(sky => preloaded.has(sky.id)) ? 'ready' : 'loading';
-  skyDecoder = new Worker('/pkg/skybox-worker.js', {type: 'module'});
+  skyDecoder = new Worker(new URL('./pkg/skybox-worker.js', import.meta.url), {type: 'module'});
   skyDecoder.onmessage = ({data}) => {
     if (generation !== token || active !== game || (mode !== 'gameplay' && mode !== 'menu')) return;
     if (data.select && data.request !== skyRequest) return;
@@ -639,7 +639,7 @@ async function loadLevelPreview(level) {
   if (previewImages.has(level.id)) return previewImages.get(level.id);
   if (previewPending.has(level.id)) return previewPending.get(level.id);
   const task=(async()=>{
-    const bytes=await getBytes(`/${level.thumbnail}`,undefined,true);
+    const bytes=await getBytes(new URL(level.thumbnail, import.meta.url),undefined,true);
     if (!bytes.length || bytes.length>4*1024*1024) return null;
     const bitmap=await createImageBitmap(new Blob([bytes],{type:'image/webp'}),
       {resizeWidth:320,resizeHeight:320,resizeQuality:'high'});
@@ -683,7 +683,7 @@ async function launchLevel(id, sceneId = '') {
     // Give the canvas a frame to display its ECS loading overlay before starting work.
     await nextFrame(); await nextFrame();
     if (generation !== token) return;
-    const chosenUrl = sceneId ? localSceneUrl(sceneId, location.origin) : defaultGameplayUrl;
+    const chosenUrl = sceneId ? localSceneUrl(sceneId, new URL('.', import.meta.url).href) : defaultGameplayUrl;
     const chosenBytes = sceneId ? await getBytes(chosenUrl, signal) : defaultGameplayBytes;
     const chosenScene = parseJson(chosenBytes);
     const chosenMenuUrl = new URL(sceneAsset(chosenScene, chosenUrl, 'pause_menu'));
@@ -691,7 +691,7 @@ async function launchLevel(id, sceneId = '') {
     const decoderCount = chunkDecoderCount(navigator.hardwareConcurrency, chosenScene.resources?.preview?.chunk_decoder_workers);
     if (loadPolicy(chosenScene.resources?.assets?.pause_menu?.load) !== 'preload')
       throw new Error('The gameplay pause menu must be preloaded by this host.');
-    levelBase = new URL(`/assets/levels/${encodeURIComponent(id)}/`, location.href);
+    levelBase = new URL(`./assets/levels/${encodeURIComponent(id)}/`, import.meta.url);
     tracker.update('Reading level manifest', 0, 0.1, 0, 4);
     let manifestTasks = 0;
     const fetchManifest = async (path, optional = false) => {
@@ -721,7 +721,7 @@ async function launchLevel(id, sceneId = '') {
     } else throw new Error('This level format is not supported.');
     tracker.update('Reading chunk metadata', 0.1, 0.5, 0, filenames.length);
     const {metas, levelAssets} = await loadMetadataInWorker(
-      new Worker('/pkg/metadata-worker.js', {type:'module'}),
+      new Worker(new URL('./pkg/metadata-worker.js', import.meta.url), {type:'module'}),
       {level:selected, lodCount, filenames, base:levelBase.href, singleMetadata, inventoryBytes,
         viewerSettings:settings.length > 0, hasSource:sourceBytes.length > 0,
         source:chosenScene.resources?.preview?.level_asset || 'level',
@@ -741,7 +741,7 @@ async function launchLevel(id, sceneId = '') {
     const chunks = policies.splat_chunks === 'preload'
       ? await preloadChunks({metas, filenames, single:selected.format === 'single_sog', base:levelBase.href, signal,
           size:decoderCount,
-          createWorker:() => new Worker('/decoder.js', {type:'module'}), maxBytes:MAX_PRELOAD_BYTES,
+          createWorker:() => new Worker(new URL('./decoder.js', import.meta.url), {type:'module'}), maxBytes:MAX_PRELOAD_BYTES,
           onProgress:(done, total) => tracker.update('Decoding splat chunks', 0.85, 0.96, done, total)})
       : (tracker.update('Splat chunks will stream in the scene', 0.85, 0.96, 1, 1), []);
     if (generation !== token) return;
@@ -806,7 +806,7 @@ async function launchLevel(id, sceneId = '') {
     const game = active;
     decoder = new ChunkDecoderPool({
       size: decoderCount,
-      createWorker: () => new Worker('/decoder.js', {type: 'module'}),
+      createWorker: () => new Worker(new URL('./decoder.js', import.meta.url), {type: 'module'}),
       onResult: data => {
         if (generation !== token || active !== game || (mode !== 'gameplay' && mode !== 'menu')) return;
         try {
@@ -1228,22 +1228,22 @@ function tick(timestamp) {
 async function start() {
   if (!navigator.gpu) throw new Error('This browser does not expose WebGPU. Open the preview in a WebGPU-capable browser.');
   status.textContent = 'Loading level selector';
-  selectorUrl = new URL('/assets/scenes/level-selector.json', location.href);
+  selectorUrl = new URL('./assets/scenes/level-selector.json', import.meta.url);
   selectorBytes = await getBytes(selectorUrl);
   const selectorScene = parseJson(selectorBytes);
   const resources = selectorScene.resources?.assets;
   if (!resources?.catalog?.uri || !resources?.gameplay_scene?.uri || !resources?.scene_catalog?.uri)
     throw new Error('Selector scene resources are missing.');
-  defaultGameplayUrl = new URL(resources.gameplay_scene.uri, selectorUrl);
-  sceneCatalogUrl = new URL(resources.scene_catalog.uri, selectorUrl);
+  defaultGameplayUrl = projectResourceUrl(resources.gameplay_scene.uri, new URL('.', import.meta.url), selectorUrl);
+  sceneCatalogUrl = projectResourceUrl(resources.scene_catalog.uri, new URL('.', import.meta.url), selectorUrl);
   [catalogBytes, defaultGameplayBytes, sceneCatalogBytes] = await Promise.all([
-    getBytes(new URL(resources.catalog.uri, selectorUrl)), getBytes(defaultGameplayUrl), getBytes(sceneCatalogUrl)]);
+    getBytes(projectResourceUrl(resources.catalog.uri, new URL('.', import.meta.url), selectorUrl)), getBytes(defaultGameplayUrl), getBytes(sceneCatalogUrl)]);
   catalog = parseJson(catalogBytes);
   if (loadPolicy(resources.catalog.load) !== 'preload' || loadPolicy(resources.gameplay_scene.load) !== 'preload' ||
       loadPolicy(resources.scene_catalog.load) !== 'preload')
     throw new Error('The selector catalogs and gameplay scene must be preloaded.');
   if (!globalThis.wasmoon?.LuaFactory) throw new Error('Lua 5.4 runtime did not load.');
-  luaFactory = new globalThis.wasmoon.LuaFactory('/pkg/wasmoon/glue.wasm');
+  luaFactory = new globalThis.wasmoon.LuaFactory(new URL('./pkg/wasmoon/glue.wasm', import.meta.url).href);
   await init();
   active = await Selector.create(canvas, selectorBytes, catalogBytes, sceneCatalogBytes, '', '');
   let displayStorage = null;

@@ -1,5 +1,5 @@
 // CPU-only SOG fetch and decode worker. Raw decoded streams are transferred to the GPU owner.
-import init, { decode_texture } from '/pkg/countersplat_web.js';
+import init, { decode_texture } from './pkg/countersplat_web.js';
 
 const names = ['means_l.webp', 'means_u.webp', 'quats.webp', 'scales.webp', 'sh0.webp', 'shN_labels.webp', 'shN_centroids.webp'];
 const ready = init();

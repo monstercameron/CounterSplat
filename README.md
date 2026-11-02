@@ -1,154 +1,348 @@
 # CounterSplat
 
-CounterSplat is a reusable Rust foundation for applications built around Gaussian-splat scans. It extracts the scan
-formats, GPU renderer, streaming, voxel geometry, physics primitives, ECS, and timing from NeuralVisionRacer into a
-single workspace. Game rules, vehicles, HUDs, and game-specific configuration live outside these libraries.
+CounterSplat is a Rust game-engine project for building interactive experiences
+around Gaussian-splat scans. It combines a reusable renderer, an
+entity-component system (ECS), Lua gameplay scripts, scene-defined UI, asset
+streaming, voxel collision, audio, and timing in one workspace.
 
-The current deliverable is an engine foundation with a native inspection tool and a live browser WebGPU canvas.
-The canvas streams a scan and supports a Lua-controlled player camera with voxel collision; it is not yet a complete interactive game.
+The main interactive experience is a **live WebGPU canvas** with a level
+selector, first-person controls, a pause menu, and a target-survival mode.
+There is also a native scan viewer and a separate threaded integration demo.
+The project is under active development; these hosts share engine crates, but
+do not yet form one fully integrated, multithreaded native game.
 
-## Workspace
+## What works
 
-| Package | Responsibility |
+- **Gaussian splats:** load SOG v2 scans and streamed levels, select LODs
+  using a spatial octree and camera position, and fade between resident chunks.
+  LOD 0 is preferred near the center of view when the data and GPU budget allow.
+- **Scene and ECS:** initialize hierarchical entities, components, resources,
+  scripts, and asset loading policies from JSON. A canvas-based entity browser
+  and inspector expose runtime settings.
+- **Lua gameplay:** drive player movement, camera behavior, weapon states,
+  ballistics, HUDs, menus, and game modes through ECS components and events.
+- **Player and combat:** walk, sprint, crouch, jump, aim, fire, reload, and
+  tune recoil and aim stability. Projectiles have travel time and can hit
+  voxel geometry or body-zone hitboxes.
+- **Pursuit mode:** spawn targets that chase and damage the player, track kills
+  and health, and tint damaged hitbox zones red. Start and reset a run from
+  the pause menu.
+- **Presentation:** draw an HDR sky background, first-person footage, impacts,
+  image correction, bloom, camera effects, and an ECS UI on the canvas. The
+  pause menu controls display resolution, aspect ratio, scaling, and settings.
+- **Audio:** route weapon, impact, and movement events to scene-defined sound
+  layers. Native audio provides a separate layered stereo mixer.
+
+## Technology
+
+| Area | Technology and role |
 | --- | --- |
-| `countersplat-audio` | Layered stereo mixing, playback, native streaming, and owned commands. |
-| `countersplat-audio-ecs` | Script-visible audio scene components and owned ECS snapshots. |
-| `countersplat-audio-runtime` | A bounded native audio owner thread and device startup. |
-| `countersplat-core` | Rational fixed-step clock, frame scheduling and adaptive pacing, and structured logs. |
-| `countersplat-ecs` | Entity/component storage, systems, hierarchy, events, snapshots, and script-neutral commands. |
-| `countersplat-scene` | Versioned scene JSON, resource catalogs, and renderer-independent scene components. |
-| `countersplat-scene-ecs` | Validated scene-layer instantiation, ECS/Lua skybox adapters, and owned snapshots. |
-| `countersplat-ui` | Renderer-independent UI elements, input, events, and frame-cadence measurements. |
-| `countersplat-ui-ecs` | Validated UI components, hierarchy extraction, and script-facing UI events. |
-| `countersplat-ui-wgpu` | egui-based fonts, shapes, and controls composited onto a wgpu scene. |
-| `countersplat-scripting-lua` | Thread-owned Lua 5.4 VM and data-only ECS bridge. |
-| `countersplat-runtime` | Named subsystem workers, bounded queues, reply tickets, and latest-value snapshots. |
-| `countersplat-assets` | SOG v2, level-of-detail metadata, sparse voxel octrees, and optional camera hints. |
-| `countersplat-shaders` | WGSL source catalogue, preprocessing, and Gaussian-splat shader composition. |
-| `countersplat-render` | GPU scene upload, depth sorting, streaming pools, camera math, and sky rendering. |
-| `countersplat-physics` | Game-neutral Rapier bodies and sparse voxel collision queries. |
-| `countersplat-viewer` | A native CLI with separate asset-loading and GPU-rendering workers. |
-| `countersplat-web` | Browser WebGPU canvas host with scan decoding and voxel collision workers. |
-| `countersplat-threaded-demo` | A native ECS, Lua, and physics worker integration example. |
+| Engine | Rust 2021 workspace, with Rust 1.96 as the minimum version. |
+| Graphics | `wgpu` 30, WebGPU, and WGSL shaders; Gaussian splats are depth sorted on the GPU. |
+| Browser | WebAssembly, `wasm-bindgen`, JavaScript, Web Workers, and an HTML `<canvas>`. |
+| Gameplay scripting | Lua 5.4 via `mlua` on native hosts and the bundled Wasmoon runtime in the browser. |
+| UI | Engine-owned ECS UI data rendered using egui and egui-wgpu 0.37. |
+| Physics | Rapier 3D for native physics; Rust sparse-voxel collision queries in the browser's collision worker. |
+| Audio | Kira, CPAL, and Symphonia for native layered audio; Web Audio for the current browser host. |
+| Assets and scenes | SOG v2 and WebP splat data, PlayCanvas/SuperSplat sparse voxels, Radiance HDR, and versioned JSON scene manifests. |
+| Windowing and time | winit for the native window; a fixed-step clock and frame scheduler in `countersplat-core`. |
 
-Dependencies point toward the lower-level crates; no crate includes another crate's source files. See
-[architecture](docs/architecture.md) for the dependency graph, data flow, and extension rules, and
-[migration notes](docs/migration.md) for what was carried over. See [threading](docs/threading.md) for the
-worker design, current integration, and browser constraints. See [timing](docs/timing.md) for fixed ticks,
-frame deadlines, adaptive pacing, and host integration. See [UI](docs/ui.md) for controls, ECS/Lua hooks,
-frame counters, and the rendering contract. See [skyboxes](docs/skybox.md) for HDR assets, ECS selection,
-and host integration. See [audio](docs/audio.md) for layered mixing, stereo and ECS/Lua hooks. See [scene JSON](docs/scenes.md) for entity, component, asset, and script definitions, [asset loading](docs/asset-loading.md) for preload policies and level transitions, and [level assets](docs/level-assets.md) for ECS inventory and LOD controls, [entity physics](docs/entity-physics.md) for per-entity settings, collision and Lua exports, and [game modes](docs/game-modes.md) for the Lua-driven Pursuit mode. See [voxel collision](docs/voxel-collision.md) for the level collider and debug view. The [4DGS research](docs/4dgs-research.md) records a proposed path for dynamic splat playback.
+## Quick start: browser canvas
 
-## Build and test
+### Requirements
 
-Install Rust 1.96 or newer, Python 3.11 or newer, and a working native C compiler (used to build vendored Lua 5.4). From this directory:
+- Rust and Cargo **1.96 or newer**, installed with rustup.
+- Python **3.11 or newer** and PowerShell **7 or newer** (`pwsh`).
+- A WebGPU-capable browser and GPU. The preview is served on loopback.
+- A working native C toolchain to build vendored Lua for native tests; on
+  Windows, install the C/C++ build tools required by the Rust toolchain.
+- Node.js for the browser-side test and benchmark scripts.
+- Local development assets described below. They are intentionally not
+  included in Git.
+
+Run commands from the CounterSplat project root. Install the browser target
+and the exact binding-tool version used by this workspace once:
 
 ```powershell
-cargo test --workspace --locked
-python scripts/check_boundaries.py
-python scripts/test_preview.py
-```
-
-GPU tests use a compatible adapter when available and explicitly report when they cannot run. To check the library
-crates for the browser target, install it with `rustup target add wasm32-unknown-unknown`, then run:
-
-```powershell
-cargo check --locked --target wasm32-unknown-unknown -p countersplat-core -p countersplat-ecs -p countersplat-runtime -p countersplat-assets -p countersplat-shaders -p countersplat-render -p countersplat-physics -p countersplat-web
-```
-
-The Lua crate is a native implementation and is not included in that browser check. `countersplat-web` supplies a
-separate browser canvas host; it does not yet include the native Lua or Rapier worker integration. The browser demo owns its UI ECS world locally;
-the browser runs its UI and player scripts through a separate Lua 5.4 backend.
-
-## Subsystem threading example
-
-```powershell
-cargo run -p countersplat-threaded-demo
-cargo run -p countersplat-threaded-demo -- --realtime 3
-```
-
-These examples run a Lua VM, an ECS world, and a Rapier world on three separate owner threads. The real-time mode
-drives the workers from a 60 Hz monotonic simulation clock and reports software frame requests. Lua creates an entity, physics
-simulates a body, and the updated position returns through ECS to Lua. The viewer separately runs asset decoding and
-GPU rendering on their own workers. These are working native examples, not yet a single real-time host tying all five
-subsystems together. See [the demo](apps/threaded-demo/README.md), [ECS](crates/ecs/README.md), and
-[Lua API](crates/scripting-lua/README.md) for usage and integration details. The proposed
-[item and interaction API](docs/item-interactions.md) is a design for future work, not an implemented feature.
-
-## Inspect and render
-
-No scan assets are bundled. An example CC0 HDR sky is included separately. Supply a SOG v2 file, an unpacked SOG chunk directory, or a level directory containing
-`lod-meta.json` and its chunks:
-
-```powershell
-cargo run -p countersplat-viewer -- inspect "path\to\scene.sog"
-cargo run -p countersplat-viewer -- inspect-level "path\to\level"
-cargo run -p countersplat-viewer -- render "path\to\scene.sog" ".artifacts\frame.png"
-cargo run -p countersplat-viewer -- render-level "path\to\level" ".artifacts\frame.png" 300000 z180
-cargo run -p countersplat-viewer -- live-level "path\to\level" ".artifacts\frame.png" 10 300000 z180
-```
-
-The optional final `z180` rotates splat data 180 degrees around Z for scans with the source project's y-down
-convention. Omit it for unrotated data. `300000` is the example GPU pool budget, not a fixed engine limit. When
-present, `viewer-settings.json` supplies the initial camera; otherwise the tool frames the metadata bounds.
-`live-level` runs a finite, clock-driven offscreen preview and coalesces requests when the renderer is busy.
-
-## Native window and VSync
-
-The native window uses the same splat renderer and shows its active mode in the title bar:
-
-```powershell
-cargo run -p countersplat-viewer -- window-level "path\to\level" --z180 --vsync=on
-cargo run -p countersplat-viewer -- window-level "path\to\level" --z180 --vsync=off --fps=120
-cargo run -p countersplat-viewer -- window-level "path\to\level" --z180 --vsync=off --fps=monitor
-```
-
-Press **V** to toggle VSync, **F** to cycle off-mode caps (including unlimited), **M** to cap off-mode FPS to the
-current monitor, and **Esc** to close. Use `--fps=unlimited` for no software cap, or `--fps=N` for a cap from 1 to
-1000. `--capacity=N` sets the splat pool. Immediate presentation must be supported by the native surface; the
-viewer reports an unsupported request rather than silently selecting another mode. GPU submissions are bounded to
-one in flight. The standalone native window does not yet include the browser's ECS overlay.
-
-When launched from the project root, the native window loads `assets/scenes/gameplay.json` and its configured HDR sky. Use `--scene=path/to/scene.json` for another manifest. Press **S** to show or hide it.
-Use `--sky=path/to/file.hdr` to choose a Radiance panorama, `--sky-exposure=1.2` or `--sky-rotation=90` to adjust
-it, or `--no-sky` to disable loading. The HDR is converted on the native asset worker.
-
-## Live browser canvas
-
-The browser host opens an ECS level selector on the WebGPU canvas. Click a local level and press **Launch**;
-use **Levels** in gameplay to return to the selector. Use WASD, E/Q, Left Shift, and Space to move and jump.
-Click the scene for mouse look and press `~` to release it; where pointer lock is unavailable, drag to look. The Player controls panel tunes eye height and player scale per level; see [player controls](docs/player-controls.md). The selector reads `assets/levels/catalog.json`,
-`assets/scenes/level-selector.json`, and `assets/scenes/gameplay.json`.
-
-The in-canvas frame-pacing panel offers an optional
-FPS cap; its uncapped request cadence follows browser animation callbacks. The browser controls presentation and
-cannot provide true VSync off. Its fixed-step clock runs from animation callbacks;
-scene fetching, SOG decoding, and voxel collision use browser workers, and the renderer limits frames in flight. An ECS-owned UI
-layer draws controls and a submitted-frame FPS / frame-time counter over the scan. A scene ECS skybox layer draws
-behind the splats; its HDR decode runs on a separate worker. Use the sky panel to change exposure or rotation, or
-drop a local Radiance `.hdr` file onto the canvas to replace the example. A WebGPU-capable
-browser and a local level catalog under `assets/levels` are required. Media, level data, and the catalog
-are Git-ignored and must be supplied locally; see [development splats](assets/levels/README.md) and
-[first-person assets](docs/first-person.md).
-
-```powershell
-# Once, if the wasm target and matching binding tool are not installed:
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.127 --locked
+```
 
-# Rebuild the browser package after changing Rust code:
-.\scripts\build_web.ps1
+### Supply local assets
 
-# Serve the selector and local asset catalog:
+A fresh checkout contains scene definitions, Lua scripts, and playback
+metadata, but ignores level scans, the local level catalog, weapon frames,
+sound files, HDR images, and build output. Restore assets you have permission
+to use into the paths declared by `assets/scenes/gameplay.json`:
+
+- `assets/levels/catalog.json` and the corresponding
+  `assets/levels/<level-id>/` scan files.
+- The Radiance HDR sky at
+  `assets/images/environments/kloppenheim_06_puresky_1k.hdr`, or another
+  compatible HDR at the scene's configured URI.
+- The first-person WebP frames under `assets/images/first-person/playback/`,
+  matching the scene's asset declarations and the tracked playback manifest.
+- The five scene-declared MP3 files under `assets/sound/first-person/`.
+
+The build script packages every relative asset and script URI declared by the
+gameplay and menu scenes, including streamable weapon frames, and fails if a
+referenced file is missing. Asset
+rights are separate from the engine's code license; see
+[asset notices](assets/images/first-person/ASSET-NOTICES.md) and
+[third-party notices](THIRD_PARTY.md).
+
+For a local development example, the downloader can restore the configured
+The Barn scan and its published supporting files:
+
+```powershell
+python scripts/download_supersplat.py 58d333ae
+# Optional thumbnail for the selector:
+python scripts/download_previews.py 58d333ae
+```
+
+The downloader does not create `catalog.json`. Copy an existing catalog or
+create one. For the downloaded single-scan example, a minimal catalog is:
+
+```json
+{
+  "version": 1,
+  "levels": [
+    {
+      "id": "58d333ae",
+      "name": "The Barn",
+      "creator": "dongiku",
+      "format": "single_sog",
+      "manifest": "assets/levels/58d333ae/meta.json"
+    }
+  ]
+}
+```
+
+For a streamed level, use `"format": "streamed_sog"` and the matching
+`assets/levels/<level-id>/lod-meta.json` manifest. Level IDs are eight
+lowercase hexadecimal characters. A `preview.webp` thumbnail is optional;
+see [development splats](assets/levels/README.md) and
+[asset loading](docs/asset-loading.md).
+
+If you choose to generate the development sound pack instead of restoring
+it, `scripts/generate_game_audio.py` reads an existing `ELEVENLABS_API_KEY`
+environment variable or ignored `.env.local` and makes paid API requests.
+The key is not needed to run the game with existing audio files and must not
+be placed in scene files or committed.
+
+### Build and run
+
+```powershell
+pwsh -NoProfile -File scripts/build_web.ps1
 python scripts/preview.py
 ```
 
-The selector shows local level thumbnails and a separate **Open a scene** panel. Compatible gameplay scene JSON files in `assets/scenes` are discovered automatically; choose one and open it with the selected level. A compatible scene uses the player, UI, level, and pause-menu resources shown in `gameplay.json`. Edit the scene JSON files and refresh the browser to apply scene, UI, and resource changes. Open <http://127.0.0.1:18763/>. Cargo outputs are stored in `.artifacts/target` and generated browser bindings in `.artifacts/web/pkg`. Both are ignored by Git. The page renders through
-WebGPU into `<canvas>`; the native PNG commands above remain optional offline exports. See
-[timing](docs/timing.md) for what the displayed submitted-frame rate does and does not measure.
+Open [http://127.0.0.1:18763/](http://127.0.0.1:18763/), select a local level,
+and choose **Launch level**. The selector can also open a compatible scene
+from `assets/scenes/`. Press **Esc â†’ Game mode â†’ Start pursuit** to try the
+survival mode.
 
-## Source and assets
+The build writes Cargo output to `.artifacts/target/` and browser bindings and
+packaged resources to `.artifacts/web/pkg/`. The preview server reads local
+scene JSON and declared assets directly; refresh after scene or Lua edits.
+Rebuild after Rust changes, changes to modules copied into the package, or
+when preparing the packaged resources.
 
-The port starts from NeuralVisionRacer commit `87e95586eef89acae852d75a92d69b9d8dc5745c`. See
-[third-party notices](THIRD_PARTY.md) for the upstream PlayCanvas shaders, blue-noise texture, and the small
-metadata test fixture, and the example CC0 HDR sky. Scan licenses are separate; check them before redistributing scan data.
+### Gameplay controls
+
+| Input | Action |
+| --- | --- |
+| W / A / S / D | Move. |
+| Mouse | Look; click the canvas to capture the pointer when supported. |
+| Shift / Ctrl / Space | Run / crouch / jump. |
+| Left / right mouse | Fire / aim down sights. |
+| V | Cycle single, burst, and automatic fire. |
+| R / hold R | Reload / consolidate partially filled magazines. |
+| F | Stow or equip the weapon. |
+| Q | Show the inspection HUD and local map. Combat actions dismiss it. |
+| Backquote / tilde | Show or hide ECS tools and release mouse capture. |
+| Esc | Open the pause menu; choose a level, adjust settings, or manage Pursuit. |
+
+Bindings and preferences can be adjusted in the UI. In browsers without
+pointer lock, drag to look. See [player controls](docs/player-controls.md),
+[inspection HUD](docs/inspection-hud.md), and
+[game modes](docs/game-modes.md).
+
+## How the engine works
+
+
+```mermaid
+flowchart LR
+    Input --> Host["Browser host"]
+    Scene["Scene JSON"] --> Host
+    Host <--> ECS["ECS world"]
+    Host <--> Lua["Lua gameplay"]
+    Lua <--> ECS
+    Host <--> Workers["Asset and voxel workers"]
+    Host --> Render["wgpu renderer"]
+    ECS --> Render
+    Workers --> Render
+    Render --> Canvas["WebGPU canvas"]
+```
+
+The diagram shows data relationships; the host coordinates their timing.
+
+
+### Scenes, entities, and scripts
+
+The browser loads the level selector, gameplay scene, and pause menu from
+`assets/scenes/level-selector.json`, `gameplay.json`, and `menu.json`.
+A scene declares component types, named resources, asset and script URIs,
+loading policies, and entities. Entities have stable scene IDs, a layer,
+optional same-layer parents, and components. Native components use validated
+Rust adapters; dynamic components hold JSON-compatible data.
+
+The gameplay host instantiates its scene, level, player, UI, and audio layers
+in a shared ECS world. Lua scripts obtain runtime handles through the
+`scene.entities` resource, read and update components, subscribe to events,
+and register fixed-tick systems. Scripts register tunable ECS fields with
+`engine.export` so they appear in the entity inspector. The pause menu has
+its own scene and Lua runtime; scene requests move between it and gameplay.
+
+For example, `first_person_controller.lua` emits a `weapon.shot` event.
+`ballistics.lua` creates and advances a projectile, compares entity hitboxes
+with level-collision results, and emits impact and damage events. Other Lua
+systems can react to those events for sound, hit feedback, or game rules.
+The Rust and browser hosts provide validated storage, input, timing, collision
+queries, and rendering; the game-specific decisions remain in Lua.
+
+See [scene format](docs/scenes.md), [ECS](crates/ecs/README.md),
+[Lua API](crates/scripting-lua/README.md), and
+[shooting and ballistics](docs/ballistics.md).
+
+### Rendering and streaming
+
+The asset layer reads a single SOG scan or a streamed level's
+`lod-meta.json` and chunk metadata. The streamer indexes regions in an octree,
+selects desired detail using camera position and direction, and requests chunks
+as workers become available. Decoded data is uploaded into a bounded GPU pool.
+The browser favors fine detail near the center of view, retains coarser
+fallbacks where possible, and fades LOD changes; actual detail still depends on
+source data, loading, and pool capacity.
+
+The renderer builds visibility and depth-sort data, draws the splats and sky,
+and composites first-person and world effects into an HDR scene target.
+Image correction and optional post-processing run before the UI is drawn.
+The HDR sky is a background; it does not yet provide image-based lighting to
+the scan. Camera depth of field and motion blur are bounded real-time
+approximations rather than a full offline film render.
+
+See [level assets and LOD](docs/level-assets.md),
+[skyboxes](docs/skybox.md), [camera](docs/camera.md), and
+[post-processing](docs/post-processing.md).
+
+### Time, physics, and threads
+
+The browser host receives input and runs the ECS, Lua VMs, and WebGPU
+orchestration on the page thread. It uses `requestAnimationFrame` and a
+60 Hz fixed simulation clock, with bounded catch-up after stalls. Up to two
+GPU frames can be in flight. The browser controls presentation cadence; the
+optional FPS cap limits requests and cannot force true VSync off.
+
+Metadata loading, SOG chunk decoding, HDR decoding, minimap generation, and
+voxel queries use Web Workers. The decoder pool is bounded to one to four
+workers. The collision worker owns the voxel data and returns asynchronous
+movement, ground, clearance, and trace results; Lua consumes those results.
+The current browser collision path resolves bodies against level voxels, not
+general body-to-body dynamics.
+
+On native targets, `countersplat-runtime` provides named owner threads, bounded
+queues, replies, and snapshots. The threaded demo runs ECS, Lua, and Rapier
+on separate workers. The native viewer separately uses asset and render
+workers for offscreen work, while its windowed renderer runs on the window
+thread. A unified native host with every subsystem on its own worker remains
+future work.
+
+See [threading](docs/threading.md), [timing](docs/timing.md), and
+[voxel collision](docs/voxel-collision.md).
+
+## Workspace layout
+
+| Path | Responsibility |
+| --- | --- |
+| `crates/core` | Fixed simulation clock, scheduling, pacing, and logging. |
+| `crates/ecs` | Entities, components, resources, hierarchy, queries, and events. |
+| `crates/scene`, `crates/scene-ecs` | Scene manifests and ECS adapters for scene components. |
+| `crates/scripting-lua` | Native Lua host and reusable scripting bridge. |
+| `crates/assets`, `crates/shaders`, `crates/render` | Scan and environment decoding, WGSL sources, GPU rendering, sorting, and streaming. |
+| `crates/physics` | Rapier world APIs and sparse-voxel collision primitives. |
+| `crates/ui`, `crates/ui-ecs`, `crates/ui-wgpu` | UI data, ECS integration, and canvas rendering. |
+| `crates/audio`, `crates/audio-ecs`, `crates/audio-runtime` | Layered audio, scene integration, and native audio ownership. |
+| `crates/runtime` | Native workers, bounded channels, tickets, and latest-value snapshots. |
+| `apps/web`, `preview` | Browser/WASM host, workers, local preview, and browser integration. |
+| `apps/viewer` | Native scan inspection and rendering commands. |
+| `apps/threaded-demo` | Native ECS, Lua, and physics worker integration example. |
+| `assets/scenes`, `assets/scripts` | Authored scenes and Lua game behavior. |
+| `tools/ecs-wasm-bench`, `scripts` | ECS bridge benchmarks, build, preview, and test utilities. |
+
+Engine crates exchange public data and do not embed each other's source.
+Applications own orchestration and connect the adapters required by a host.
+See [architecture](docs/architecture.md).
+
+## Native viewer and threaded example
+
+```powershell
+# Inspect an unpacked SOG or a streamed level.
+cargo run -p countersplat-viewer -- inspect "path\to\sog-directory"
+cargo run -p countersplat-viewer -- inspect-level "path\to\level"
+
+# Open a streamed level in a native window.
+cargo run -p countersplat-viewer -- window-level "path\to\level" --z180 --vsync=on
+
+# Run the ECS, Lua, and Rapier owner-thread example for three seconds.
+cargo run -p countersplat-threaded-demo -- --realtime 3
+```
+
+`window-level` expects a level directory with `lod-meta.json`. `--z180`
+is an optional source-coordinate correction. The native window supports
+`--vsync=off` only when the surface exposes Immediate presentation, plus
+`--fps=N|monitor|unlimited`. It is a viewer and does not host the browser's
+interactive gameplay UI. For additional viewer and offline-render options,
+see the command usage in [apps/viewer/src/main.rs](apps/viewer/src/main.rs).
+
+## Tests and profiling
+
+```powershell
+cargo test --workspace --locked
+python scripts/test_preview.py
+node scripts/test_lua_runtime.mjs
+node scripts/test_voxel_runtime.mjs
+node scripts/test_line_layers.mjs
+```
+
+GPU tests use an available compatible adapter and report when they must skip.
+The dependency-boundary check is `python scripts/check_boundaries.py`. In
+the current checkout its policy is out of date for the web host's audio ECS
+dependency and the ECS WASM benchmark package, so it reports those two
+existing failures.
+
+For a local frame profile, open the preview with `?profile=1` and launch a
+level. The performance panel shows submitted FPS and frame time; the
+`#metrics` element also exposes a `data-profile` JSON snapshot with timed
+Lua, event, render, and worker stages. Submission intervals are not GPU
+execution or actual display-presentation times. See
+[performance and profiling](docs/performance.md) for interpretation and
+additional captures.
+
+## Project website
+
+The GitHub Pages landing page is in [docs/index.html](docs/index.html).
+See [Pages setup and asset selection](docs/github-pages.md) for local preview
+and publishing instructions.
+
+## Source and licensing
+
+CounterSplat-authored code is available under the [MIT License](LICENSE). The
+engine port includes code derived from NeuralVisionRacer commit
+`87e95586eef89acae852d75a92d69b9d8dc5745c`, which retains its
+[Apache 2.0 license](third_party/neuralvisionracer/LICENSE), as well as
+PlayCanvas-derived shaders and voxel techniques. Cargo package metadata reflects
+the combined licenses. See [THIRD_PARTY.md](THIRD_PARTY.md) for source and
+asset notices. Downloaded scans, weapon footage, generated audio, and other
+local media retain their own rights and are not granted a blanket license by
+this repository.
