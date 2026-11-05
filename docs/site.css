@@ -50,6 +50,8 @@ h1 span { color: var(--gold); }
 .text-link { font-size: .85rem; text-decoration: none; border-bottom: 1px solid #768980; padding-block: .6rem; }
 .text-link span { margin-left: .8rem; }
 .hero-note { margin-top: clamp(3rem, 7vw, 7rem); color: #84958c; font-size: .75rem; display: flex; align-items: center; gap: .8rem; }
+.hero-credit { margin: .9rem 0 0; color: #84958c; font-size: .75rem; line-height: 1.5; max-width: 34rem; }
+.hero-credit a { color: var(--mint); }
 .note-line { width: 26px; height: 1px; background: #72897e; }
 .hero-visual { min-width: 0; min-height: 500px; display: flex; flex-direction: column; justify-content: center; }
 .visual-frame { height: min(615px, 68vh); min-height: 480px; position: relative; overflow: hidden; border: 1px solid #53665b; background: #1b2b28; }

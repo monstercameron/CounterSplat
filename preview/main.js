@@ -1,6 +1,6 @@
 // Browser host: both the selector and gameplay render directly to the WebGPU canvas.
 import init, { Selector, Viewer, set_indirect_draw, set_sort_compaction, set_footprint_cull, chunk_decoder_count, preload_level_chunks,
-  DisplaySettings, display_viewport_size, MouseCapture, GameplayMouseButtons, GameplayFireButton, savedLayout, storeLayout,
+  DisplaySettings, display_viewport_size, MouseCapture, GameplayMouseButtons, GameplayFireButton, savedLayout, storeLayout, levelBaseUrl,
   saveSetting, savedWeaponOptic, savePlayerRig, LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl,
   projectResourceUrl, FrameProfiler, InputFrameLatency, gameplayInputChannels, gameplayEventChannels,
   loadLevelMetadata, FirstPersonFrames, SceneAudio, FrameStackCapture, MinimapRuntime } from './pkg/countersplat_web.js';
@@ -254,7 +254,8 @@ function showError(error) {
 }
 async function getBytes(path, signal, optional = false) {
   const response = await fetch(path, {cache: 'no-store', signal});
-  if (optional && response.status === 404) return new Uint8Array();
+  // A CDN answers 403 for an object it does not have; an optional file is then simply absent.
+  if (optional && (response.status === 404 || response.status === 403)) return new Uint8Array();
   if (!response.ok) throw new Error(`Could not load ${path} (HTTP ${response.status}).`);
   return new Uint8Array(await response.arrayBuffer());
 }
@@ -482,7 +483,10 @@ async function launchLevel(id, sceneId = '') {
     const decoderUrl = new URL('./decoder.js', import.meta.url).href;
     if (loadPolicy(chosenScene.resources?.assets?.pause_menu?.load) !== 'preload')
       throw new Error('The gameplay pause menu must be preloaded by this host.');
-    levelBase = new URL(`./assets/levels/${encodeURIComponent(id)}/`, import.meta.url);
+    // Beside the page, or the publisher's own hosting for a level the catalog streams from there (validated in Rust).
+    levelBase = new URL(levelBaseUrl(catalogBytes, id, import.meta.url));
+    // Viewer settings, inventory and provenance always come from this site, even for a level streamed from its publisher.
+    const levelInfoBase = new URL(`./assets/levels/${encodeURIComponent(id)}/`, import.meta.url);
     tracker.update('Reading level manifest', 0, 0.1, 0, 4);
     let manifestTasks = 0;
     const fetchManifest = async (path, optional = false) => {
@@ -492,9 +496,9 @@ async function launchLevel(id, sceneId = '') {
     };
     const [primary, settings, inventoryBytes, sourceBytes] = await Promise.all([
       fetchManifest(new URL(selected.format === 'single_sog' ? 'meta.json' : 'lod-meta.json', levelBase)),
-      fetchManifest(new URL('viewer-settings.json', levelBase), true),
-      fetchManifest(new URL('download-inventory.json', levelBase), true),
-      fetchManifest(new URL('source.json', levelBase), true),
+      fetchManifest(new URL('viewer-settings.json', levelInfoBase), true),
+      fetchManifest(new URL('download-inventory.json', levelInfoBase), true),
+      fetchManifest(new URL('source.json', levelInfoBase), true),
     ]);
     let lodBytes = primary, filenames, lodCount, singleMetadata;
     let capacity = chosenScene.resources?.preview?.capacity;

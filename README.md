@@ -1,5 +1,17 @@
 # CounterSplat
 
+[![Play in your browser](https://img.shields.io/badge/play-in%20your%20browser-dab984?style=for-the-badge)](https://monstercameron.github.io/CounterSplat/game/)
+[![GitHub Pages](https://github.com/monstercameron/CounterSplat/actions/workflows/pages.yml/badge.svg)](https://github.com/monstercameron/CounterSplat/actions/workflows/pages.yml)
+![Rust 1.96+](https://img.shields.io/badge/rust-1.96%2B-10191a?logo=rust)
+![WebGPU](https://img.shields.io/badge/WebGPU-wgpu%2030-9fcfba)
+
+[![CounterSplat: real places, new rules](docs/social-card.png)](https://monstercameron.github.io/CounterSplat/)
+
+**[Project site](https://monstercameron.github.io/CounterSplat/) · [Play the browser demo](https://monstercameron.github.io/CounterSplat/game/)**
+— a first-person WebGPU game inside [The Barn](https://superspl.at/scene/58d333ae) by dongiku, streamed from its
+publisher. It needs a WebGPU browser (a recent Chrome or Edge on desktop). The weapon is stowed while its footage
+is being remade; press **F** to raise it.
+
 CounterSplat is a Rust game-engine project for building interactive experiences
 around Gaussian-splat scans. It combines a reusable renderer, an
 entity-component system (ECS), Lua gameplay scripts, scene-defined UI, asset
@@ -70,19 +82,17 @@ cargo install wasm-bindgen-cli --version 0.2.127 --locked
 
 ### Supply local assets
 
-A fresh checkout contains scene definitions, Lua scripts, and playback
-metadata, but ignores level scans, the local level catalog, weapon frames,
-sound files, HDR images, and build output. Restore assets you have permission
-to use into the paths declared by `assets/scenes/gameplay.json`:
+A fresh checkout contains scene definitions, Lua scripts, playback metadata,
+the CC0 HDR sky, silent placeholder weapon sounds and a placeholder first
+footage frame, but ignores level scans, the local level catalog, the weapon
+frames and build output. Restore assets you have permission to use into the
+paths declared by `assets/scenes/gameplay.json`:
 
 - `assets/levels/catalog.json` and the corresponding
   `assets/levels/<level-id>/` scan files.
-- The Radiance HDR sky at
-  `assets/images/environments/kloppenheim_06_puresky_1k.hdr`, or another
-  compatible HDR at the scene's configured URI.
 - The first-person WebP frames under `assets/images/first-person/playback/`,
-  matching the scene's asset declarations and the tracked playback manifest.
-- The five scene-declared MP3 files under `assets/sound/first-person/`.
+  matching the scene's asset declarations and the tracked playback manifest
+  (optional: the scene spawns with the weapon stowed until F is pressed).
 
 The build script packages every relative asset and script URI declared by the
 gameplay and menu scenes, including streamable weapon frames, and fails if a

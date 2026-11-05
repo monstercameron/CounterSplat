@@ -408,6 +408,16 @@ pub fn project_resource_url(uri: &str, project_base: &str, relative_to: Option<S
 }
 
 /// A scene choice: a file name in the project's scene directory, never an arbitrary URL.
+/// The base URL of catalog level `id`: its validated publisher hosting (`hosted`), or `assets/levels/<id>/` beside
+/// the page at `page_base`.
+#[wasm_bindgen(js_name = levelBaseUrl)]
+pub fn level_base_url(catalog: &[u8], id: &str, page_base: &str) -> Result<String, JsValue> {
+    let catalog = countersplat_scene::LevelCatalog::from_json(catalog).map_err(js_error)?;
+    let level = catalog.get(id).ok_or_else(|| js_error("That level is not in the catalog."))?;
+    let site = web_sys::Url::new_with_base(".", page_base)?.href();
+    Ok(level.base_url(&site))
+}
+
 #[wasm_bindgen(js_name = localSceneUrl)]
 pub fn local_scene_url(filename: &str, project_base: &str) -> Result<web_sys::Url, JsValue> {
     let valid = filename.len() <= 85

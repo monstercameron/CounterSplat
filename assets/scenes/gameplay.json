@@ -10057,13 +10057,14 @@
         },
         "WeaponOptic": { "kind": "iron", "scope_magnification": 4.0 },
         "WeaponState": {
-          "state": "lowReady",
+          "state": "noGun",
           "mode": "single",
           "ammo": 30,
           "reserve": 90,
           "shots": 0
         },
         "WeaponConfig": {
+          "start_stowed": true,
           "magazine_capacity": 30,
           "initial_loaded": 30,
           "initial_spares": [

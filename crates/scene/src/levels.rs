@@ -54,6 +54,36 @@ pub struct LevelEntry {
     pub verified_bytes: u64,
     #[serde(default)]
     pub assets: LevelAssetPolicies,
+    /// Where the level's files are served from when they are not part of this site: an `https://` base URL ending in
+    /// `/` (the publisher's own hosting, so a published demo streams a scan instead of redistributing it). Absent,
+    /// the files are under `assets/levels/<id>/` beside the page.
+    #[serde(default)]
+    pub hosted: Option<String>,
+}
+
+impl LevelEntry {
+    /// The level's base URL: `hosted` when set, else `assets/levels/<id>/` under `site_base` (the page's directory,
+    /// ending in `/`).
+    pub fn base_url(&self, site_base: &str) -> String {
+        match &self.hosted {
+            Some(url) => url.clone(),
+            None => format!("{site_base}assets/levels/{}/", self.id),
+        }
+    }
+}
+
+/// A publisher base URL a catalog may point a level at: `https://host/path/`, without credentials, a query, a
+/// fragment, whitespace or characters that would need escaping.
+fn valid_hosted_base(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest.split('/').next().unwrap_or_default();
+    url.len() <= 512
+        && url.ends_with('/')
+        && !host.is_empty()
+        && host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        && rest.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._~/".contains(&b))
 }
 
 fn default_splat_rotation() -> bool {
@@ -125,6 +155,9 @@ impl LevelCatalog {
             if level.lod_levels.is_some_and(|n| n == 0 || n > 64) {
                 return Err(format!("invalid LOD level count for `{}`", level.id));
             }
+            if level.hosted.as_deref().is_some_and(|url| !valid_hosted_base(url)) {
+                return Err(format!("invalid hosted base URL for `{}`", level.id));
+            }
         }
         Ok(catalog)
     }
@@ -141,6 +174,35 @@ mod tests {
         json!({"version":1,"levels":[{"id":"1234abcd","name":"Example","creator":"Artist",
             "format":"streamed_sog","manifest":"assets/levels/1234abcd/lod-meta.json","lod_levels":3}]})
     }
+    #[test]
+    fn hosted_levels_stream_from_a_validated_publisher_base() {
+        let parse =
+            |v: serde_json::Value| LevelCatalog::from_json(&serde_json::to_vec(&v).unwrap());
+        let local = parse(catalog()).unwrap();
+        assert_eq!(
+            local.levels[0].base_url("https://example.github.io/Game/play/"),
+            "https://example.github.io/Game/play/assets/levels/1234abcd/"
+        );
+        let mut value = catalog();
+        value["levels"][0]["hosted"] = json!("https://cdn.example.net/1234abcd/v1/");
+        assert_eq!(
+            parse(value.clone()).unwrap().levels[0].base_url("https://site/"),
+            "https://cdn.example.net/1234abcd/v1/"
+        );
+        for bad in [
+            "http://cdn.example.net/x/",
+            "https://cdn.example.net/x",
+            "https://user@cdn.example.net/x/",
+            "https://cdn.example.net/x/?q=1/",
+            "https://cdn.example.net/a b/",
+            "https:///x/",
+            "javascript:alert(1)//",
+        ] {
+            value["levels"][0]["hosted"] = json!(bad);
+            assert!(parse(value.clone()).is_err(), "{bad}");
+        }
+    }
+
     #[test]
     fn validates_explicit_level_loading_policies() {
         let parse =

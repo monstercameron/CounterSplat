@@ -1,7 +1,10 @@
 name: GitHub Pages
 
-# Deliberately manual: no site or game assets are published until this is run.
+# Publishes only what docs/pages-assets.json selects (see docs/github-pages.md): the landing page and the browser
+# demo, whose level streams from its publisher. Runs on pushes to main and on demand.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +25,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: Check selected game assets
         id: selection
         shell: bash

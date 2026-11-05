@@ -23,7 +23,8 @@ PACKAGE_FILES = [
     "skybox-worker.js", "voxel-worker.js",
     "wasmoon/index.js", "wasmoon/glue.wasm",
 ]
-SITE_FILES = ["index.html", "site.css", "site.js", "game/index.html", "game/launcher.js"]
+SITE_FILES = ["index.html", "site.css", "site.js", "game/index.html", "game/launcher.js", "favicon.svg", "social-card.png"]
+HOSTED_RE = re.compile(r"^https://[A-Za-z0-9.-]+/[A-Za-z0-9._~/-]*/$")
 PREVIEW_FILES = ["main.js", "decoder.js", "lua_runtime.js"]
 
 
@@ -98,6 +99,11 @@ def validate_level(value):
     for field in ("collision", "thumbnail", "rotate_z_180"):
         if field in value and not isinstance(value[field], bool):
             raise ValueError("Level " + identifier + " has an invalid " + field + " setting.")
+    hosted = value.get("hosted")
+    if hosted is not None and (not isinstance(hosted, str) or len(hosted) > 512 or not HOSTED_RE.fullmatch(hosted)):
+        raise ValueError("Level " + identifier + " needs an https:// hosted base URL ending in /.")
+    if "source_url" in value and (not isinstance(value["source_url"], str) or not value["source_url"].startswith("https://")):
+        raise ValueError("Level " + identifier + " has an invalid source_url.")
     scale = value.get("player_units_per_meter")
     if scale is not None and (isinstance(scale, bool) or not isinstance(scale, (int, float)) or
                               not math.isfinite(scale) or not 0.5 <= scale <= 2.5):
@@ -134,6 +140,11 @@ def local_level(identifier):
 
 def level_files(level, tracked, local):
     base = ROOT / "assets" / "levels" / level["id"]
+    # A hosted level streams its splats and collision from its publisher (`hosted`); only its small viewer settings
+    # (the start camera) and provenance record are copied into the site, when tracked.
+    if level.get("hosted"):
+        return {path for name in ("viewer-settings.json", "source.json")
+                if (path := optional_asset(base / name, tracked, local))}
     single = level["format"] == "single_sog"
     manifest_name = "meta.json" if single else "lod-meta.json"
     manifest = require_asset(base / manifest_name, tracked, local)
@@ -170,6 +181,7 @@ def level_files(level, tracked, local):
 
 def scene_files(tracked, local):
     result = set()
+    skipped = []
     scenes = ROOT / "assets" / "scenes"
     for name in ("gameplay.json", "menu.json", "level-selector.json"):
         result.add(require_asset(scenes / name, tracked, local))
@@ -184,7 +196,15 @@ def scene_files(tracked, local):
                 if uri.startswith("/") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", uri):
                     continue
                 path = scenes.joinpath(*PurePosixPath(uri).parts)
+                # Assets loaded on demand ("streamable") that are not available are left out: the game requests
+                # them only when they are shown (the weapon footage, while the scene spawns with the weapon stowed).
+                if entry.get("load") == "streamable" and optional_asset(path, tracked, local) is None:
+                    skipped.append(path)
+                    continue
                 result.add(require_asset(path, tracked, local))
+    if skipped:
+        folders = sorted({p.parent.resolve().relative_to(ROOT.resolve()).as_posix() for p in skipped})
+        print(f"Pages build: left out {len(skipped)} unavailable on-demand scene assets in {len(folders)} folder(s), e.g. {folders[0]}")
     return result
 
 
@@ -266,6 +286,17 @@ def build(levels, out, local=False):
             raise ValueError("The browser preview header no longer supports the Pages return link.")
         back = '<a class="arrange" href="../../">Project</a>'
         preview_html = preview_html.replace(header, header + back, 1).replace("local preview", "browser demo")
+        title_end = "</title>"
+        if title_end not in preview_html:
+            raise ValueError("The browser preview no longer has a title to add the page tags after.")
+        tags = (
+            '\n  <meta name="description" content="The CounterSplat browser demo: a first-person WebGPU game inside a '
+            'Gaussian-splat scan.">\n  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">\n'
+            '  <meta name="theme-color" content="#10191a">\n'
+            '  <meta property="og:title" content="Play CounterSplat">\n'
+            '  <meta property="og:image" content="https://monstercameron.github.io/CounterSplat/social-card.png">'
+        )
+        preview_html = preview_html.replace(title_end, title_end + tags, 1)
         generated[base + "index.html"] = preview_html.encode("utf8")
         for name in PREVIEW_FILES:
             add(base + name, ROOT / "preview" / name)
@@ -278,6 +309,8 @@ def build(levels, out, local=False):
             level_root = (ROOT / "assets" / "levels" / level["id"]).resolve()
             for path in chosen:
                 add(base + path.relative_to(ROOT.resolve()).as_posix(), path)
+            if level.get("hosted"):
+                continue
             # Report only files actually included in this site, rather than a
             # local download inventory that may list unselected collision data.
             inventory = {"scene_id": level["id"], "files": [
@@ -292,7 +325,7 @@ def build(levels, out, local=False):
             entry["manifest"] = "assets/levels/" + level["id"] + ("/meta.json" if level["format"] == "single_sog" else "/lod-meta.json")
             if level.get("thumbnail"):
                 entry["thumbnail"] = "assets/levels/" + level["id"] + "/preview.webp"
-            for key in ("rotate_z_180", "player_units_per_meter"):
+            for key in ("rotate_z_180", "player_units_per_meter", "hosted"):
                 if key in level:
                     entry[key] = level[key]
             catalog["levels"].append(entry)

@@ -1,4 +1,5 @@
 //! Exercise the live Lua camera panel against validated ECS components and UI events.
+mod common;
 use countersplat_ecs::{World, WorldOperation, WorldOutcome};
 use countersplat_scene::{CameraLens, CameraZoomLens, PlayerCamera, PlayerControls, SceneManifest};
 use countersplat_scripting_lua::{LuaRuntime, ScriptOptions, WorldBridge};
@@ -16,7 +17,7 @@ impl WorldBridge for LocalBridge {
 fn controls_link_shutter_time_and_angle_and_edit_real_camera_components() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let manifest =
-        SceneManifest::from_json(&std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap())
+        SceneManifest::from_json(&common::gameplay_with_ready_weapon(&root))
             .unwrap();
     let world = Rc::new(RefCell::new(World::new()));
     countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();

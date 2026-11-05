@@ -5,6 +5,7 @@
 /preview/pkg/
 *.png
 !crates/**/tests/fixtures/*.png
+!/docs/social-card.png
 
 # Local media and level data. Keep only small asset notices and playback metadata.
 /assets/images/*
@@ -14,12 +15,31 @@
 !/assets/images/first-person/playback/
 /assets/images/first-person/playback/*
 !/assets/images/first-person/playback/manifest.json
+# The one preloaded footage frame, a 1x1 placeholder until new weapon frames are made.
+!/assets/images/first-person/playback/raising/
+/assets/images/first-person/playback/raising/*
+!/assets/images/first-person/playback/raising/0001.webp
+# The CC0 sky (Poly Haven) the gameplay scene preloads, so the browser demo can ship it.
+!/assets/images/environments/
+/assets/images/environments/*
+!/assets/images/environments/kloppenheim_06_puresky_1k.hdr
+!/assets/images/environments/ASSET-NOTICE.md
 /assets/sound/*
 !/assets/sound/.gitkeep
+# Silent placeholder clips for the scene's weapon sounds (no recorded audio).
+!/assets/sound/first-person/
+/assets/sound/first-person/*
+!/assets/sound/first-person/*.mp3
+!/assets/sound/first-person/ASSET-NOTICE.md
 /assets/music/*
 !/assets/music/.gitkeep
 /assets/levels/*
 !/assets/levels/README.md
+# The browser demo streams The Barn from its publisher; only its start camera and our provenance record ship here.
+!/assets/levels/58d333ae/
+/assets/levels/58d333ae/*
+!/assets/levels/58d333ae/viewer-settings.json
+!/assets/levels/58d333ae/source.json
 *.sog
 *.splat
 *.ksplat

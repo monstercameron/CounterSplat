@@ -106,9 +106,13 @@ end
 -- The optional module preserves compatibility with scenes that do not load it.
 local stability=engine.aim_stability and engine.aim_stability.new(owner,player) or nil
 
+-- `start_stowed` spawns (and respawns) with the weapon put away, as if F had been
+-- pressed: nothing is drawn until the player equips it. Scenes use it while the
+-- weapon footage is unavailable; older scenes without it start ready.
+local start_state=config.start_stowed==true and 'noGun' or 'lowReady'
 local function new_weapon_state()
     return {
-    state='lowReady', mode='single', ammo=initial_ammo, mags={initial_spares[1],initial_spares[2],initial_spares[3]}, shots=0,
+    state=start_state, mode='single', ammo=initial_ammo, mags={initial_spares[1],initial_spares[2],initial_spares[3]}, shots=0,
     aim=false, held=false, pending=false, hip_shot=false, burst=0, cooldown=0, recovery=0,
     equip_requested=false,
     time=0, duration=0, target=nil, clip='raising', from=0, to=0,

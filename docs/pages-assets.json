@@ -1,4 +1,13 @@
 {
   "version": 1,
-  "levels": []
+  "levels": [
+    {
+      "id": "58d333ae",
+      "name": "The Barn",
+      "creator": "dongiku",
+      "format": "single_sog",
+      "hosted": "https://d28zzqy0iyovbz.cloudfront.net/58d333ae/v1/",
+      "source_url": "https://superspl.at/scene/58d333ae"
+    }
+  ]
 }

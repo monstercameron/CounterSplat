@@ -1,4 +1,5 @@
 //! Exercise the actual scene Lua and ECS bridge, including asynchronous traces.
+mod common;
 use countersplat_ecs::{Entity, World, WorldOperation, WorldOutcome};
 use countersplat_scene::{SceneManifest, Transform, VoxelColliderState, VoxelStatus};
 use countersplat_scripting_lua::{LuaRuntime, ScriptOptions, WorldBridge};
@@ -21,7 +22,7 @@ impl Fixture {
     fn new(worker: bool) -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let manifest = SceneManifest::from_json(
-            &std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap(),
+            &common::gameplay_with_ready_weapon(&root),
         )
         .unwrap();
         let world = Rc::new(RefCell::new(World::new()));

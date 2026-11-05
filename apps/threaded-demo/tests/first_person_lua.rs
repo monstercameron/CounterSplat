@@ -24,20 +24,32 @@ impl Fixture {
     fn with_config(config: Option<Value>) -> Self {
         Self::with_controller(config, true)
     }
+    /// The scene exactly as shipped, including its spawn settings.
+    fn as_shipped() -> Self {
+        Self::build(None, true, true)
+    }
     fn with_controller(config: Option<Value>, load_controller: bool) -> Self {
+        Self::build(config, load_controller, false)
+    }
+    /// Weapon behaviour tests start from a ready weapon: unless `as_shipped`, the scene's `start_stowed` spawn
+    /// setting is removed (`spawns_with_the_weapon_stowed_until_f_equips_it` covers it).
+    fn build(config: Option<Value>, load_controller: bool, as_shipped: bool) -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut scene = SceneManifest::from_json(
             &std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap(),
         )
         .unwrap();
+        let first_person = scene
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == "first_person")
+            .unwrap();
         if let Some(config) = config {
-            scene
-                .entities
-                .iter_mut()
-                .find(|entity| entity.id == "first_person")
-                .unwrap()
-                .components
-                .insert("WeaponConfig".into(), config);
+            first_person.components.insert("WeaponConfig".into(), config);
+        } else if !as_shipped {
+            if let Some(Value::Object(fields)) = first_person.components.get_mut("WeaponConfig") {
+                fields.remove("start_stowed");
+            }
         }
         let world = Rc::new(RefCell::new(World::new()));
         countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
@@ -93,6 +105,27 @@ impl Fixture {
             .unwrap();
     }
 }
+/// The shipped gameplay scene spawns with the weapon put away (nothing drawn, no shots), as if F had been pressed,
+/// while its footage is being remade; F equips it, and a respawn stows it again.
+#[test]
+fn spawns_with_the_weapon_stowed_until_f_equips_it() {
+    let f = Fixture::as_shipped();
+    f.tick(2);
+    assert_eq!(f.state()["state"], "noGun");
+    let frames = f.world.borrow_mut().drain_events("first_person.frame");
+    assert!(!frames.is_empty() && frames.iter().all(|frame| frame["visible"] == false), "{frames:?}");
+    f.mouse("left", true);
+    f.mouse("left", false);
+    f.tick(40);
+    assert_eq!(f.state()["ammo"], 30, "a stowed weapon does not fire");
+    f.key("KeyF", true);
+    f.key("KeyF", false);
+    f.tick(60);
+    assert_eq!(f.state()["state"], "lowReady");
+    let frames = f.world.borrow_mut().drain_events("first_person.frame");
+    assert_eq!(frames.last().unwrap()["visible"], true);
+}
+
 #[test]
 fn weapon_input_and_state_transitions_require_the_lua_controller() {
     let f = Fixture::with_controller(None, false);

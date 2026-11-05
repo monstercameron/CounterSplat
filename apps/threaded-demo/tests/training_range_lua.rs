@@ -1,4 +1,5 @@
 //! The dojo targets, their visible geometry, and real weapon shots share Lua/ECS data.
+mod common;
 use countersplat_ecs::{Entity, World, WorldOperation, WorldOutcome};
 use countersplat_scene::{
     PhysicsBody, PlayerCamera, SceneManifest, Transform, VoxelColliderState, VoxelStatus,
@@ -23,7 +24,7 @@ impl Fixture {
     fn new(level: &str) -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let scene = SceneManifest::from_json(
-            &std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap(),
+            &common::gameplay_with_ready_weapon(&root),
         )
         .unwrap();
         let world = Rc::new(RefCell::new(World::new()));

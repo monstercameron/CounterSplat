@@ -1,4 +1,5 @@
 //! Exercise sustained-fire vision through the real Lua/ECS and weapon event path.
+mod common;
 use countersplat_ecs::{Entity, World, WorldOperation, WorldOutcome};
 use countersplat_scene::SceneManifest;
 use countersplat_scripting_lua::{LuaRuntime, ScriptOptions, WorldBridge};
@@ -22,7 +23,7 @@ impl Fixture {
     fn new() -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let scene = SceneManifest::from_json(
-            &std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap(),
+            &common::gameplay_with_ready_weapon(&root),
         )
         .unwrap();
         let world = Rc::new(RefCell::new(World::new()));
