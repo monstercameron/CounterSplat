@@ -346,6 +346,17 @@ The GitHub Pages landing page is in [docs/index.html](docs/index.html).
 See [Pages setup and asset selection](docs/github-pages.md) for local preview
 and publishing instructions.
 
+## Inspiration
+
+CounterSplat is inspired by [PlayCanvas](https://playcanvas.com/). Its
+open-source [engine](https://github.com/playcanvas/engine) and the
+[SuperSplat](https://superspl.at/) editor and viewer showed how far Gaussian
+splats can go on the web, and this project builds directly on that work: the
+splat shaders, the GPU radix sort and the SOG format support are ported from the
+PlayCanvas engine, and the voxel collision follows the SuperSplat Viewer (both
+MIT; see [THIRD_PARTY.md](THIRD_PARTY.md)). The browser demo's level is a scene
+published on SuperSplat.
+
 ## Source and licensing
 
 CounterSplat-authored code is available under the [MIT License](LICENSE). The

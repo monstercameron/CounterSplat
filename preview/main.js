@@ -956,7 +956,7 @@ function tick(timestamp) {
         } else if (mode === 'loading') {
           metrics.textContent = 'Preloading level assets';
         } else if (mode === 'selector') {
-          metrics.textContent = `${catalog.levels.length} local levels · Choose a level and launch`;
+          metrics.textContent = `${catalog.levels.length} ${catalog.levels.length === 1 ? 'level' : 'levels'} · Choose a level and launch`;
         }
         if (timestamp >= skyErrorUntil) message.hidden = true;
         lastStatus = timestamp;

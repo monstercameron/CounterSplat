@@ -2,6 +2,7 @@
 """Assemble a static GitHub Pages site without publishing unselected local assets."""
 
 import argparse
+import html
 import json
 import math
 from pathlib import Path, PurePosixPath
@@ -26,6 +27,24 @@ PACKAGE_FILES = [
 SITE_FILES = ["index.html", "site.css", "site.js", "game/index.html", "game/launcher.js", "favicon.svg", "social-card.png"]
 HOSTED_RE = re.compile(r"^https://[A-Za-z0-9.-]+/[A-Za-z0-9._~/-]*/$")
 PREVIEW_FILES = ["main.js", "decoder.js", "lua_runtime.js"]
+SITE_URL = "https://monstercameron.github.io/CounterSplat/"
+# Tags for the published play page (`game/play/`), inserted after its title.
+PLAY_TAGS = f"""
+  <meta name="description" content="Play CounterSplat in your browser: a first-person WebGPU game inside a Gaussian-splat scan.">
+  <link rel="canonical" href="{SITE_URL}game/play/">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#10191a">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CounterSplat">
+  <meta property="og:title" content="Browser demo — CounterSplat">
+  <meta property="og:description" content="A first-person WebGPU game inside a Gaussian-splat scan, in your browser.">
+  <meta property="og:url" content="{SITE_URL}game/play/">
+  <meta property="og:image" content="{SITE_URL}social-card.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Browser demo — CounterSplat">
+  <meta name="twitter:image" content="{SITE_URL}social-card.png">"""
 
 
 def json_file(path):
@@ -285,18 +304,24 @@ def build(levels, out, local=False):
         if header not in preview_html:
             raise ValueError("The browser preview header no longer supports the Pages return link.")
         back = '<a class="arrange" href="../../">Project</a>'
-        preview_html = preview_html.replace(header, header + back, 1).replace("local preview", "browser demo")
-        title_end = "</title>"
-        if title_end not in preview_html:
-            raise ValueError("The browser preview no longer has a title to add the page tags after.")
-        tags = (
-            '\n  <meta name="description" content="The CounterSplat browser demo: a first-person WebGPU game inside a '
-            'Gaussian-splat scan.">\n  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">\n'
-            '  <meta name="theme-color" content="#10191a">\n'
-            '  <meta property="og:title" content="Play CounterSplat">\n'
-            '  <meta property="og:image" content="https://monstercameron.github.io/CounterSplat/social-card.png">'
+        preview_html = preview_html.replace(header, header + back, 1)
+        # The published page's title, header label, tags and footer (the local preview keeps its own).
+        credits = " · ".join(
+            f'<a href="{html.escape(level["source_url"])}">{html.escape(level["name"])}</a> by {html.escape(level["creator"])}'
+            if level.get("source_url") else f'{html.escape(level["name"])} by {html.escape(level["creator"])}'
+            for level in levels
         )
-        preview_html = preview_html.replace(title_end, title_end + tags, 1)
+        replacements = [
+            ("<title>CounterSplat · WebGPU Canvas</title>", "<title>Browser demo — CounterSplat</title>" + PLAY_TAGS),
+            ('<span style="color:#8292a3">/ CANVAS</span>', '<span style="color:#8292a3">/ BROWSER DEMO</span>'),
+            ("<span>WebGPU canvas · local preview</span>",
+             '<span class="credit">Level: ' + credits + ' · <a href="../../">CounterSplat</a></span>'),
+            ("</style>", "    footer a { color: #9ddfc6; }\n  </style>"),
+        ]
+        for old, new in replacements:
+            if old not in preview_html:
+                raise ValueError("The browser preview page changed; update the Pages rewrite for: " + old)
+            preview_html = preview_html.replace(old, new, 1)
         generated[base + "index.html"] = preview_html.encode("utf8")
         for name in PREVIEW_FILES:
             add(base + name, ROOT / "preview" / name)
