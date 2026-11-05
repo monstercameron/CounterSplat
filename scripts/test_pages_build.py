@@ -24,7 +24,11 @@ class PagesBuildTests(unittest.TestCase):
             self.write("docs/" + name, "site")
         for name in pages.PREVIEW_FILES:
             self.write("preview/" + name, "preview")
-        self.write("preview/index.html", '<html><div class="header-actions"></div>local preview</html>')
+        # The markers the Pages build rewrites in the real preview page (title, header label, footer, styles).
+        self.write("preview/index.html",
+                   '<html><head><title>CounterSplat · WebGPU Canvas</title><style>\n  </style></head><body>'
+                   '<div class="header-actions"></div><span style="color:#8292a3">/ CANVAS</span>'
+                   '<footer><span>WebGPU canvas · local preview</span></footer></body></html>')
         for name in pages.PACKAGE_FILES:
             self.write(".artifacts/web/pkg/" + name, "package")
         self.write(".artifacts/web/pkg/assets/old-private-file.json", "not selected")
@@ -76,7 +80,12 @@ class PagesBuildTests(unittest.TestCase):
         out = self.artifacts / "pages"
         pages.build([self.level], out, local=True)
         game = out / "game/play"
-        self.assertIn('href="../../"', (game / "index.html").read_text(encoding="utf8"))
+        page = (game / "index.html").read_text(encoding="utf8")
+        self.assertIn('href="../../"', page)
+        self.assertIn("<title>Browser demo — CounterSplat</title>", page)
+        self.assertIn("/ BROWSER DEMO", page)
+        self.assertIn("Level: Test by Artist", page)
+        self.assertNotIn("local preview", page)
         self.assertTrue((game / "assets/images/sky.hdr").is_file())
         self.assertTrue((game / "assets/levels/1234abcd/means_l.webp").is_file())
         self.assertFalse((game / "assets/levels/1234abcd/unreferenced.webp").exists())
