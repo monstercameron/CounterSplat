@@ -35,8 +35,13 @@ struct DepthUniforms {
     // x: the most variance motion blur can add (0 when off); y: 1 when the cull is on; z: the kernel's size clamp
     // (vmin); w: the splat textures' width (u32 bits).
     footprint_extra: vec4f,
-    // How this pass writes `fade` (see `put_fade`). Not part of the sort's cache key.
+    // How this pass writes `fade` (see `put_fade`). Not part of the sort's cache key, nor are the two below.
     fade_mode: u32,
+    // The first 256-slot group `group_bounds` recomputes.
+    bounds_first: u32,
+    // 1 when `main` may skip a group whose box of centres is wholly outside the view (compacting sorts only: the
+    // skipped slots' keys are left stale, and `compact` skips groups with nothing in view).
+    group_cull: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: DepthUniforms;
@@ -56,6 +61,28 @@ struct DepthUniforms {
 // stage reads them. 1x1 stand-ins when the cull is off.
 @group(0) @binding(9) var splat_scales: texture_2d<f32>;
 @group(0) @binding(10) var splat_codebook: texture_2d<f32>;
+
+// Per 256-slot group, the box around its splats' centres (min > max when every slot is empty), refreshed by
+// `group_bounds` for the groups whose centres changed. Stored as f32 bits after the per-group counts in
+// `group_counts` (six words a group), which keeps the pass within WebGPU's default of eight storage buffers.
+fn bounds_base() -> u32 {
+    return (arrayLength(&centers) / 3u + 255u) / 256u;
+}
+
+fn store_bounds(g: u32, lo: vec3f, hi: vec3f) {
+    let at = bounds_base() + g * 6u;
+    group_counts[at] = bitcast<u32>(lo.x);
+    group_counts[at + 1u] = bitcast<u32>(lo.y);
+    group_counts[at + 2u] = bitcast<u32>(lo.z);
+    group_counts[at + 3u] = bitcast<u32>(hi.x);
+    group_counts[at + 4u] = bitcast<u32>(hi.y);
+    group_counts[at + 5u] = bitcast<u32>(hi.z);
+}
+
+fn load_bound(g: u32, which: u32) -> vec3f {
+    let at = bounds_base() + g * 6u + which * 3u;
+    return bitcast<vec3f>(vec3u(group_counts[at], group_counts[at + 1u], group_counts[at + 2u]));
+}
 
 // A centre this far outside the view (in units of the half-screen) can still reach into it with a large splat.
 const CULL_MARGIN: f32 = 1.5;
@@ -223,11 +250,93 @@ fn write_key(i: u32) -> bool {
     return true;
 }
 
+var<workgroup> bound_lo: array<vec3f, 256>;
+var<workgroup> bound_hi: array<vec3f, 256>;
+
+// Recomputes the box of group `bounds_first + workgroup`. Empty slots (non-finite x, as `write_key` tests) are left
+// out; a slot with a finite x but another non-finite coordinate makes the box unbounded, so the group is never skipped.
+@compute @workgroup_size(256)
+fn group_bounds(@builtin(local_invocation_index) lane: u32, @builtin(workgroup_id) wg: vec3u) {
+    let g = params.bounds_first + wg.x;
+    let i = g * 256u + lane;
+    var lo = vec3f(3.0e38);
+    var hi = vec3f(-3.0e38);
+    if (i < arrayLength(&centers) / 3u && (bitcast<u32>(centers[i * 3u]) & 0x7f800000u) != 0x7f800000u) {
+        let y = bitcast<u32>(centers[i * 3u + 1u]) & 0x7f800000u;
+        let z = bitcast<u32>(centers[i * 3u + 2u]) & 0x7f800000u;
+        if (y == 0x7f800000u || z == 0x7f800000u) {
+            lo = vec3f(-3.0e38);
+            hi = vec3f(3.0e38);
+        } else {
+            lo = vec3f(centers[i * 3u], centers[i * 3u + 1u], centers[i * 3u + 2u]);
+            hi = lo;
+        }
+    }
+    bound_lo[lane] = lo;
+    bound_hi[lane] = hi;
+    for (var stride = 128u; stride > 0u; stride >>= 1u) {
+        workgroupBarrier();
+        if (lane < stride) {
+            bound_lo[lane] = min(bound_lo[lane], bound_lo[lane + stride]);
+            bound_hi[lane] = max(bound_hi[lane], bound_hi[lane + stride]);
+        }
+    }
+    if (lane == 0u) {
+        store_bounds(g, bound_lo[0], bound_hi[0]);
+    }
+}
+
+// True when every centre in group `g`'s box fails the coarse view test of `write_key` through one plane (behind the
+// camera, or past CULL_MARGIN on one side), so each of its splats would be culled. A plane's test is linear, so it
+// holds on the whole box when it holds at all eight corners; each corner must clear the plane by a margin far above
+// the rounding of the per-splat evaluation (1e-5 of the summed magnitudes of the terms), so no splat inside can round
+// the other way.
+fn group_outside(g: u32) -> bool {
+    let lo = load_bound(g, 0u);
+    let hi = load_bound(g, 1u);
+    if (any(lo > hi)) {
+        return true;
+    }
+    let m = params.clip;
+    let a = mat4x4f(abs(m[0]), abs(m[1]), abs(m[2]), abs(m[3]));
+    var behind = true;
+    var right = true;
+    var left = true;
+    var above = true;
+    var below = true;
+    for (var k = 0u; k < 8u; k++) {
+        let c = select(lo, hi, vec3<bool>((k & 1u) != 0u, (k & 2u) != 0u, (k & 4u) != 0u));
+        let p = m * vec4f(c, 1.0);
+        let s = (a * vec4f(abs(c), 1.0)) * 1e-5;
+        behind = behind && p.w < -s.w;
+        right = right && p.x - CULL_MARGIN * p.w > s.x + CULL_MARGIN * s.w;
+        left = left && -p.x - CULL_MARGIN * p.w > s.x + CULL_MARGIN * s.w;
+        above = above && p.y - CULL_MARGIN * p.w > s.y + CULL_MARGIN * s.w;
+        below = below && -p.y - CULL_MARGIN * p.w > s.y + CULL_MARGIN * s.w;
+    }
+    return behind || right || left || above || below;
+}
+
+var<workgroup> skip_group: u32;
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id: vec3u, @builtin(local_invocation_index) lane: u32,
         @builtin(workgroup_id) group: vec3u) {
-    if (lane == 0u) { atomicStore(&local_visible, 0u); }
-    workgroupBarrier();
+    if (lane == 0u) {
+        atomicStore(&local_visible, 0u);
+        skip_group = select(0u, 1u, params.group_cull == 1u && group_outside(group.x));
+    }
+    // A group wholly outside the view reads no centres and writes no keys: nothing of it is in view, and `compact`
+    // skips a group with nothing in view. Its shares are still written when this pass owes every slot's (mode 1).
+    if (workgroupUniformLoad(&skip_group) == 1u) {
+        if (params.fade_mode == 1u && id.x < params.count) {
+            fade[id.x] = fade_share(id.x);
+        }
+        if (lane == 0u) {
+            group_counts[group.x] = 0u;
+        }
+        return;
+    }
     let shown = write_key(id.x);
     // All lanes issue the local atomic, including padding in the last group (adding zero).
     // This also avoids the partial-wave atomic issue seen on Adreno.
@@ -272,10 +381,21 @@ fn scan_groups(@builtin(local_invocation_index) lane: u32) {
 // Stable stream compaction of the keys of the splats in view (slot order is kept, so equal keys keep the order the
 // full sort would give them) together with their slot indices.
 var<workgroup> flags: array<u32, 256>;
+var<workgroup> group_empty: u32;
 
 @compute @workgroup_size(256)
 fn compact(@builtin(global_invocation_id) id: vec3u, @builtin(local_invocation_index) lane: u32,
            @builtin(workgroup_id) group: vec3u) {
+    // A group with nothing in view (its scanned offset equals the next group's, or the total for the last) has nothing
+    // to move, and a group `main` skipped has stale keys, so stop before reading them.
+    if (lane == 0u) {
+        let groups = (params.count + 255u) / 256u;
+        let next = select(atomicLoad(&visible), group_counts[group.x + 1u], group.x + 1u < groups);
+        group_empty = select(0u, 1u, next == group_counts[group.x]);
+    }
+    if (workgroupUniformLoad(&group_empty) == 1u) {
+        return;
+    }
     var key = 0xffffffffu;
     if (id.x < params.count) { key = keys[id.x]; }
     let flag = select(0u, 1u, key != 0xffffffffu);

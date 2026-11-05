@@ -22,12 +22,17 @@ fn modifySplatColor(center: vec3f, color: ptr<function, vec4f>) {
     #ifdef PREPASS_PASS
         return;
     #endif
+    // The LOD label is read only for the debug views, not on every vertex of a normal frame.
+    let debug = splatDebug[0];
+    if (debug == 0u) {
+        return;
+    }
     let lod = splatLod[splat.index] & 15u;
-    if (splatDebug[0] == 1u && lod > 0u) {
+    if (debug == 1u && lod > 0u) {
         *color = vec4f(lodColour(lod - 1u), (*color).a);
         return;
     }
-    if (splatDebug[0] == 2u && lod > 0u) {
+    if (debug == 2u && lod > 0u) {
         let distance = length((uniform.matrix_view * uniform.matrix_model * vec4f(center, 1.0)).xyz);
         *color = vec4f(clamp(distance / 128.0, 0.0, 1.0), 0.0, 0.0, (*color).a);
     }

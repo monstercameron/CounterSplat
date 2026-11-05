@@ -35,6 +35,9 @@ const DEPTH_RANGE_UNIFORM_SIZE: u64 = 80;
 const DEPTH_UNIFORM_SIZE: u64 = 304;
 /// Where `fade_mode` sits in the depth uniform: after everything the cached order depends on.
 const FADE_MODE_OFFSET: usize = 288;
+/// Where `bounds_first` and `group_cull` sit in the depth uniform.
+const BOUNDS_FIRST_OFFSET: usize = 292;
+const GROUP_CULL_OFFSET: usize = 296;
 /// Where the footprint-cull fields start in the depth uniform (after the 232-byte payload and its padding).
 const FOOTPRINT_OFFSET: usize = 240;
 // Payload excludes the WGSL struct's final 8 bytes of alignment padding.
@@ -253,6 +256,14 @@ pub struct DepthSorter {
     last_fade_mode: Cell<u32>,
     /// Whether a compacting sorter skips unchanged fade writes (see `write_fade_mode`).
     fade_skip: bool,
+    /// Recomputes the centre boxes of a range of 256-slot groups (`group_bounds`).
+    bounds_pipeline: wgpu::ComputePipeline,
+    /// Slots (start, end) whose centres changed since their groups' boxes were last computed.
+    bounds_dirty: Cell<Option<(u32, u32)>>,
+    /// Groups the next key stage recomputes first: (first group, group count).
+    pending_bounds: Cell<Option<(u32, u32)>>,
+    /// Whether the key pass may skip groups wholly outside the view (compacting sorts; see `group_outside`).
+    group_cull: bool,
     /// The splat textures' width when the key pass can read the splats' scales (`SplatTextures`), for the footprint cull.
     footprint_width: Option<u32>,
     /// This frame's vertex-stage footprint parameters (`set_footprint`); None leaves the cull off.
@@ -278,6 +289,22 @@ impl DepthSorter {
     /// Moving Gaussian centres invalidate the cached order even with an unchanged camera/model.
     pub fn invalidate(&self) {
         *self.sorted_for.borrow_mut() = None;
+        self.invalidate_slots(0, self.count);
+    }
+
+    /// `count` slots from `start` got new centres (an upload, move or release): sort again, and refresh the bounds
+    /// of the 256-slot groups they belong to before the next key pass.
+    pub fn invalidate_slots(&self, start: u32, count: u32) {
+        *self.sorted_for.borrow_mut() = None;
+        let end = start.saturating_add(count).min(self.count);
+        if start >= end {
+            return;
+        }
+        let dirty = match self.bounds_dirty.get() {
+            Some((a, b)) => (a.min(start), b.max(end)),
+            None => (start, end),
+        };
+        self.bounds_dirty.set(Some(dirty));
     }
     /// Builds every pipeline and bind group for `count` splats whose centres are in `centers`
     /// (`vec3f` per splat, tightly packed as `array<f32>`).
@@ -419,11 +446,12 @@ impl DepthSorter {
             (None, None) => unreachable!("stand-ins exist whenever textures do not"),
         };
         let visible = storage("visible splats", 4);
-        // Splats in view per 256-slot group, scanned into output offsets by scan_groups (indirect sorts only).
+        // Splats in view per 256-slot group, scanned into output offsets by scan_groups (indirect sorts only),
+        // followed by each group's box of centres (six f32 words; see `bounds_base` in depth_keys.wgsl).
         let group_counts = storage(
             "visible per group",
             if count_visible {
-                u64::from(count.div_ceil(THREADS_PER_WORKGROUP)) * 4
+                u64::from(count.div_ceil(THREADS_PER_WORKGROUP)) * (4 + 24)
             } else {
                 4
             },
@@ -539,6 +567,13 @@ impl DepthSorter {
                 (10, wgpu::BindingResource::TextureView(codebook_view)),
             ],
         );
+        let bounds_pipeline = pipeline(device, "splat group bounds", &depth_layout, DEPTH_KEYS_SRC, "group_bounds");
+        // Compacting sorts may skip groups wholly outside the view (COUNTERSPLAT_GROUP_CULL=0 natively turns it off).
+        #[cfg(not(target_arch = "wasm32"))]
+        let group_cull = compact && std::env::var("COUNTERSPLAT_GROUP_CULL").map_or(true, |v| v != "0");
+        #[cfg(target_arch = "wasm32")]
+        let group_cull = compact;
+        queue.write_buffer(&depth_uniform, GROUP_CULL_OFFSET as u64, &u32::from(group_cull).to_le_bytes());
         let scan_groups_pipeline = pipeline(device, "scan visible groups", &depth_layout, DEPTH_KEYS_SRC, "scan_groups");
         let compact_pipeline = pipeline(device, "compact visible", &depth_layout, DEPTH_KEYS_SRC, "compact");
 
@@ -782,6 +817,10 @@ impl DepthSorter {
             footprint: Cell::new(None),
             fades_written: Cell::new(false),
             last_fade_mode: Cell::new(u32::MAX),
+            bounds_pipeline,
+            bounds_dirty: Cell::new(Some((0, count))),
+            pending_bounds: Cell::new(None),
+            group_cull,
             // COUNTERSPLAT_FADE_SKIP=0 natively writes every share on every sort, for A/B timing.
             #[cfg(not(target_arch = "wasm32"))]
             fade_skip: std::env::var("COUNTERSPLAT_FADE_SKIP").map_or(true, |v| v != "0"),
@@ -925,6 +964,12 @@ impl DepthSorter {
         self.metrics.borrow_mut().count("sorts", 1);
         queue.write_buffer(&self.depth_uniform, 0, &uniform);
         self.write_fade_mode(queue);
+        if let Some((start, end)) = self.bounds_dirty.take().filter(|_| self.group_cull) {
+            let first = start / THREADS_PER_WORKGROUP;
+            let groups = end.div_ceil(THREADS_PER_WORKGROUP) - first;
+            queue.write_buffer(&self.depth_uniform, BOUNDS_FIRST_OFFSET as u64, &first.to_le_bytes());
+            self.pending_bounds.set(Some((first, groups)));
+        }
         *self.sorted_for.borrow_mut() = Some(uniform);
 
         if self.count_visible {
@@ -1032,6 +1077,9 @@ impl DepthSorter {
         let workgroups = active.div_ceil(ELEMENTS_PER_WORKGROUP).max(1);
         match stage {
             SortStage::Keys => {
+                if let Some((_, groups)) = self.pending_bounds.take() {
+                    dispatch(compute, &self.bounds_pipeline, &self.depth, groups);
+                }
                 dispatch(compute, &self.depth_pipeline, &self.depth, active.div_ceil(THREADS_PER_WORKGROUP).max(1));
                 if self.count_visible {
                     dispatch(compute, &self.args_pipeline, &self.args, 1);

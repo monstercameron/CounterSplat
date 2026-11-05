@@ -79,5 +79,39 @@ fn main() {
             100.0 * offscreen as f64 / in_view.max(1) as f64,
             100.0 * drawn_bound as f64 / in_view.max(1) as f64
         );
+        // Groups of 256 consecutive slots whose centres' box lies wholly outside the coarse view test: the key pass
+        // could skip them without reading their centres.
+        let mut skipped_slots = 0usize;
+        for group in centres.chunks(256) {
+            let mut lo = [f32::INFINITY; 3];
+            let mut hi = [f32::NEG_INFINITY; 3];
+            for c in group {
+                for a in 0..3 {
+                    lo[a] = lo[a].min(c[a]);
+                    hi[a] = hi[a].max(c[a]);
+                }
+            }
+            let corners: Vec<[f32; 4]> = (0..8)
+                .map(|k| {
+                    let c = [0, 1, 2].map(|a| if k >> a & 1 == 1 { hi[a] } else { lo[a] });
+                    [0, 1, 3].map(|r| clip[r] * c[0] + clip[4 + r] * c[1] + clip[8 + r] * c[2] + clip[12 + r]).into()
+                })
+                .map(|v: [f32; 3]| [v[0], v[1], 0.0, v[2]])
+                .collect();
+            let outside = |f: &dyn Fn(&[f32; 4]) -> f32| corners.iter().all(|p| f(p) > 0.0);
+            if outside(&|p| -p[3])
+                || outside(&|p| p[0] - 1.5 * p[3])
+                || outside(&|p| -p[0] - 1.5 * p[3])
+                || outside(&|p| p[1] - 1.5 * p[3])
+                || outside(&|p| -p[1] - 1.5 * p[3])
+            {
+                skipped_slots += group.len();
+            }
+        }
+        println!(
+            "            slots in wholly culled 256-slot groups {skipped_slots} ({:.1}% of all; the coarse test culls {:.1}%)",
+            100.0 * skipped_slots as f64 / centres.len() as f64,
+            100.0 * (centres.len() - in_view) as f64 / centres.len() as f64
+        );
     }
 }

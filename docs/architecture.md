@@ -271,6 +271,36 @@ too small, or off screen even at the bound's extent, draws nothing, so the pictu
   digits on top were still no better (radix 0.62 ms at spawn, 1.90 ms at 90 degrees, its first pass alone 1.4 ms),
   so 4-bit stays the default.
 
+#### Group skip in the key pass (done)
+
+The key and compaction passes read every active slot even when most are outside the view. Each 256-slot group (one
+key-pass workgroup) now has a box around its centres, stored after the per-group counts in `group_counts` (six f32
+words a group, which keeps the pass within WebGPU's default of eight storage buffers per stage). `group_outside` in
+`depth_keys.wgsl` skips a group when all eight box corners fail the same plane of the coarse view test, each by a
+margin of 1e-5 of the summed term magnitudes (far above the per-splat evaluation's rounding), so every splat inside
+would have been culled; the group then reads no centres and writes no keys, and `compact` returns early for any group
+with nothing in view (its keys are stale). Uploads, moves and releases mark their slot range (`invalidate_slots`),
+and the next sort recomputes those groups' boxes first (`group_bounds`). Slots are spatially coherent: on the lobby
+whole groups hold 80.9%, 27.3% and 81.0% of the slots at spawn, 90 and 180 degrees, against 81.8%, 29.2% and 83.4%
+culled per splat (`cull_estimate`).
+
+- Exactness: `cull_verify` matches the uncompacted full sort byte for byte in all six lobby views;
+  `group_skipping_follows_uploads_moves_and_releases` streams visible splats into slots that held an off-screen
+  cluster, moves and releases them, and compares every step against a pool that sorts every slot (it fails, 1,764
+  bytes off, if slot invalidation does not refresh the boxes).
+- Native A/B (three interleaved rounds; the GPU was shared with another app at about 64%, so only GPU spans are
+  meaningful): depth keys 0.69 to 0.29 ms at spawn, 0.75 to 0.50 ms spinning, 0.79 to 0.67 ms at 90 degrees;
+  compaction 0.18 to 0.14 ms at spawn. Switch: `COUNTERSPLAT_GROUP_CULL=0`.
+- In one quiet moment of that run the 90-degree view while re-sorting took 12.7 ms with an 8.6 ms draw, so on an
+  unshared GPU the worst lobby view is under the 16.7 ms budget.
+- After this every sort stage moves its data at about 195-245 GB/s on this machine, so the sort is at the memory
+  bandwidth floor for what it reads and writes; fewer passes (8-bit digits) scatter worse and lose.
+
+Also measured: the gameplay exposure path in the vertex stage (gamma to linear, scale, back to gamma, then decoded
+again for the linear target) costs 1-2% of the draw (static 5.83 against 5.92 ms, 90 degrees 17.13 against 17.29 ms,
+exposure off and on), within noise, so it was left as it is. The scene's colour hook now reads the per-slot LOD label
+only when a LOD debug view is on, instead of on every vertex.
+
 #### Depth prepass range (done)
 
 The impact prepass draws only the splats nearer than the farthest impact: after the sort, `depth_range.wgsl` binary

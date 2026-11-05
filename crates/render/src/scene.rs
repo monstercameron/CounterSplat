@@ -729,7 +729,7 @@ impl GsplatScene {
             u64::from(start) * 12,
             centres_le_bytes(centres).as_ref(),
         );
-        self.sorter.invalidate();
+        self.sorter.invalidate_slots(start, count);
     }
 
     // Queue submissions execute in order, so consecutive compactions can
@@ -828,7 +828,7 @@ impl GsplatScene {
             u64::from(count) * 12,
         );
         queue.submit(Some(encoder.finish()));
-        self.sorter.invalidate();
+        self.sorter.invalidate_slots(to, count);
     }
 
     /// Empties `count` slots from `start`: their centres become NaN, which the sort culls.
@@ -853,7 +853,7 @@ impl GsplatScene {
                 centres_le_bytes(&empty).as_ref(),
             );
         }
-        self.sorter.invalidate();
+        self.sorter.invalidate_slots(start, count as u32);
     }
 
     /// Records the level of detail and leaf held by `count` slots from `start` (for the debug colours).
@@ -1392,6 +1392,90 @@ mod tests {
         // Reading back also surfaces any validation error from the draw or the sort's in-place output.
         let pixels = pool.render_rgba(&device, &queue, &pipelines, &view, None);
         assert_eq!(pixels.len(), 64 * 64 * 4);
+    }
+
+    /// The compacting sort skips 256-slot groups whose box of centres is wholly outside the view, so each upload, move
+    /// and release must refresh the boxes of the groups it touches. A pool that streams splats into slots that held an
+    /// off-screen cluster, moves them and releases them must keep drawing exactly what a pool that sorts every slot
+    /// (no compaction, no group skipping) draws.
+    #[test]
+    fn group_skipping_follows_uploads_moves_and_releases() {
+        let Some((device, queue)) = crate::try_device() else {
+            return;
+        };
+        let pipelines = Pipelines::new(&device, crate::COLOR_FORMAT).unwrap();
+        let meta = sog::Meta {
+            count: 0,
+            means_mins: [-1.0; 3],
+            means_maxs: [1.0; 3],
+            scales_codebook: (0..256).map(|i| -6.0 + i as f32 * 0.02).collect(),
+            sh0_codebook: (0..256).map(|i| -2.0 + i as f32 / 64.0).collect(),
+            sh_n_codebook: vec![0.0; 256],
+            sh_n_count: 0,
+        };
+        let compacting = pool_with_centroid_rows(&device, &queue, &pipelines, &meta, 8192, 0.5, 1).unwrap();
+        set_indirect_draw(false);
+        let reference = pool_with_centroid_rows(&device, &queue, &pipelines, &meta, 8192, 0.5, 1);
+        set_indirect_draw(true);
+        let reference = reference.unwrap();
+        let view = View {
+            model: crate::camera::IDENTITY,
+            view: crate::camera::look_at([0.0, 0.0, 3.0], [0.0; 3], [0.0, 1.0, 0.0]),
+            projection: crate::camera::perspective(60f32.to_radians(), 1.0, 0.05, 100.0),
+            width: 64,
+            height: 64,
+            near: 0.05,
+            far: 100.0,
+        };
+        // `n` splats around `centre` (spread over a 1-unit cube), with varied colours.
+        let splats = |n: u32, centre: [f32; 3], seed: u32| {
+            let mut state = seed;
+            let mut next = move || {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 8) as f32 / 16_777_216.0
+            };
+            let centres: Vec<[f32; 3]> = (0..n).map(|_| centre.map(|c| c + next() - 0.5)).collect();
+            let sh0: Vec<u8> = (0..n).flat_map(|i| [(i * 7) as u8, (i * 13) as u8, 200, 255]).collect();
+            (centres, sh0)
+        };
+        let write = |start: u32, n: u32, centre: [f32; 3], seed: u32| {
+            let (centres, sh0) = splats(n, centre, seed);
+            let (quats, scales) = (vec![128u8; n as usize * 4], vec![150u8; n as usize * 4]);
+            for pool in [&compacting, &reference] {
+                pool.write_splats(&queue, start, &[("quats", &quats), ("scales", &scales), ("sh0", &sh0)], &centres);
+            }
+        };
+        let mut step = 0;
+        let mut check = |what: &str| {
+            step += 1;
+            let a = compacting.render_rgba(&device, &queue, &pipelines, &view, None);
+            let b = reference.render_rgba(&device, &queue, &pipelines, &view, None);
+            let differing = a.iter().zip(&b).filter(|(x, y)| x != y).count();
+            assert_eq!(differing, 0, "step {step} ({what}): {differing} bytes differ from the reference pool");
+            a.chunks_exact(4).filter(|p| p[..3].iter().any(|&c| c > 5)).count()
+        };
+        // An off-screen cluster (far to the right) in slots 0..1500, and one in view in 1500..3000.
+        write(0, 1500, [40.0, 0.0, 0.0], 1);
+        write(1500, 1500, [0.0, 0.0, 0.0], 2);
+        compacting.set_active(&queue, 3000);
+        reference.set_active(&queue, 3000);
+        let lit = check("initial");
+        assert!(lit > 50, "the cluster in view is drawn");
+        // Stream visible splats into the slots the off-screen cluster held: their groups' boxes must follow.
+        write(0, 1500, [0.5, 0.3, 0.0], 3);
+        assert!(check("upload over the off-screen slots") > lit, "the new splats are drawn");
+        // Move the visible splats into slots past the old active range, releasing the vacated tail.
+        for pool in [&compacting, &reference] {
+            pool.set_active(&queue, 6000);
+            pool.move_slots(&queue, 1500, 4000, 1500);
+            pool.release(&queue, 1500, 1500);
+        }
+        check("move and release");
+        // Release the streamed splats; only the moved cluster is left.
+        for pool in [&compacting, &reference] {
+            pool.release(&queue, 0, 1500);
+        }
+        assert!(check("release") > 50, "the moved cluster is still drawn");
     }
 
     #[test]
