@@ -29,9 +29,10 @@ end
 local function key_is_down(controls, action)
     return controls and controls.enabled and engine.input.is_down(held,controls.bindings[action])
 end
+-- A slide (player_controls.lua) holds the crouch until it finishes or is cancelled, even if C is released.
 local function wants_crouch(controls, posture)
     return posture.enabled==true and ecs.get_resource('input.binding_capture')~=true and
-        key_is_down(controls,'crouch')
+        (key_is_down(controls,'crouch') or ecs.get_resource('player.slide_active')==true)
 end
 local function moving(controls)
     if not controls or not controls.enabled then return false end

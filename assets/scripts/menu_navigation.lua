@@ -135,7 +135,8 @@ local function sync(message)
     local shortcuts={
         {table.concat({key_name(bindings.forward,"W"),key_name(bindings.left,"A"),key_name(bindings.backward,"S"),key_name(bindings.right,"D")},"  "),"Move"},
         {"Mouse","Look"},{"Q","Inspect HUD"},{key_name(bindings.jump,"Space"),"Jump"},
-        {key_name(bindings.sprint,"Shift"),"Sprint"},{key_name(bindings.crouch,"Ctrl"),"Crouch"},{"R","Reload"},{"V","Fire mode"},
+        {key_name(bindings.sprint,"Shift"),"Sprint"},{key_name(bindings.crouch,"C"),"Crouch · slide"},
+        {key_name(bindings.cautious,"Ctrl"),"Cautious walk"},{"R","Reload"},
     }
     for i,item in ipairs(shortcuts) do
         widget(ids["overview_key_"..i],"text",item[1]); widget(ids["overview_action_"..i],"text",item[2])
@@ -144,6 +145,8 @@ local function sync(message)
     if type(controls.move_speed)=="number" then set_slider(ids.controls_speed,controls.move_speed) end
     if type(controls.mouse_sensitivity)=="number" then set_slider(ids.controls_sensitivity,controls.mouse_sensitivity) end
     if type(controls.invert_y)=="boolean" then set_checked(ids.controls_invert,controls.invert_y) end
+    if ids.controls_bob and type(controls.bob_enabled)=="boolean" then set_checked(ids.controls_bob,controls.bob_enabled) end
+    if ids.controls_breathing then set_checked(ids.controls_breathing,controls.breathing_enabled~=false) end
     if type(graphics.draw_distance)=="number" then set_slider(ids.graphics_distance,graphics.draw_distance) end
     if type(graphics.sky_enabled)=="boolean" then set_checked(ids.graphics_sky,graphics.sky_enabled) end
     local lod_count=type(graphics.lod_count)=="number" and math.max(1,math.floor(graphics.lod_count)) or 1
@@ -295,6 +298,7 @@ ecs.system("menu.navigation", function(_dt)
         else
             local targets={[ids.controls_speed]="controls_speed",[ids.controls_sensitivity]="controls_sensitivity",
                 [ids.controls_invert]="controls_invert",[ids.graphics_distance]="level_draw_distance",
+                [ids.controls_bob or false]="controls_bob",[ids.controls_breathing or false]="controls_breathing",
                 [ids.graphics_auto]="level_auto",[ids.graphics_lod]="level_lod",[ids.graphics_sky]="sky_enabled",
                 [ids.audio_gain]="audio_gain",[ids.audio_mute]="audio_muted"}
             if targets[id] and (kind.type=="number_changed" or kind.type=="bool_changed") then

@@ -24,16 +24,20 @@ impl Fixture {
     fn with_config(config: Option<Value>) -> Self {
         Self::with_controller(config, true)
     }
-    /// The scene exactly as shipped, including its spawn settings.
+    /// The scene exactly as shipped, including its spawn settings and weapon profile.
     fn as_shipped() -> Self {
-        Self::build(None, true, true)
+        Self::build(None, true, true, None)
+    }
+    /// The shipped scene with another of its weapon profiles selected.
+    fn with_profile(profile: &str) -> Self {
+        Self::build(None, true, true, Some(profile))
     }
     fn with_controller(config: Option<Value>, load_controller: bool) -> Self {
-        Self::build(config, load_controller, false)
+        Self::build(config, load_controller, false, None)
     }
-    /// Weapon behaviour tests start from a ready weapon: unless `as_shipped`, the scene's `start_stowed` spawn
-    /// setting is removed (`spawns_with_the_weapon_stowed_until_f_equips_it` covers it).
-    fn build(config: Option<Value>, load_controller: bool, as_shipped: bool) -> Self {
+    /// Weapon behaviour tests start from a ready weapon that aims from its presented sight: unless `as_shipped`, the
+    /// scene's `start_stowed` and `aim_from_camera` settings are removed (the shipped-scene tests cover them).
+    fn build(config: Option<Value>, load_controller: bool, as_shipped: bool, profile: Option<&str>) -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut scene = SceneManifest::from_json(
             &std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap(),
@@ -44,12 +48,21 @@ impl Fixture {
             .iter_mut()
             .find(|entity| entity.id == "first_person")
             .unwrap();
+        if let Some(profile) = profile {
+            first_person.components.insert("WeaponProfile".into(), json!({ "profile": profile }));
+        }
         if let Some(config) = config {
             first_person.components.insert("WeaponConfig".into(), config);
         } else if !as_shipped {
             if let Some(Value::Object(fields)) = first_person.components.get_mut("WeaponConfig") {
                 fields.remove("start_stowed");
             }
+        }
+        if !as_shipped {
+            if let Some(Value::Object(fields)) = first_person.components.get_mut("FirstPersonView") {
+                fields.remove("aim_from_camera");
+            }
+            first_person.components.remove("WeaponProfile");
         }
         let world = Rc::new(RefCell::new(World::new()));
         countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
@@ -105,30 +118,206 @@ impl Fixture {
             .unwrap();
     }
 }
-/// The shipped gameplay scene spawns with the weapon put away (nothing drawn, no shots), as if F had been pressed,
-/// while its footage is being remade. F equips it: it fires, but with the first-person view off it is still not
-/// drawn, so shots go through the crosshair.
+/// The shipped gameplay scene spawns with the weapon ready and drawn (revolver concept stills stand in for footage).
+/// The stills have no sight landmarks, so a hip shot goes straight through the camera centre.
 #[test]
-fn spawns_with_the_weapon_stowed_until_f_equips_it() {
+fn spawns_ready_and_drawn_and_aims_through_the_camera_centre() {
     let f = Fixture::as_shipped();
     f.tick(2);
-    assert_eq!(f.state()["state"], "noGun");
-    let frames = f.world.borrow_mut().drain_events("first_person.frame");
-    assert!(!frames.is_empty() && frames.iter().all(|frame| frame["visible"] == false), "{frames:?}");
-    f.mouse("left", true);
-    f.mouse("left", false);
-    f.tick(40);
-    assert_eq!(f.state()["ammo"], 30, "a stowed weapon does not fire");
-    f.key("KeyF", true);
-    f.key("KeyF", false);
-    f.tick(60);
     assert_eq!(f.state()["state"], "lowReady");
     let frames = f.world.borrow_mut().drain_events("first_person.frame");
-    assert!(frames.iter().all(|frame| frame["visible"] == false), "the view stays off: {frames:?}");
+    assert!(!frames.is_empty() && frames.iter().all(|frame| frame["visible"] == true), "{frames:?}");
+    f.tick(30);
+    let (yaw, pitch) = {
+        let world = f.world.borrow();
+        let camera = world.get::<countersplat_scene::PlayerCamera>(f.player).unwrap();
+        (camera.yaw as f64, camera.pitch as f64)
+    };
     f.mouse("left", true);
     f.mouse("left", false);
     f.tick(40);
-    assert_eq!(f.state()["ammo"], 29, "the equipped weapon fires");
+    assert_eq!(f.state()["ammo"], 4, "the revolver fires from the hip");
+    let shots = f.world.borrow_mut().drain_events("weapon.shot");
+    assert_eq!(shots.len(), 1, "{shots:?}");
+    let d = &shots[0]["direction"];
+    let forward = [yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos()];
+    let dot: f64 = (0..3).map(|i| d[i].as_f64().unwrap() * forward[i]).sum();
+    assert!(dot > 0.9999, "the shot leaves through the camera centre: {d} vs {forward:?}");
+}
+
+fn component(f: &Fixture, name: &str) -> Value {
+    f.world.borrow().get_dynamic(f.entity, name).unwrap().clone()
+}
+fn shoot_once(f: &Fixture) {
+    f.mouse("left", true);
+    f.mouse("left", false);
+    f.tick(70);
+}
+fn tap(f: &Fixture, code: &str) {
+    f.key(code, true);
+    f.key(code, false);
+}
+
+/// The shipped weapon is the .500 Magnum revolver profile: its physics and limits reach the weapon components.
+#[test]
+fn the_shipped_revolver_profile_sets_the_weapon_components() {
+    let f = Fixture::as_shipped();
+    let config = component(&f, "WeaponConfig");
+    assert_eq!((config["magazine_capacity"].clone(), config["modes"].clone()), (json!(5), json!(["single"])));
+    assert_eq!((config["reload_kind"].clone(), config["initial_spares"].clone()), (json!("swap"), json!([5, 5, 5])));
+    assert!((config["fire_interval"].as_f64().unwrap() - 0.5).abs() < 1e-9);
+    let ballistics = component(&f, "Ballistics");
+    assert!((ballistics["speed_mps"].as_f64().unwrap() - 579.12).abs() < 0.01);
+    assert_eq!(ballistics["gravity_mps2"], 9.81, "authored fields the profile does not set are kept");
+    let stats = component(&f, "WeaponStats");
+    assert!((stats["muzzle_energy_ftlbf"].as_f64().unwrap() - 2805.0).abs() < 2.0, "{stats}");
+    assert!(component(&f, "WeaponRecoil")["vertical_degrees"].as_f64().unwrap() > 1.5, "a magnum kicks hard");
+    let all = f.world.borrow().get_dynamic_resource("weapon_stats").unwrap().clone();
+    assert_eq!(all.as_object().unwrap().len(), 6, "every profile's physics is published");
+
+    f.tick(30);
+    assert_eq!((f.state()["ammo"].clone(), f.state()["reserve"].clone()), (json!(5), json!(15)));
+    tap(&f, "KeyV");
+    f.tick(2);
+    assert_eq!(f.state()["mode"], "single", "a revolver has no other fire mode");
+}
+
+/// A tube-fed pump shotgun reloads shell by shell from loose reserve rounds, only as many as are missing.
+#[test]
+fn a_tube_fed_shotgun_tops_up_one_shell_at_a_time() {
+    let f = Fixture::with_profile("shotgun_12");
+    assert_eq!(component(&f, "Ballistics")["projectiles"], 9);
+    f.tick(30);
+    assert_eq!((f.state()["ammo"].clone(), f.state()["reserve"].clone()), (json!(5), json!(20)));
+    shoot_once(&f);
+    shoot_once(&f);
+    assert_eq!(f.state()["ammo"], 3);
+    tap(&f, "KeyR");
+    f.tick(40);
+    assert_eq!(f.state()["state"], "reload", "the hip pose lowers first, then two shells take 1.1 s");
+    f.tick(80);
+    assert_eq!((f.state()["ammo"].clone(), f.state()["reserve"].clone()), (json!(5), json!(18)));
+}
+
+/// A select-fire carbine cycles exactly its profile's modes, and burst fires its profile's round count.
+#[test]
+fn a_select_fire_carbine_cycles_its_profile_modes() {
+    let f = Fixture::with_profile("carbine_556");
+    f.tick(30);
+    assert_eq!(f.state()["mode"], "single");
+    tap(&f, "KeyV");
+    f.tick(2);
+    assert_eq!(f.state()["mode"], "burst");
+    shoot_once(&f);
+    assert_eq!(f.state()["ammo"], 27, "a three-round burst");
+    tap(&f, "KeyV");
+    f.tick(2);
+    assert_eq!(f.state()["mode"], "auto");
+    tap(&f, "KeyV");
+    f.tick(2);
+    assert_eq!(f.state()["mode"], "single");
+}
+
+/// I turns the weapon over from an idle low ready and returns; aiming cancels it.
+#[test]
+fn inspect_plays_from_idle_low_ready_and_aiming_cancels_it() {
+    let f = Fixture::as_shipped();
+    f.tick(30);
+    f.world.borrow_mut().drain_events("first_person.frame");
+    f.key("KeyI", true);
+    f.key("KeyI", false);
+    f.tick(10);
+    assert_eq!(f.state()["state"], "inspectEnter");
+    f.tick(20);
+    assert_eq!(f.state()["state"], "inspecting");
+    let frames = f.world.borrow_mut().drain_events("first_person.frame");
+    assert!(frames.iter().any(|frame| frame["clip"] == "inspect"), "{frames:?}");
+    f.tick(100);
+    assert_eq!(f.state()["state"], "inspectExit", "I's hold ends on its own");
+    f.tick(30);
+    assert_eq!(f.state()["state"], "lowReady", "inspect returns to low ready after 2.4 s");
+
+    f.key("KeyI", true);
+    f.key("KeyI", false);
+    f.tick(30);
+    assert_eq!(f.state()["state"], "inspecting");
+    f.mouse("right", true);
+    f.tick(2);
+    assert!(!f.state()["state"].as_str().unwrap().starts_with("inspect"), "aiming cancels inspect");
+    f.tick(40);
+    assert_eq!(f.state()["state"], "ads");
+}
+
+/// The inspection HUD (Q) holds the weapon in the inspect pose for as long as it is open.
+#[test]
+fn the_inspection_hud_holds_the_inspect_pose_until_it_closes() {
+    let f = Fixture::as_shipped();
+    f.tick(30);
+    let hud = |name: &str| {
+        f.lua.dispatch("engine.event", &json!({"name": name, "payload": {}})).unwrap();
+    };
+    hud("hud.inspect_started");
+    f.tick(30);
+    assert_eq!(f.state()["state"], "inspecting");
+    f.tick(400);
+    assert_eq!(f.state()["state"], "inspecting", "held well past inspect_seconds while the HUD is open");
+    hud("hud.inspect_ended");
+    f.tick(2);
+    assert_eq!(f.state()["state"], "inspectExit");
+    f.tick(30);
+    assert_eq!(f.state()["state"], "lowReady");
+}
+
+/// Aiming mid-sprint is its own transition state into ADS, and releasing aim goes back the other way.
+#[test]
+fn run_to_ads_and_back_are_named_transitions() {
+    let f = Fixture::new();
+    f.key("KeyW", true);
+    f.key("ShiftLeft", true);
+    f.tick(35);
+    assert_eq!(f.state()["state"], "runForward");
+    f.mouse("right", true);
+    f.tick(2);
+    assert_eq!(f.state()["state"], "runToADS");
+    assert_eq!(f.world.borrow_mut().drain_events("first_person.frame").pop().unwrap()["clip"], "runFromADS");
+    f.tick(30);
+    assert_eq!(f.state()["state"], "ads");
+    f.mouse("right", false);
+    f.tick(2);
+    assert_eq!(f.state()["state"], "adsToRun");
+    f.tick(30);
+    assert_eq!(f.state()["state"], "runForward");
+    f.key("ShiftLeft", false);
+    f.tick(2);
+    assert_eq!(f.state()["state"], "runToLow");
+}
+
+/// A crouch slide (player.slide events from the movement script) takes the weapon into its slide pose; aiming
+/// leaves it, and the slide's end settles back to low ready.
+#[test]
+fn a_crouch_slide_drives_the_weapon_slide_state() {
+    let f = Fixture::new();
+    f.key("KeyW", true);
+    f.key("ShiftLeft", true);
+    f.tick(35);
+    f.lua.dispatch("player.slide", &json!({"active": true})).unwrap();
+    f.tick(2);
+    assert_eq!(f.state()["state"], "slide");
+    assert_eq!(f.world.borrow_mut().drain_events("first_person.frame").pop().unwrap()["clip"], "slide");
+    f.lua.dispatch("player.slide", &json!({"active": false})).unwrap();
+    f.key("ShiftLeft", false);
+    f.key("KeyW", false);
+    f.tick(2);
+    assert_eq!(f.state()["state"], "lowReady");
+
+    f.lua.dispatch("player.slide", &json!({"active": true})).unwrap();
+    f.tick(2);
+    assert_eq!(f.state()["state"], "slide");
+    f.mouse("right", true);
+    f.tick(2);
+    assert_ne!(f.state()["state"], "slide", "aiming leaves the slide pose");
+    f.tick(40);
+    assert_eq!(f.state()["state"], "ads");
 }
 
 #[test]
@@ -433,7 +622,7 @@ fn sprint_interrupts_passive_hip_recovery_after_the_visible_shot() {
     f.tick(30);
     assert_eq!(
         f.state()["state"],
-        "run",
+        "runForward",
         "sprint should not wait through the long idle recovery"
     );
 }
@@ -542,7 +731,7 @@ fn an_interrupted_aim_transition_can_continue_into_sprint() {
     f.key("KeyW", true);
     f.key("ShiftLeft", true);
     f.tick(45);
-    assert_eq!(f.state()["state"], "run");
+    assert_eq!(f.state()["state"], "runForward");
     let frames = f.world.borrow_mut().drain_events("first_person.frame");
     assert!(
         frames.iter().any(|frame| frame["clip"] == "runFromADS"),
@@ -591,14 +780,14 @@ fn stow_freezes_the_current_sprint_frame_instead_of_snapping_to_idle() {
     f.key("KeyW", true);
     f.key("ShiftLeft", true);
     f.tick(35);
-    assert_eq!(f.state()["state"], "run");
+    assert_eq!(f.state()["state"], "runForward");
     let before = f
         .world
         .borrow_mut()
         .drain_events("first_person.frame")
         .pop()
         .unwrap();
-    assert_eq!(before["clip"], "runLateral");
+    assert_eq!(before["clip"], "runForward");
     f.key("KeyF", true);
     f.key("KeyF", false);
     f.tick(1);
@@ -660,7 +849,7 @@ fn aim_takes_priority_over_sprint_and_returns_to_sprint_after_release() {
     f.key("KeyW", true);
     f.key("ShiftLeft", true);
     f.tick(35);
-    assert_eq!(f.state()["state"], "run");
+    assert_eq!(f.state()["state"], "runForward");
     f.mouse("right", true);
     f.tick(45);
     assert_eq!(
@@ -678,7 +867,7 @@ fn aim_takes_priority_over_sprint_and_returns_to_sprint_after_release() {
     f.tick(45);
     assert_eq!(
         f.state()["state"],
-        "run",
+        "runForward",
         "held Shift may sprint after ADS is released"
     );
 }
@@ -689,7 +878,7 @@ fn sprinting_single_tap_fires_promptly_and_returns_to_running() {
     f.key("KeyW", true);
     f.key("ShiftLeft", true);
     f.tick(35);
-    assert_eq!(f.state()["state"], "run");
+    assert_eq!(f.state()["state"], "runForward");
     f.mouse("left", true);
     f.mouse("left", false);
     f.tick(20);
@@ -701,7 +890,7 @@ fn sprinting_single_tap_fires_promptly_and_returns_to_running() {
     );
     assert_eq!(shots[0]["stance"], "hip");
     f.tick(45);
-    assert_eq!(f.state()["state"], "run");
+    assert_eq!(f.state()["state"], "runForward");
     assert_eq!(f.state()["shots"], 1);
 }
 
@@ -740,7 +929,7 @@ fn sprinting_auto_and_burst_do_not_drop_shots_or_interrupt_the_run() {
         f.tick(45);
         assert_eq!(
             f.state()["state"],
-            "run",
+            "runForward",
             "{mode} should return to the held sprint"
         );
         assert_eq!(f.state()["shots"], shots, "release should stop shooting");
@@ -776,7 +965,7 @@ fn stow_interrupts_a_carry_transition_and_equips_again() {
     f.key("KeyW", true);
     f.key("ShiftLeft", true);
     f.tick(3);
-    assert_eq!(f.state()["state"], "enterRun");
+    assert_eq!(f.state()["state"], "lowToRun");
     f.key("KeyF", true);
     f.key("KeyF", false);
     f.tick(40);
@@ -872,7 +1061,7 @@ fn continuous_fire_transitions_between_sprint_hip_and_ads() {
     f.mouse("left", false);
     let fired = f.state()["shots"].as_u64().unwrap();
     f.tick(45);
-    assert_eq!(f.state()["state"], "run");
+    assert_eq!(f.state()["state"], "runForward");
     assert_eq!(f.state()["shots"], fired);
 }
 
@@ -1053,7 +1242,7 @@ fn a_tap_interrupts_every_phase_of_entering_sprint() {
             "fire was lost during sprint transition at tick {elapsed}"
         );
         f.tick(45);
-        assert_eq!(f.state()["state"], "run");
+        assert_eq!(f.state()["state"], "runForward");
     }
 }
 
@@ -1254,4 +1443,45 @@ fn weapon_reset_restores_ammo_and_revives_without_changing_fire_mode() {
         f.state()["shots"].as_u64().unwrap() > 0,
         "the reset weapon must fire again"
     );
+}
+
+/// Each sprint direction is its own state with its own clip: the carry from low ready lands in the direction the
+/// keys choose, changing direction mid-sprint switches state with a crossfade, and releasing sprint carries back.
+#[test]
+fn each_sprint_direction_is_its_own_state_with_its_own_clip() {
+    let f = Fixture::new();
+    let last_frame = |f: &Fixture| f.world.borrow_mut().drain_events("first_person.frame").pop().unwrap();
+    f.key("KeyA", true);
+    f.key("ShiftLeft", true);
+    f.tick(35);
+    assert_eq!(f.state()["state"], "runLeft", "a strafing sprint carries straight into the left run");
+    assert_eq!(last_frame(&f)["clip"], "runLeft");
+
+    for (release, press, state) in [
+        ("KeyA", "KeyD", "runRight"),
+        ("KeyD", "KeyS", "runBackward"),
+        ("KeyS", "KeyW", "runForward"),
+    ] {
+        f.key(release, false);
+        f.key(press, true);
+        f.tick(1);
+        assert_eq!(f.state()["state"], state);
+        let frame = last_frame(&f);
+        assert_eq!(frame["clip"], state);
+        if state != "runForward" {
+            assert!(frame["transition_seconds"].as_f64().unwrap() > 0.0, "{state} crossfades in: {frame}");
+        }
+    }
+    f.key("KeyA", true);
+    f.tick(2);
+    assert_eq!(f.state()["state"], "runForward", "a forward diagonal still runs forward");
+    f.key("KeyW", false);
+    f.tick(2);
+    assert_eq!(f.state()["state"], "runLeft");
+
+    f.key("ShiftLeft", false);
+    f.tick(2);
+    assert_eq!(last_frame(&f)["clip"], "runFromLow", "releasing sprint carries back to low ready");
+    f.tick(40);
+    assert_eq!(f.state()["state"], "lowReady");
 }

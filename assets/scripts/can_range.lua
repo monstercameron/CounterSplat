@@ -142,8 +142,15 @@ ecs.on('projectile.impact',function(event)
     local speed=math.sqrt(vx*vx+vy*vy+vz*vz)
     if speed<1e-6 then return end
     local units=number((ecs.get(player,'PlayerRig') or {}).units_per_meter,1,.01,100)
-    -- The momentum a bullet passing through a can leaves behind (kg·m/s), in level units.
-    local impulse=number(config.shot_impulse_ns,.12,0,10)*units/speed
+    -- A bullet passing through a thin can leaves a fraction of its momentum behind (kg·m/s), in level units.
+    -- Projectiles carry their mass from the weapon profile; `shot_impulse_ns` covers ones that do not.
+    local momentum
+    if type(event.mass_kg)=='number' and event.mass_kg==event.mass_kg and event.mass_kg>0 then
+        momentum=number(event.mass_kg,0,0,1)*speed/units*number(config.momentum_transfer,.03,0,1)
+    else
+        momentum=number(config.shot_impulse_ns,.12,0,10)
+    end
+    local impulse=momentum*units/speed
     -- Push at the hit point pulled towards the can's axis, so the hitbox sphere's surface does not exaggerate spin.
     local centre=(ecs.get(event.target,'Transform') or {}).position or event.position
     local point=vec(centre[1]+(event.position[1]-centre[1])*.5,centre[2]+(event.position[2]-centre[2])*.5,

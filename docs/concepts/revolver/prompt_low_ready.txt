@@ -1,0 +1,13 @@
+This is concept art for the view-model of an indie first-person video game (a target-practice game where the player knocks cans off a wall). Use your image generation tool to create ONE image and save it as a PNG file named `revolver_fp_lowready.png` in the current working directory. Do not create, edit or delete any other files, including any memory or notes files.
+
+Image: the game's first-person view-model of a large stainless-steel revolver prop, seen from the player's eyes, resting in a relaxed "low ready" idle pose.
+
+- Pose: both gloved hands hold the revolver low and close to the body, slightly right of centre in the bottom third of the frame. The barrel points forward, away from the viewer, and tilts down toward the floor at roughly 30-45 degrees, so the gun is foreshortened in perspective. It does not point sideways across the screen, and the upper two thirds of the frame are empty.
+- From this slightly-above, behind-the-hands viewpoint we see the top strap, rear sight, hammer and top of the cylinder, with the barrel receding toward the bottom centre of the frame.
+- Hands: dark gloves and dark jacket sleeves, forearms entering from the bottom edge, elbows relaxed and bent. The right hand wraps the grip with the index finger resting straight along the side of the frame; the left hand cups the right hand from below. Natural anatomy, five fingers per hand.
+- The revolver: an oversized X-frame double-action revolver in brushed stainless steel, long ported barrel with a muzzle compensator, full-length underlug, large five-chamber cylinder, exposed hammer, black rubber finger-groove grips. No brand names, logos or engraved text.
+- Background: a flat, uniform pure chroma-key green (#00FF00) everywhere that is not gun, hands or sleeves, so the game can key it out. No floor, shadows, gradient or vignette, and no green spill on the steel or gloves. Crisp edges.
+- Style: photorealistic game render, soft studio light from the upper left, sharp focus.
+- Landscape 16:9, about 1672x941 or larger. No text, watermark, crosshair or HUD.
+
+When finished, reply with the absolute path of the saved file and its pixel size. If the image tool refuses, say so and stop without retrying.

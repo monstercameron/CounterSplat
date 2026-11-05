@@ -11,6 +11,7 @@ pub mod host_preferences;
 pub mod line_layers;
 pub mod minimap;
 pub mod voxel_host;
+pub mod weapon_profile;
 mod camera_controller;
 mod image_correction;
 mod level;

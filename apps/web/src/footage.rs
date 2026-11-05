@@ -140,6 +140,16 @@ fn pump(inner: &Rc<RefCell<Inner>>) {
     }
 }
 
+/// The first-person footage manifest asset the scene's weapon profile names, or `fallback` when none does.
+#[wasm_bindgen]
+pub fn weapon_footage_asset(scene: JsValue, fallback: &str) -> String {
+    let bytes = serde_json::to_vec(&to_json(&scene)).unwrap_or_default();
+    match countersplat_scene::SceneManifest::from_json(&bytes) {
+        Ok(manifest) => countersplat_scene::weapon_profile::footage_asset(&manifest, fallback).to_owned(),
+        Err(_) => fallback.to_owned(),
+    }
+}
+
 /// First-person footage for the gameplay viewer: `scene` declares the frame assets, `manifest` the clips,
 /// `preloaded` maps URLs to bytes already fetched, and `viewer` receives the frames.
 #[wasm_bindgen]

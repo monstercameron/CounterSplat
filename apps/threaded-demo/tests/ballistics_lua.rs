@@ -644,3 +644,30 @@ fn combat_reset_cancels_in_flight_projectiles_and_stale_worker_replies() {
     assert!(f.events("projectile.impact").is_empty());
     assert!(f.events("physics.trace_request").is_empty());
 }
+
+/// A shotgun-style shot (weapon profile `projectiles`, `spread_deg`, `projectile_mass_kg`) fires one projectile per
+/// pellet, spread evenly inside the cone, each carrying its own mass.
+#[test]
+fn a_shot_fires_every_pellet_inside_its_spread_cone() {
+    let f = Fixture::new(false);
+    f.world.borrow_mut().set_dynamic(f.weapon, "Ballistics", json!({"speed_mps": 404.0, "gravity_mps2": 0.0,
+        "max_range_m": 100.0, "max_lifetime_s": 3.0, "damage": 6.4, "show_tracers": true,
+        "projectiles": 9, "spread_deg": 3.0, "projectile_mass_kg": 0.003486})).unwrap();
+    f.shot();
+    let spawned = f.events("projectile.spawned");
+    assert_eq!(spawned.len(), 9, "{spawned:?}");
+    let mut directions: Vec<[f64; 3]> = Vec::new();
+    for event in &spawned {
+        let v: Vec<f64> = (0..3).map(|i| event["velocity"][i].as_f64().unwrap()).collect();
+        let speed = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        assert!((speed - 404.0).abs() < 1e-6);
+        let d = [v[0] / speed, v[1] / speed, v[2] / speed];
+        let off_axis = (-d[2]).clamp(-1.0, 1.0).acos().to_degrees();
+        assert!(off_axis <= 1.5 + 1e-9, "pellet {off_axis} degrees off axis");
+        assert!(directions.iter().all(|o| (0..3).map(|i| (o[i] - d[i]).abs()).sum::<f64>() > 1e-4), "pellets differ");
+        directions.push(d);
+        let projectile = f.world.borrow().get_dynamic(event["entity"].as_str().unwrap().parse().unwrap(), "Projectile")
+            .unwrap().clone();
+        assert_eq!(projectile["mass_kg"], 0.003486);
+    }
+}

@@ -6460,13 +6460,45 @@
       "parent": "page_controls"
     },
     {
+      "id": "controls_bob",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": { "x": 322, "y": 494, "width": 620, "height": 32 },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": { "fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [235, 239, 239, 255], "font_size": 14, "rounding": 4 },
+          "widget": { "type": "checkbox", "label": "View bob (steps sway the view)", "checked": true }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
+      "id": "controls_breathing",
+      "layer": "ui",
+      "components": {
+        "UiElement": {
+          "rect": { "x": 322, "y": 532, "width": 620, "height": 32 },
+          "z": 112,
+          "visible": true,
+          "enabled": true,
+          "draggable": false,
+          "style": { "fill": [0, 0, 0, 0], "border": [0, 0, 0, 0], "text": [235, 239, 239, 255], "font_size": 14, "rounding": 4 },
+          "widget": { "type": "checkbox", "label": "Breathing sway (grows after running, settles at rest)", "checked": true }
+        }
+      },
+      "parent": "page_controls"
+    },
+    {
       "id": "controls_footer",
       "layer": "ui",
       "components": {
         "UiElement": {
           "rect": {
             "x": 322,
-            "y": 512,
+            "y": 584,
             "width": 680,
             "height": 28
           },

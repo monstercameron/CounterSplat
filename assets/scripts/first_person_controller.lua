@@ -27,12 +27,34 @@ local function setting(name, fallback, low, high)
 end
 local capacity=math.floor(setting('magazine_capacity',30,1,500))
 local initial_ammo=math.floor(setting('initial_loaded',capacity,0,capacity))
+-- Weapon profiles (countersplat_scene::weapon_profile) fill these from the gun's feed and fire modes:
+-- `swap` reloads exchange a full magazine or speedloader, `top_up` reloads load loose rounds one at a time
+-- from a reserve; `modes` lists the selectable fire modes in cycle order.
+local reload_kind=config.reload_kind=='top_up' and 'top_up' or 'swap'
 local initial_spares={}
-for i=1,3 do
-    local n=type(config.initial_spares)=='table' and config.initial_spares[i] or capacity
-    if type(n)~='number' or n~=n then n=capacity end
-    initial_spares[i]=math.floor(math.max(0,math.min(capacity,n)))
+if type(config.initial_spares)=='table' then
+    for i=1,16 do
+        local n=config.initial_spares[i]
+        if n==nil then break end
+        if type(n)~='number' or n~=n then n=capacity end
+        initial_spares[i]=math.floor(math.max(0,math.min(reload_kind=='swap' and capacity or 9999,n)))
+    end
+else
+    initial_spares={capacity,capacity,capacity}
 end
+local modes={}
+if type(config.modes)=='table' then
+    for i=1,3 do
+        local m=config.modes[i]
+        if m=='single' or m=='burst' or m=='auto' then modes[#modes+1]=m end
+    end
+end
+if #modes==0 then modes={'single','burst','auto'} end
+local function mode_allowed(mode)
+    for _,m in ipairs(modes) do if m==mode then return true end end
+    return false
+end
+local burst_rounds=math.floor(setting('burst_rounds',3,2,10))
 for _, e in ipairs({
     {'fp_enabled','enabled','First-person view'},
     {'fp_opacity','opacity','View opacity',0,1},
@@ -46,7 +68,7 @@ for _, e in ipairs({
     engine.export(owner,e[1],spec)
 end
 for _, e in ipairs({
-    {'weapon_rate','fire_interval','Seconds per shot',0.05,1},
+    {'weapon_rate','fire_interval','Seconds per shot',0.03,5},
     {'weapon_reload','reload_seconds','Reload seconds',0.1,10},
     {'weapon_raise','hip_raise_seconds','Hip raise seconds',0.05,1},
     {'weapon_sprint_exit','sprint_fire_exit_seconds','Sprint-to-fire exit (sec)',0.05,0.5},
@@ -112,7 +134,7 @@ local stability=engine.aim_stability and engine.aim_stability.new(owner,player) 
 local start_state=config.start_stowed==true and 'noGun' or 'lowReady'
 local function new_weapon_state()
     return {
-    state=start_state, mode='single', ammo=initial_ammo, mags={initial_spares[1],initial_spares[2],initial_spares[3]}, shots=0,
+    state=start_state, mode=modes[1], ammo=initial_ammo, mags={table.unpack(initial_spares)}, shots=0,
     aim=false, held=false, pending=false, hip_shot=false, burst=0, cooldown=0, recovery=0,
     equip_requested=false,
     time=0, duration=0, target=nil, clip='raising', from=0, to=0,
@@ -151,15 +173,41 @@ local function lowered_amount()
     local target=s.state=='equip' and 0 or 1
     return start+(target-start)*smooth
 end
-local function reserve() return s.mags[1]+s.mags[2]+s.mags[3] end
+local function reserve()
+    local n=0
+    for i=1,#s.mags do n=n+s.mags[i] end
+    return n
+end
 -- Keep physical magazines: reloading swaps the fullest spare with the loaded one.
 local function spare()
     local best=nil
-    for i=1,3 do if s.mags[i]>s.ammo and (not best or s.mags[i]>s.mags[best]) then best=i end end
+    for i=1,#s.mags do if s.mags[i]>s.ammo and (not best or s.mags[i]>s.mags[best]) then best=i end end
     return best
+end
+-- A top-up reload loads loose rounds from the fullest reserve pouches until full.
+local function top_up()
+    local need=capacity-s.ammo
+    while need>0 do
+        local best=nil
+        for i=1,#s.mags do if s.mags[i]>0 and (not best or s.mags[i]>s.mags[best]) then best=i end end
+        if not best then break end
+        local take=math.min(need,s.mags[best])
+        s.mags[best]=s.mags[best]-take; s.ammo=s.ammo+take; need=need-take
+    end
 end
 local function wants_shot() return s.hip_shot or s.pending or s.burst>0 or (s.mode=='auto' and s.held) end
 local HIP_TRANSITIONS={hipRaise=true,hipLower=true,hipToADS=true,adsToHip=true}
+-- Sprinting has one state per direction, each with its own looping clip. Carries into and out of a sprint
+-- (runFromLow, runFromADS) end on whichever direction state the movement keys choose.
+local RUN_CLIPS={runForward='runForward',runLeft='runLeft',runRight='runRight',runBackward='runBackward'}
+local function is_run(state) return RUN_CLIPS[state]~=nil end
+-- Inspect: `inspectEnter` turns the weapon into the observe pose, `inspecting` holds it, `inspectExit` returns
+-- to low ready. The inspection HUD (Q) holds it while open; I holds it for `inspect_seconds` in all.
+local INSPECT_STATES={inspectEnter=true,inspecting=true,inspectExit=true}
+local function run_clip(state)
+    local clip=RUN_CLIPS[state]
+    return clip and clips[clip] and clip or 'runLateral'
+end
 local function phase()
     if s.duration<=0 then return s.to end
     local t=clamp(s.time/s.duration,0,1)
@@ -185,21 +233,33 @@ local function pose_transition(state,to,duration,target)
     if math.abs(to-from)>1e-8 then s.pose_slope=clamp(velocity*s.duration/(to-from),0,3) end
 end
 local function stable(state)
+    -- Changing sprint direction keeps the running gait clock; starting a sprint restarts it.
+    local was_running=is_run(s.state) and s.duration<=0
     s.state,s.duration,s.time,s.target=state,0,0,nil
     s.lower_from=nil
     if state=='ads' then s.clip,s.to='raising',1
     elseif state=='hipFire' then s.clip,s.to='raising',HIP
-    elseif state=='run' then s.clip,s.to='runLateral',0
+    elseif is_run(state) then s.clip,s.to=run_clip(state),0
+    elseif state=='inspecting' then s.clip,s.to='inspect',.5
+    elseif state=='slide' then s.clip,s.to=clips.slide and 'slide' or 'raising',0
     else s.clip,s.to='raising',0 end
     s.from=s.to
     s.idle_settle=.12
-    if state=='run' then s.run_clock=0 end
+    if is_run(state) and not was_running then s.run_clock=0 end
 end
 local function stop_trigger() s.held,s.pending,s.hip_shot,s.burst=false,false,false,0 end
 local function reload()
     if s.equip_requested or s.state=='dead' or s.state=='death' or s.state=='noGun' or s.state=='repack' then return end
-    local slot=spare()
-    if not slot then return end
+    local slot,seconds
+    if reload_kind=='top_up' then
+        local rounds=math.min(capacity-s.ammo,reserve())
+        if rounds<=0 then return end
+        slot,seconds='top_up',setting('reload_seconds',.5,.05,15)*rounds
+    else
+        slot,seconds=spare(),setting('reload_seconds',4,.1,15)
+        if not slot then return end
+    end
+    if INSPECT_STATES[s.state] then stable('lowReady') end
     -- Let a committed shot display its flash before changing clips.
     if s.flash>0 and (s.state=='ads' or s.state=='hipFire') then
         s.reload_requested=true; stop_trigger(); return
@@ -210,14 +270,14 @@ local function reload()
     end
     stop_trigger(); s.reload_requested=false; s.recovery=0; s.reload_slot=slot
     local ads=s.state=='ads'
-    transition(ads and 'reloadADS' or 'reload',ads and 'reloadADS' or 'reload',0,1,setting('reload_seconds',4,.1,10),ads and 'ads' or 'lowReady')
+    transition(ads and 'reloadADS' or 'reload',ads and 'reloadADS' or 'reload',0,1,seconds,ads and 'ads' or 'lowReady')
     ecs.emit('weapon.reload_started', {entity=owner, aiming=ads})
 end
 -- Consolidation moves exactly one round at a time without creating ammunition.
 local function pack_round()
-    local rounds={s.ammo,s.mags[1],s.mags[2],s.mags[3]}
+    local rounds={s.ammo,table.unpack(s.mags)}
     local target,donor=nil,nil
-    for i=1,4 do
+    for i=1,#rounds do
         local n=rounds[i]
         if n>0 and n<capacity then
             if not target or n>rounds[target] then target=i end
@@ -226,13 +286,15 @@ local function pack_round()
     end
     if not target or not donor or target==donor then return false end
     rounds[target],rounds[donor]=rounds[target]+1,rounds[donor]-1
-    s.ammo,s.mags[1],s.mags[2],s.mags[3]=rounds[1],rounds[2],rounds[3],rounds[4]
+    s.ammo=rounds[1]
+    for i=1,#s.mags do s.mags[i]=rounds[i+1] end
     return true
 end
 local function begin_repack()
-    if s.duration>0 or s.state=='noGun' or s.state=='dead' or s.state=='death' then return end
+    -- Only detachable magazines and speedloaders are consolidated; loose rounds have nothing to repack.
+    if reload_kind~='swap' or s.duration>0 or s.state=='noGun' or s.state=='dead' or s.state=='death' then return end
     local partial=0
-    for _,n in ipairs({s.ammo,s.mags[1],s.mags[2],s.mags[3]}) do if n>0 and n<capacity then partial=partial+1 end end
+    for _,n in ipairs({s.ammo,table.unpack(s.mags)}) do if n>0 and n<capacity then partial=partial+1 end end
     if partial<2 then return end
     stop_trigger(); s.reload_requested=false; s.state='repack'; s.repack_time=0; s.clip='raising'; s.to=0
 end
@@ -240,7 +302,7 @@ end
 local function shoot(cadence_remainder)
     if s.cooldown>0 or s.duration>0 or (s.state~='ads' and s.state~='hipFire') then return end
     if s.ammo<=0 then s.pending=false; s.hip_shot=false; s.burst=0; s.held=false; ecs.emit('weapon.dry_fire',{entity=owner}); return end
-    local interval=setting('fire_interval',.1,.05,1)
+    local interval=setting('fire_interval',.1,.03,5)
     s.cooldown=interval-(s.ammo>1 and clamp(cadence_remainder or 0,0,interval-.001) or 0)
     s.ammo=s.ammo-1; s.shots=s.shots+1
     s.flash=0.14; s.flash_fresh=true; s.flash_stance=s.state=='ads' and 'ads' or 'hip'
@@ -302,7 +364,10 @@ local function shoot(cadence_remainder)
     local screen_x,screen_y
     if aspect>source then screen_x,screen_y=.5+(frame_x-.5)*source/aspect,frame_y
     else screen_x,screen_y=frame_x,1+(frame_y-1)*aspect/source end
-    if view.enabled~=true or (type(view.opacity)=='number' and view.opacity<=0) then screen_x,screen_y=.5,.5 end
+    -- Stand-in stills have no authored sight landmarks, so the view can aim through the camera centre.
+    if view.enabled~=true or view.aim_from_camera==true or (type(view.opacity)=='number' and view.opacity<=0) then
+        screen_x,screen_y=.5,.5
+    end
     local fov=type(camera.view_fov_degrees)=='number' and camera.view_fov_degrees or camera.fov_degrees
     local tangent=math.tan(math.rad(clamp(fov,.01,178.999))*.5)
     local sx=(screen_x-.5)*2*aspect*tangent
@@ -354,7 +419,7 @@ local function trigger(down)
     if not down then s.held=false; s.pending=false; return end
     if s.held or s.reload_requested or s.equip_requested or s.state=='reload' or s.state=='reloadADS' or s.state=='repack' or s.state=='stow' or s.state=='equip' or s.state=='noGun' or s.state=='dead' or s.state=='death' then return end
     s.held=true
-    if s.mode=='burst' then s.burst=3
+    if s.mode=='burst' then s.burst=burst_rounds
     elseif s.mode=='single' then
         local ready=s.duration<=0 and s.cooldown<=0 and
             ((s.state=='ads' and s.aim) or (s.state=='hipFire' and not s.aim))
@@ -364,7 +429,9 @@ local function trigger(down)
     end
 end
 local function cycle_mode()
-    s.mode=s.mode=='single' and 'burst' or s.mode=='burst' and 'auto' or 'single'
+    local next_mode=modes[1]
+    for i,m in ipairs(modes) do if m==s.mode then next_mode=modes[i%#modes+1] end end
+    s.mode=next_mode
     stop_trigger()
 end
 local function equip()
@@ -386,7 +453,42 @@ local function equip()
         transition('stow','raising',current,current,.5,'noGun'); s.lower_from=lowered
     end
 end
+-- Inspect from an idle low ready. `held` keeps the observe pose until end_inspect (the inspection HUD's
+-- lifetime); otherwise it returns after `inspect_seconds`. Aim, fire, sprint or reload cancel it.
+local INSPECT_TURN=.35
+local function inspect(held)
+    if s.state=='inspectEnter' or s.state=='inspecting' then
+        if held then s.inspect_held=true end
+        return
+    end
+    if s.state~='lowReady' or s.duration>0 or s.aim or s.flash>0 or s.reload_requested or s.equip_requested then return end
+    stop_trigger()
+    s.inspect_held=held==true
+    s.inspect_left=math.max(0,setting('inspect_seconds',2.4,.5,10)-2*INSPECT_TURN)
+    transition('inspectEnter','inspect',0,.5,INSPECT_TURN,'inspecting')
+end
+local function end_inspect()
+    s.inspect_held=false
+    if s.state=='inspecting' then transition('inspectExit','inspect',.5,1,INSPECT_TURN,'lowReady')
+    elseif s.state=='inspectEnter' then
+        -- The inspect clip is symmetric, so turning back early retraces the entry from its visible phase.
+        local p=phase()
+        transition('inspectExit','inspect',p,0,math.max(.01,INSPECT_TURN*p/.5),'lowReady')
+    end
+end
+-- The player's crouch slide (player_controls.lua) drives the weapon's `slide` state.
+ecs.on('player.slide',function(e)
+    if type(e)=='table' and (e.player==nil or e.player==player) then s.sliding=e.active==true end
+end)
 -- External game scripts can use these ordinary ECS events without knowing the host.
+ecs.on('weapon.inspect',function(e) inspect(type(e)=='table' and e.held==true) end)
+-- The HUD may open while the weapon is busy (raised from a shot, aiming, sprinting); it then inspects as soon as
+-- the weapon settles into an idle low ready, for as long as the HUD stays open.
+engine.events.on('hud.inspect_started',function() s.inspect_wanted=true; inspect(true) end)
+engine.events.on('hud.inspect_ended',function()
+    s.inspect_wanted=false
+    if s.inspect_held then end_inspect() end
+end)
 ecs.on('weapon.trigger',function(e) trigger(e.pressed==true) end)
 ecs.on('weapon.aim',function(e) s.aim=e.pressed==true end)
 ecs.on('weapon.reload',reload)
@@ -456,7 +558,7 @@ ecs.on('physics.motion_resolved',function(event)
 end)
 ecs.on('input.reset',function()
     stop_trigger(); s.aim=false; s.keys={}; s.reload_held=false; s.reload_time=0
-    s.reload_requested=false; s.equip_requested=false
+    s.reload_requested=false; s.equip_requested=false; s.sliding=false; s.inspect_wanted=false
     s.look_x,s.look_y,s.resolved_distance=0,0,0
     s.camera_kick_pitch,s.camera_kick_yaw=0,0
     presented_pose=nil
@@ -473,7 +575,7 @@ ecs.on('input.key',function(e)
             if s.state=='repack' then stable('lowReady') elseif s.reload_time<.65 then reload() end
         end
     elseif e.pressed and not e.is_repeat then
-        if e.code=='KeyV' then cycle_mode() elseif e.code=='KeyF' then equip() end
+        if e.code=='KeyV' then cycle_mode() elseif e.code=='KeyF' then equip() elseif e.code=='KeyI' then inspect(false) end
     end
 end)
 
@@ -484,11 +586,13 @@ ecs.on('weapon.reset',function(event)
     if type(event)=='table' and event.entity~=nil and event.entity~=owner then return end
     local mode=s.mode
     s=new_weapon_state()
-    if mode=='single' or mode=='burst' or mode=='auto' then s.mode=mode end
+    if mode_allowed(mode) then s.mode=mode end
     last_pose,presented_pose,last_frame,last_state,last_clip,ammo_pose_signature=nil,nil,nil,nil,nil,nil
     if stability and stability.reset then stability:reset() end
 end)
-local canonical={raising=true,runFromLow=true,runFromADS=true,runLateral=true}
+-- Clips that share endpoint frames, so switching between them needs no crossfade. runForward is the carries'
+-- run endpoint; the other directions crossfade in.
+local canonical={raising=true,runFromLow=true,runFromADS=true,runLateral=true,runForward=true}
 local function is_fire(clip) return clip=='fireHip' or clip=='fireADS' end
 -- Select authored loops, shared carry bridges and interrupted crouch phases.
 -- The host streams these frames and blends only discontinuous clip handoffs.
@@ -504,8 +608,10 @@ local function present()
         clip,p,direction=s.frozen_pose.clip,s.frozen_pose.p,s.frozen_pose.direction
     elseif s.flash>0 and (s.state=='ads' or s.state=='hipFire') and clips[fire] and clips[fire].enabled~=false then
         clip=fire; p=1-s.flash/(clips[fire].duration or .14)
-    elseif s.state=='run' then
-        clip='runLateral'; p=(s.run_clock%1.6)/1.6; loop=true
+    elseif is_run(s.state) then
+        clip=run_clip(s.state)
+        local period=clips[clip].duration or 1.6
+        p=(s.run_clock%period)/period; loop=true
     elseif s.crouch>0 and (s.state=='lowReady' or s.state=='ads') and s.duration<=0 then
         local stance=s.state=='ads' and 'ADS' or 'Low'
         if s.crouch<.999 then
@@ -561,7 +667,7 @@ local function present()
     local status=table.concat({s.state,s.mode,s.ammo,reserve(),s.shots,s.reaction,clip},':')
     if status~=last_state then
         last_state=status
-        local magazines=ecs.array(); for i=1,3 do magazines[i]=s.mags[i] end
+        local magazines=ecs.array(); for i=1,#s.mags do magazines[i]=s.mags[i] end
         ecs.set(owner,'WeaponState',{state=s.state,mode=s.mode,ammo=s.ammo,reserve=reserve(),magazines=magazines,
             shots=s.shots,reaction=s.reaction,clip=clip})
     end
@@ -570,15 +676,19 @@ local function is_down(bindings,name)
     local code=bindings and bindings[name]
     return engine.input.is_down(s.keys,code)
 end
+-- Movement keys, whether the player sprints, and which run direction state a sprint uses: any forward input
+-- runs forward, any backward input runs backward, a pure strafe runs left or right.
 local function movement(c)
-    if not c or not c.enabled then return false,false end
+    if not c or not c.enabled then return false,false,'runForward' end
     local b=c.bindings
     local forward=(is_down(b,'forward') and 1 or 0)-(is_down(b,'backward') and 1 or 0)
     local side=(is_down(b,'right') and 1 or 0)-(is_down(b,'left') and 1 or 0)
     local moving=forward~=0 or side~=0
+    local direction=forward>0 and 'runForward' or forward<0 and 'runBackward' or
+        side<0 and 'runLeft' or side>0 and 'runRight' or 'runForward'
     -- Locomotion stays at sprint speed during hip fire; the weapon's carry
     -- target is selected separately below. ADS and crouch still block sprint.
-    return moving,moving and is_down(b,'sprint') and s.crouch<.001 and not s.aim
+    return moving,moving and is_down(b,'sprint') and s.crouch<.001 and not s.aim,direction
 end
 local previous_position=nil
 local function spring(axis,dt,frequency,damping)
@@ -619,8 +729,8 @@ local function update_motion(dt,moving,running,controls)
     local ease=1-math.exp(-dt*12)
     s.gait_gain=s.gait_gain+(gain-s.gait_gain)*ease
     local carry=0
-    if s.edge_b=='run' then carry=clamp(phase(),0,1)
-    elseif s.state=='run' then carry=1 end
+    if is_run(s.edge_b) then carry=clamp(phase(),0,1)
+    elseif is_run(s.state) then carry=1 end
     local wave=math.sin(s.gait_phase)
     local gait=animation_setting('movement_strength',1,0,3)*s.gait_gain
     local gait_x=wave*(.0035*(1-carry)+.045*carry)*gait
@@ -666,33 +776,46 @@ end
 
 -- Each carry clip joins shared endpoint images. Reversing a transition starts
 -- at its current phase, including when aim or sprint changes mid-animation.
+-- Each carry is its own named transition state between its two endpoint poses.
+local function carry_state(from,to)
+    if is_run(to) then return from=='ads' and 'adsToRun' or 'lowToRun' end
+    if to=='ads' then return is_run(from) and 'runToADS' or 'raising' end
+    return is_run(from) and 'runToLow' or 'lowering'
+end
+-- The run end of a carry is whichever direction state the sprint uses.
 local function edge(a,b)
+    local run=is_run(a) and a or is_run(b) and b or nil
     if (a=='lowReady' and b=='ads') or (b=='lowReady' and a=='ads') then return 'raising','lowReady','ads',.28 end
-    if (a=='lowReady' and b=='run') or (b=='lowReady' and a=='run') then return 'runFromLow','lowReady','run',.24 end
-    if (a=='ads' and b=='run') or (b=='ads' and a=='run') then return 'runFromADS','ads','run',.28 end
+    if run and (a=='lowReady' or b=='lowReady') then return 'runFromLow','lowReady',run,.24 end
+    if run and (a=='ads' or b=='ads') then return 'runFromADS','ads',run,.28 end
 end
 local function carry(target,quick_fire)
     local clip,a,b,duration=edge(s.state,target)
     if not clip then return false end
-    if quick_fire and s.state=='run' and target=='lowReady' then
+    if quick_fire and is_run(s.state) and target=='lowReady' then
         duration=math.min(duration,setting('sprint_fire_exit_seconds',.12,.05,.5))
     end
     local from=s.state==a and 0 or 1
     local to=target==a and 0 or 1
-    transition(target=='run' and 'enterRun' or target=='ads' and 'raising' or 'lowering',clip,from,to,duration,target)
+    transition(carry_state(s.state,target),clip,from,to,duration,target)
     s.edge_a,s.edge_b,s.edge_duration=a,b,duration
     return true
 end
 local function reverse_carry(target,quick_fire)
     if not s.edge_a then return false end
+    -- A direction change while carrying into a sprint lands in the new direction.
+    if is_run(target) and is_run(s.edge_b) and s.edge_b~=target then
+        s.edge_b=target
+        if s.to==1 then s.target=target end
+    end
     local desired=target==s.edge_a and 0 or target==s.edge_b and 1 or (phase()<.5 and 0 or 1)
     if desired==s.to then return false end
     local p=phase(); local a,b,clip,duration=s.edge_a,s.edge_b,s.clip,s.edge_duration
     local end_state=desired==0 and a or b
-    if quick_fire and (a=='run' or b=='run') and end_state~='run' then
+    if quick_fire and (is_run(a) or is_run(b)) and not is_run(end_state) then
         duration=math.min(duration,setting('sprint_fire_exit_seconds',.12,.05,.5))
     end
-    transition(end_state=='run' and 'enterRun' or end_state=='ads' and 'raising' or 'lowering',clip,p,desired,math.max(.01,math.abs(desired-p)*duration),end_state)
+    transition(carry_state(desired==0 and b or a,end_state),clip,p,desired,math.max(.01,math.abs(desired-p)*duration),end_state)
     s.edge_a,s.edge_b,s.edge_duration=a,b,duration
     return true
 end
@@ -737,7 +860,7 @@ ecs.system('player.first_person',function(dt)
     if dt<=0 then present(); return end
     update_camera_recoil(dt)
     local controls=read_controls()
-    local moving,sprint=movement(controls)
+    local moving,sprint,run_direction=movement(controls)
     -- Hold the authored idle briefly after an action; breathing has its own
     -- clock and remains alive while the filmed transition settles.
     s.motion_clock=s.motion_clock+dt
@@ -774,15 +897,31 @@ ecs.system('player.first_person',function(dt)
         present(); return
     end
     local shooting=wants_shot()
+    -- A slide takes over from low ready, a sprint or a carry between them; aiming or firing leaves it while the
+    -- body keeps sliding, and when the slide ends the weapon settles into the crouch.
+    local slide_from=s.state=='lowReady' or is_run(s.state) or s.state=='lowToRun' or s.state=='runToLow'
+    if s.sliding and not s.aim and not shooting and (s.state=='slide' or slide_from) then
+        if s.state~='slide' then s.edge_a,s.edge_b,s.edge_duration=nil,nil,nil; stable('slide') end
+        present(); return
+    end
+    if s.state=='slide' then stable('lowReady') end
     local quick_fire=sprint and not s.aim and shooting
     -- A raised hip-fire pose can coexist with sprint locomotion. Only return
     -- to the run carry after the requested shot/burst and flash have finished.
-    local target=s.aim and 'ads' or (sprint and not shooting) and 'run' or 'lowReady'
+    local target=s.aim and 'ads' or (sprint and not shooting) and run_direction or 'lowReady'
     if sprint and not shooting and s.fire_pose_hold<=0 and (s.state=='hipFire' or
         (s.state=='hipLower' and s.duration-s.time>.16)) then
         s.recovery=0; pose_transition('hipLower',0,.16,'lowReady'); present(); return
     end
     if s.edge_a and reverse_carry(target,quick_fire) then present(); return end
+    if INSPECT_STATES[s.state] and (s.aim or shooting or sprint) then s.inspect_held=false; stable('lowReady') end
+    if s.inspect_wanted and s.state=='lowReady' and s.duration<=0 and not (s.aim or shooting or sprint) then
+        inspect(true)
+    end
+    if s.state=='inspecting' and not s.inspect_held then
+        s.inspect_left=(s.inspect_left or 0)-dt
+        if s.inspect_left<=0 then end_inspect() end
+    end
     if s.duration>0 then
         -- Hip raises/lowers are reversible from their current filmed phase.
         if s.state=='hipLower' and not s.aim and shooting then
@@ -796,7 +935,9 @@ ecs.system('player.first_person',function(dt)
         s.time=s.time+dt
         if s.time+1e-9>=s.duration then
             if (s.state=='reload' or s.state=='reloadADS') and s.reload_slot then
-                s.ammo,s.mags[s.reload_slot]=s.mags[s.reload_slot],s.ammo; s.reload_slot=nil
+                if s.reload_slot=='top_up' then top_up()
+                else s.ammo,s.mags[s.reload_slot]=s.mags[s.reload_slot],s.ammo end
+                s.reload_slot=nil
             end
             local done=s.target; s.edge_a,s.edge_b,s.edge_duration=nil,nil,nil; stable(done)
         else present(); return end
@@ -804,11 +945,13 @@ ecs.system('player.first_person',function(dt)
     if s.state=='dead' or s.state=='noGun' then present(); return end
     if s.reload_requested then s.reload_requested=false; reload(); present(); return end
     if s.ammo==0 and reserve()>0 and s.cooldown<=0 then reload(); present(); return end
-    if s.state=='run' then s.run_clock=s.run_clock+dt end
-    if (s.state=='lowReady' or s.state=='ads' or s.state=='run') and s.state~=target and not (s.state=='ads' and wants_shot() and not s.aim) then
+    if is_run(s.state) then s.run_clock=s.run_clock+dt end
+    -- Changing direction mid-sprint switches straight to that direction's state; its clip crossfades in.
+    if is_run(s.state) and is_run(target) and s.state~=target then stable(target); present(); return end
+    if (s.state=='lowReady' or s.state=='ads' or is_run(s.state)) and s.state~=target and not (s.state=='ads' and wants_shot() and not s.aim) then
         if carry(target,quick_fire) then present(); return end
     end
-    if s.state=='run' then present(); return end
+    if is_run(s.state) then present(); return end
     if s.state=='hipFire' and s.aim then pose_transition('hipToADS',1,.18,'ads'); present(); return end
     if s.state=='ads' and not s.aim and wants_shot() then pose_transition('adsToHip',HIP,.18,'hipFire'); present(); return end
     if s.state=='lowReady' and wants_shot() then

@@ -25,6 +25,38 @@ Controls in the gameplay canvas:
 - Tap R: swap to the fullest spare magazine, retaining the old one. Hold R to
   consolidate rounds between partially filled magazines; release to stop.
 - F: stow or equip.
+- Shift with movement: sprint. Each direction is its own state with its own
+  clip: `runForward` (any forward input, including diagonals), `runBackward`
+  (any backward input), `runLeft` and `runRight` (pure strafes). Carries from
+  low ready or ADS land in the chosen direction, and changing direction
+  mid-sprint switches state with a crossfade.
+- Aiming mid-sprint and back, and the low ready ↔ sprint carries, are named
+  transition states: `runToADS`, `adsToRun`, `lowToRun`, `runToLow` (low ready
+  ↔ ADS stay `raising` / `lowering`).
+- C while sprinting: crouch slide (`player_controls.lua`). The body slides along
+  the sprint direction. Its speed bursts from sprint speed to a peak of
+  `PlayerPosture.slide_speed_multiplier` (1.5) times sprint speed over
+  `slide_accel_seconds` (0.15 s, an ease-out), then glides back down to crouch
+  speed by `slide_seconds` (1.0 s): it eases off the peak, bleeds speed
+  steadily like sliding friction and settles softly into the crouch.
+  The body stays crouched for the whole slide even if C is released;
+  releasing the movement key that started it (W) or jumping cancels it.
+  Afterwards you stay crouched only while C is still held. The weapon follows the
+  `player.slide` events into its `slide` state; aiming or firing leaves it.
+- Q (inspection HUD) and I inspect the weapon from an idle low ready:
+  `inspectEnter` turns it into the observe pose, `inspecting` holds it and
+  `inspectExit` returns. Q holds it for as long as the HUD is open; I for
+  `WeaponConfig.inspect_seconds` (2.4 s). Aiming, firing, sprinting or
+  reloading cancels it.
+
+Until real footage is filmed, every clip shows revolver concept stills
+(`docs/concepts/revolver/`): `manifest.json` repeats a few stills in each
+clip's frame list so poses change at the right phase, and Lua's frame counts
+are unchanged. The stills have no authored sight landmarks, so the shipped
+scene sets `FirstPersonView.aim_from_camera` and shots leave through the
+camera centre. To regenerate the frames, convert each still with
+`cargo run --release -p countersplat-assets --example footage_still -- in.png out.webp`
+and copy it to the path named in the manifest.
 
 The Lua system emits `weapon.shot` and `weapon.dry_fire` ECS events. Scripts
 can request actions through `weapon.trigger` and `weapon.aim` (`pressed`

@@ -1,0 +1,14 @@
+﻿This is for a video game: concept art for the first-person view-model of an indie target-practice game, where the player knocks cans off a wall. Use your image generation tool to create ONE image and save it as a PNG file named `revolver_observe.png` in the current working directory. Do not create, edit or delete any other files, including any memory or notes files.
+
+The attached `revolver_low_ready.png` is the game's existing view-model. Match its revolver prop (brushed stainless, long ported barrel with compensator, full underlug, wide five-chamber cylinder, exposed hammer, black rubber finger-groove handle, no text or logos), its dark glove and dark jacket sleeve, its lighting, and its flat pure chroma-key green (#00FF00) background.
+
+The new image: a relaxed one-handed idle pose, seen from the player's eyes.
+- Only the right hand holds the revolver. The left hand is not in the frame.
+- The right forearm comes in from the bottom-right corner with the elbow bent and relaxed; the hand is low in the lower-right part of the frame, about chest height.
+- The revolver is held upright with the barrel tilted UP toward the ceiling at roughly 45-60 degrees and angled slightly toward the centre of the screen, so its whole right side is visible: the long barrel, cylinder, hammer and handle. It does not point at the viewer.
+- The hand wraps the rubber handle naturally: the web of the hand high on the back of the handle under the hammer, three fingers wrapped around the front of the handle, the index finger resting straight along the side of the frame, and the thumb resting on the left side of the handle. Correct anatomy, five fingers, clear finger separation.
+- Most of the frame, especially the left and centre, is empty green.
+
+Style: photorealistic game render, soft studio light from the upper left, sharp focus, crisp edges against the green, no green spill, no shadow, gradient or vignette on the background. Landscape 16:9, about 1672x941 or larger. No text, watermark, crosshair or HUD.
+
+When finished, reply with the absolute path of the saved file and its pixel size. If the image tool refuses, say so and stop without retrying.

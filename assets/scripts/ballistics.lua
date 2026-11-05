@@ -235,7 +235,7 @@ local function resolve(p, status, voxel)
     if hit then
         local target=hit.target
         local event={entity=p.entity,owner=p.owner,source=p.source,shot=p.shot,stance=p.stance,
-            position=copy(position),normal=copy(hit.normal),velocity=copy(p.velocity),travel_seconds=p.age,
+            position=copy(position),normal=copy(hit.normal),velocity=copy(p.velocity),mass_kg=p.mass,travel_seconds=p.age,
             distance_m=p.distance/p.units,damage=p.damage,kind=target and 'entity' or 'level'}
         if target then event.target=target; event.zone=hit.zone end
         ecs.set_resource('combat.last_impact',event)
@@ -252,7 +252,7 @@ local function resolve(p, status, voxel)
         end
         ecs.set(p.entity,'Transform',{position=copy(p.position)})
         ecs.set(p.entity,'Projectile',{owner=p.owner,source=p.source,shot=p.shot,
-            velocity=copy(p.velocity),travel_seconds=p.age,distance_m=p.distance/p.units,damage=p.damage})
+            velocity=copy(p.velocity),travel_seconds=p.age,distance_m=p.distance/p.units,damage=p.damage,mass_kg=p.mass})
     end
 end
 
@@ -269,19 +269,47 @@ ecs.on('weapon.shot',function(event)
     local rig=ecs.get(event.player,'PlayerRig') or {}
     local units=number(rig.units_per_meter,1,0.01,100)
     local speed=number(settings.speed_mps,715,1,3000)*units
-    local id=ecs.spawn()
-    local p={entity=id,source=event.entity,owner=event.player,shot=event.shot or 0,units=units,
-        stance=(event.stance=='ads' or event.stance=='hip') and event.stance or nil,
-        position=copy(event.origin),velocity=vec(event.direction[1]/magnitude*speed,event.direction[2]/magnitude*speed,event.direction[3]/magnitude*speed),
-        gravity=number(settings.gravity_mps2,9.81,0,100)*units,
-        lifetime=number(settings.max_lifetime_s,3,0.05,10),range=number(settings.max_range_m,1200,1,5000)*units,
-        damage=number(settings.damage,35,0,1000),tracers=settings.show_tracers~=false,
-        age=0,distance=0,backlog=0,loading_wait=0,pending=nil}
-    active[id]=p
-    ecs.set_resource('combat.last_shot',{entity=id,owner=p.owner,shot=p.shot,origin=copy(p.position),velocity=copy(p.velocity)})
-    ecs.set(id,'Transform',{position=copy(p.position)})
-    ecs.set(id,'Projectile',{owner=p.owner,source=p.source,shot=p.shot,velocity=copy(p.velocity),travel_seconds=0,distance_m=0,damage=p.damage})
-    ecs.emit('projectile.spawned',{entity=id,owner=p.owner,source=p.source,shot=p.shot,position=copy(p.position),velocity=copy(p.velocity)})
+    -- A weapon profile sets how many projectiles one shot fires (a shotgun's pellets), the cone they spread in
+    -- (full angle) and each one's mass, so impacts carry real momentum.
+    local pellets=math.floor(number(settings.projectiles,1,1,64))
+    local spread=math.rad(number(settings.spread_deg,0,0,20))*.5
+    local mass=number(settings.projectile_mass_kg,.004,.0001,.2)
+    local dx,dy,dz=event.direction[1]/magnitude,event.direction[2]/magnitude,event.direction[3]/magnitude
+    -- Two axes across the shot direction for the pellet pattern.
+    local ax,ay,az=dy*0-dz*1,dz*0-dx*0,dx*1-dy*0
+    if ax*ax+ay*ay+az*az<1e-6 then ax,ay,az=1,0,0 end
+    local al=math.sqrt(ax*ax+ay*ay+az*az); ax,ay,az=ax/al,ay/al,az/al
+    local bx,by,bz=dy*az-dz*ay,dz*ax-dx*az,dx*ay-dy*ax
+    for k=0,pellets-1 do
+        if count+k>=MAX_PROJECTILES then
+            ecs.emit('projectile.expired',{owner=event.player,shot=event.shot,reason='capacity'}); break
+        end
+        -- An even sunflower pattern filling the cone, rotated per shot so repeated shots do not overlap.
+        local ox,oy,oz=dx,dy,dz
+        if pellets>1 and spread>0 then
+            local r=math.tan(spread)*math.sqrt((k+.5)/pellets)
+            local theta=k*2.399963+(event.shot or 0)*1.3
+            local u,v=r*math.cos(theta),r*math.sin(theta)
+            ox,oy,oz=dx+ax*u+bx*v,dy+ay*u+by*v,dz+az*u+bz*v
+            local l=math.sqrt(ox*ox+oy*oy+oz*oz); ox,oy,oz=ox/l,oy/l,oz/l
+        end
+        local id=ecs.spawn()
+        local p={entity=id,source=event.entity,owner=event.player,shot=event.shot or 0,units=units,
+            stance=(event.stance=='ads' or event.stance=='hip') and event.stance or nil,
+            position=copy(event.origin),velocity=vec(ox*speed,oy*speed,oz*speed),
+            gravity=number(settings.gravity_mps2,9.81,0,100)*units,
+            lifetime=number(settings.max_lifetime_s,3,0.05,10),range=number(settings.max_range_m,1200,1,5000)*units,
+            damage=number(settings.damage,35,0,1000),mass=mass,tracers=settings.show_tracers~=false and k==0,
+            age=0,distance=0,backlog=0,loading_wait=0,pending=nil}
+        active[id]=p
+        if k==0 then
+            ecs.set_resource('combat.last_shot',{entity=id,owner=p.owner,shot=p.shot,origin=copy(p.position),velocity=copy(p.velocity)})
+        end
+        ecs.set(id,'Transform',{position=copy(p.position)})
+        ecs.set(id,'Projectile',{owner=p.owner,source=p.source,shot=p.shot,velocity=copy(p.velocity),travel_seconds=0,distance_m=0,
+            damage=p.damage,mass_kg=p.mass})
+        ecs.emit('projectile.spawned',{entity=id,owner=p.owner,source=p.source,shot=p.shot,position=copy(p.position),velocity=copy(p.velocity)})
+    end
 end)
 
 ecs.on('physics.trace_result',function(result)

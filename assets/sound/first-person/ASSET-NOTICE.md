@@ -5,8 +5,8 @@ silence) so the gameplay scene's audio layers load in the browser demo. They
 contain no recorded or generated audio; replace them with real clips when
 those are made.
 
-Likewise `assets/images/first-person/playback/raising/0001.webp`, the one footage
-frame the scene preloads, is a 1x1 pure-green placeholder: the weapon compositor's
-green key removes it entirely, so a raised weapon with no footage draws nothing
-(only the crosshair and ammo count). The gameplay scene spawns with the weapon
-stowed (`WeaponConfig.start_stowed`, toggled with F) until new frames exist.
+Likewise the first-person footage is a stand-in: nine revolver concept stills
+(generated with the OpenAI Codex CLI; see `docs/concepts/revolver/`) converted
+to 1280x720 green-screen WebP frames under
+`assets/images/first-person/playback/`. `manifest.json` points every clip at
+them until real frames are made.

@@ -9,7 +9,9 @@ mod player;
 mod voxel;
 
 use countersplat_ecs::{ComponentAdapter, Entity, Value, World};
-use countersplat_scene::{ComponentStorage, LevelAssets, SceneManifest, Skybox, SkyboxSnapshot};
+use countersplat_scene::{
+    weapon_profile, ComponentStorage, LevelAssets, SceneManifest, Skybox, SkyboxSnapshot,
+};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -146,7 +148,32 @@ pub fn instantiate_layers(
             }
         }
     }
+    // Weapon profiles: every entity with a `WeaponProfile` gets its profile's resolved component values merged
+    // over its authored components, and `weapon_stats` publishes the physics of every profile in the scene.
+    let (profiles, tuning) = weapon_profile::scene_profiles(&manifest.resources.values)?;
+    let mut weapon_overrides: BTreeMap<&str, BTreeMap<String, serde_json::Value>> = BTreeMap::new();
+    for item in &definitions {
+        if let Some(selection) = item.components.get("WeaponProfile") {
+            let id = weapon_profile::selected_profile(selection)
+                .map_err(|error| format!("entity `{}`: {error}", item.id))?;
+            let profile = profiles
+                .get(id)
+                .ok_or_else(|| format!("entity `{}` selects unknown weapon profile `{id}`", item.id))?;
+            let resolved = weapon_profile::resolve(profile, &tuning)
+                .map_err(|error| format!("entity `{}` weapon profile `{id}`: {error}", item.id))?;
+            weapon_overrides.insert(&item.id, resolved.components);
+        }
+    }
     let mut resources = manifest.resources.values.clone();
+    if !profiles.is_empty() {
+        let mut stats = serde_json::Map::new();
+        for (id, profile) in &profiles {
+            let resolved = weapon_profile::resolve(profile, &tuning)
+                .map_err(|error| format!("weapon profile `{id}`: {error}"))?;
+            stats.insert(id.clone(), serde_json::to_value(&resolved.stats).map_err(|e| e.to_string())?);
+        }
+        resources.insert("weapon_stats".into(), serde_json::Value::Object(stats));
+    }
     resources.insert(
         "scene.assets".into(),
         serde_json::to_value(&manifest.resources.assets).map_err(|e| e.to_string())?,
@@ -172,10 +199,23 @@ pub fn instantiate_layers(
     let result: Result<(), String> = (|| {
         for item in &definitions {
             let entity = entities[&item.id];
+            let overrides = weapon_overrides.get(item.id.as_str());
             for (name, value) in &item.components {
+                let value = match overrides.and_then(|o| o.get(name)) {
+                    Some(patch) => weapon_profile::merge_fields(Some(value), patch),
+                    None => value.clone(),
+                };
                 world
-                    .write_component_value(entity, name, value.clone())
+                    .write_component_value(entity, name, value)
                     .map_err(|error| format!("entity `{}` component `{name}`: {error}", item.id))?;
+            }
+            // Profile components the entity did not author (its derived `WeaponStats`, for one).
+            for (name, patch) in overrides.into_iter().flatten() {
+                if !item.components.contains_key(name) {
+                    world
+                        .write_component_value(entity, name, patch.clone())
+                        .map_err(|error| format!("entity `{}` component `{name}`: {error}", item.id))?;
+                }
             }
             if let Some(parent) = &item.parent {
                 world

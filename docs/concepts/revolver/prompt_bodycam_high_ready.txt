@@ -1,0 +1,15 @@
+﻿This is for a video game: concept art for the first-person view-model of an indie target-practice game, where the player knocks cans off a wall. The game uses a realistic body-camera look, and this image is one pose of the weapon's animation state machine. Use your image generation tool to create ONE image and save it as a PNG file named `revolver_bodycam_high_ready.png` in the current working directory. Do not create, edit or delete any other files, including any memory or notes files.
+
+Attached references:
+- `revolver_bodycam_low_ready.png` sets the look. Match exactly its camera (a small body-worn camera at the centre of the chest, about 35 cm below the eyes, level, wide-angle lens of about 100-110 degrees, forearms large and stretching in from the bottom edge), its revolver prop (brushed stainless, long ported barrel with compensator, full-length underlug, wide five-chamber cylinder, exposed hammer, black rubber finger-groove handle, no text or logos), its dark worn gloves and dark jacket sleeves, its flat realistic lighting with slight sensor noise, and its flat pure chroma-key green (#00FF00) background.
+- `revolver_high_ready.png` shows the pose in the game's older eye-level style. Use it only for what the hands and the prop are doing; ignore its camera, framing and look.
+The camera does not move with the hands: it stays on the chest, level, so anything held above chest height is seen from below and anything held low is seen from above.
+
+The pose:
+One-handed high ready, used while running: only the right hand holds the prop, raised close to the right side of the upper chest with the elbow tucked down, the barrel pointing almost straight up (75-85 degrees), tilted slightly left. Because the hand is above and right of the chest camera, the revolver is seen from below, large, in the right half of the frame, with the forearm coming in from the bottom-right corner. The left hand is not in the frame.
+
+Correct anatomy: five fingers per hand, clear finger separation. The index finger rests straight along the frame, off the trigger, unless the pose says otherwise. Whenever both hands hold the handle, use the grip in `reference_revolver_grip.png`: the left hand wraps over the right hand's fingers, the LEFT thumb lies across the top of the RIGHT thumb, both thumbs low on the left side of the handle, below the hammer and well behind the cylinder; no thumb or finger runs forward along the frame toward the cylinder.
+
+Look: realistic, like a real body-camera frame rather than a studio render; unposed framing, hands and forearms may run off the bottom edge. Clean edges against the green: no green spill, no shadow, gradient or vignette on the background. Landscape 16:9, about 1672x941 or larger. No text, timestamp, watermark, crosshair, HUD, muzzle flash or smoke (the game adds effects itself).
+
+When finished, reply with the absolute path of the saved file and its pixel size. If the image tool refuses, say so and stop without retrying.

@@ -1,0 +1,18 @@
+This is for a video game: concept art for the first-person view-model of an indie target-practice game, where the player knocks cans off a wall. The game wants a realistic body-camera look instead of a stylised video-game look. Use your image generation tool to create ONE image and save it as a PNG file named `revolver_bodycam_low_ready.png` in the current working directory. Do not create, edit or delete any other files, including any memory or notes files.
+
+The attached `revolver_low_ready.png` is the game's current view-model. Keep its revolver prop (brushed stainless, long ported barrel with compensator, full-length underlug, wide five-chamber cylinder, exposed hammer, black rubber finger-groove handle, no text or logos), its dark gloves and dark jacket sleeves, and its flat pure chroma-key green (#00FF00) background. Change the camera and the feel:
+
+Camera, like a small body-worn camera clipped to the centre of the chest:
+- The lens is at mid-chest height, about 35 cm below the eyes, looking straight ahead and level, not down at the hands.
+- Wide-angle lens, about 100-110 degrees horizontal field of view, with the strong perspective that gives: the forearms and hands close to the lens look large and stretch in from the bottom edge, and the barrel recedes steeply.
+- Plain, unposed framing: the subject is not centred or arranged for the camera. Part of the hands and the lower forearms run off the bottom edge of the frame.
+
+Pose, a natural two-handed low ready as a real person holds it, not a game pose:
+- Arms relaxed and slightly bent, hands held low just in front of the belt line, the revolver close to the lens in the lower centre of the frame.
+- The barrel points forward and down toward the floor about 2-3 metres ahead, at roughly 30-40 degrees below level.
+- From the chest camera we see the top and right side of the revolver from above and behind: the hammer, the top of the cylinder and the rear sight closest to the lens.
+- Grip: the right hand wraps the handle with the index finger straight along the frame, off the trigger; the left hand wraps over the right hand's fingers with the left thumb crossed over the right thumb, both thumbs low on the handle and clear of the cylinder. Correct anatomy, five fingers per hand.
+
+Look: realistic, like an actual body-camera frame rather than a studio render. Neutral, slightly flat lighting, a touch of sensor noise and softness, mild edge softness from the wide lens, natural wear on the gloves and steel. Keep edges against the green clean enough to key: no green spill on the steel or gloves and no shadow, gradient or vignette on the background. Landscape 16:9, about 1672x941 or larger. No text, timestamp, watermark, crosshair or HUD.
+
+When finished, reply with the absolute path of the saved file and its pixel size. If the image tool refuses, say so and stop without retrying.

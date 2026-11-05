@@ -6,6 +6,8 @@
 *.png
 !crates/**/tests/fixtures/*.png
 !/docs/social-card.png
+# Weapon view-model concept art (generated stills, chroma green).
+!/docs/concepts/revolver/*.png
 
 # Local media and level data. Keep only small asset notices and playback metadata.
 /assets/images/*
@@ -15,10 +17,40 @@
 !/assets/images/first-person/playback/
 /assets/images/first-person/playback/*
 !/assets/images/first-person/playback/manifest.json
-# The one preloaded footage frame, a 1x1 placeholder until new weapon frames are made.
+# Revolver concept stills standing in for footage (see the manifest), until real frames are made.
 !/assets/images/first-person/playback/raising/
 /assets/images/first-person/playback/raising/*
 !/assets/images/first-person/playback/raising/0001.webp
+!/assets/images/first-person/playback/raising/0025.webp
+!/assets/images/first-person/playback/raising/0033.webp
+!/assets/images/first-person/playback/runCarryV2/
+/assets/images/first-person/playback/runCarryV2/*
+!/assets/images/first-person/playback/runCarryV2/endpoint.webp
+!/assets/images/first-person/playback/reload/
+/assets/images/first-person/playback/reload/*
+!/assets/images/first-person/playback/reload/0001.webp
+!/assets/images/first-person/playback/reload/0002.webp
+!/assets/images/first-person/playback/fireHipMatteV2/
+/assets/images/first-person/playback/fireHipMatteV2/*
+!/assets/images/first-person/playback/fireHipMatteV2/0001.webp
+!/assets/images/first-person/playback/fireADSMatteV2/
+/assets/images/first-person/playback/fireADSMatteV2/*
+!/assets/images/first-person/playback/fireADSMatteV2/0001.webp
+!/assets/images/first-person/playback/inspect/
+/assets/images/first-person/playback/inspect/*
+!/assets/images/first-person/playback/inspect/0001.webp
+!/assets/images/first-person/playback/runLeft/
+/assets/images/first-person/playback/runLeft/*
+!/assets/images/first-person/playback/runLeft/0001.webp
+!/assets/images/first-person/playback/runRight/
+/assets/images/first-person/playback/runRight/*
+!/assets/images/first-person/playback/runRight/0001.webp
+!/assets/images/first-person/playback/runBackward/
+/assets/images/first-person/playback/runBackward/*
+!/assets/images/first-person/playback/runBackward/0001.webp
+!/assets/images/first-person/playback/slide/
+/assets/images/first-person/playback/slide/*
+!/assets/images/first-person/playback/slide/0001.webp
 # The CC0 sky (Poly Haven) the gameplay scene preloads, so the browser demo can ship it.
 !/assets/images/environments/
 /assets/images/environments/*

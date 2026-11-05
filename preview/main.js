@@ -3,7 +3,8 @@ import init, { Selector, Viewer, set_indirect_draw, set_sort_compaction, set_foo
   DisplaySettings, display_viewport_size, MouseCapture, GameplayMouseButtons, GameplayFireButton, savedLayout, storeLayout, levelBaseUrl,
   saveSetting, savedWeaponOptic, savePlayerRig, LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl,
   projectResourceUrl, FrameProfiler, InputFrameLatency, gameplayInputChannels, gameplayEventChannels,
-  loadLevelMetadata, FirstPersonFrames, SceneAudio, FrameStackCapture, MinimapRuntime } from './pkg/countersplat_web.js';
+  loadLevelMetadata, FirstPersonFrames, SceneAudio, FrameStackCapture, MinimapRuntime,
+  weapon_footage_asset } from './pkg/countersplat_web.js';
 import { LuaScene, EventChannels } from './lua_runtime.js';
 
 const canvas = document.getElementById('canvas');
@@ -191,6 +192,7 @@ function processMenuSettings(runtime) {
     runtime.dispatch('menu.settings', menuSettings());
   }
   const allowed={controls_speed:'number_changed',controls_sensitivity:'number_changed',controls_invert:'bool_changed',
+    controls_bob:'bool_changed',controls_breathing:'bool_changed',
     level_draw_distance:'number_changed',level_auto:'bool_changed',level_lod:'number_changed',
     sky_enabled:'bool_changed',audio_gain:'number_changed',audio_muted:'bool_changed'};
   for (const request of runtime.drain('settings.gameplay_request')) {
@@ -201,6 +203,8 @@ function processMenuSettings(runtime) {
       if (request.target==='sky_enabled') gameplayLua.dispatch('settings.sky_request',{enabled:request.value});
       else if (request.target==='audio_gain') gameplayLua.dispatch('settings.sound_request',{gain:request.value});
       else if (request.target==='audio_muted') gameplayLua.dispatch('settings.sound_request',{muted:request.value});
+      else if (request.target==='controls_bob') gameplayLua.dispatch('settings.view_request',{bob_enabled:request.value});
+      else if (request.target==='controls_breathing') gameplayLua.dispatch('settings.view_request',{breathing_enabled:request.value});
       else if (gameplayEntityIds?.[request.target]) gameplayLua.dispatch('ui.action',
         {id:gameplayEntityIds[request.target],kind:{type:kind,value:request.value}});
       for (const event of gameplayLua.drain('player.controls_changed')) saveSetting('player_controls', event);
@@ -588,7 +592,8 @@ async function launchLevel(id, sceneId = '') {
     preloadedSceneAssets = sceneAssets;
     await sceneAudio.load(chosenScene, String(chosenUrl), sceneAssets);
     if (generation !== token) return;
-    const footage = chosenScene.resources?.assets?.['first-person-footage'];
+    // The active weapon profile names its footage manifest (Rust resolves it).
+    const footage = chosenScene.resources?.assets?.[weapon_footage_asset(chosenScene, 'first-person-footage')];
     if (footage) {
       if (footage.kind !== 'first_person_manifest' || loadPolicy(footage.load) !== 'preload') throw new Error('First-person footage manifest must be a preloaded scene asset.');
       const bytes = sceneAssets.get(new URL(footage.uri, chosenUrl).href);

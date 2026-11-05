@@ -20,10 +20,15 @@ struct Fixture {
 impl Fixture {
     fn new(collision: bool) -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let manifest = SceneManifest::from_json(
+        let mut manifest = SceneManifest::from_json(
             &std::fs::read(root.join("assets/scenes/gameplay.json")).unwrap(),
         )
         .unwrap();
+        // Damage and health rules are tested against the authored 35-damage ballistics, not the shipped weapon
+        // profile.
+        for entity in &mut manifest.entities {
+            entity.components.remove("WeaponProfile");
+        }
         let world = Rc::new(RefCell::new(World::new()));
         countersplat_ui_ecs::register(&mut world.borrow_mut()).unwrap();
         countersplat_scene_ecs::register(&mut world.borrow_mut()).unwrap();

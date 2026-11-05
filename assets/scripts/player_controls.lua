@@ -5,6 +5,7 @@ local player = assert(ids.player, "player entity is missing")
 local read_controls = engine.component_reader(player, "PlayerControls")
 local read_rig = engine.component_reader(player, "PlayerRig")
 local read_posture = engine.component_reader(player, "PlayerPosture")
+local read_gait = ecs.get(player, "PlayerGait") and engine.component_reader(player, "PlayerGait")
 local read_weapon_state = ids.first_person and engine.component_reader(ids.first_person, "WeaponState")
 local read_level = ids.active_level and engine.component_reader(ids.active_level, "VoxelCollider")
 local read_level_state = ids.active_level and engine.component_reader(ids.active_level, "VoxelColliderState")
@@ -181,6 +182,79 @@ local function gravity_active(body)
     return body and body.enabled and body.gravity_enabled and
         status ~= "loading" and status ~= "unavailable" and status ~= "error"
 end
+-- Sliding: pressing crouch while sprinting on the ground slides along the sprint direction. Its speed bursts
+-- from sprint speed to a peak of `PlayerPosture.slide_speed_multiplier` times sprint speed over
+-- `slide_accel_seconds` (a quick ease-out), then glides back down to crouch speed by `slide_seconds`: it eases
+-- off the peak, bleeds speed steadily like sliding friction, and settles softly into the crouch. The body stays crouched for the whole slide (the `player.slide_active` resource holds
+-- posture's crouch) even if crouch is released; releasing the movement keys that started it, or jumping, ends it
+-- early. Afterwards the player stays crouched only while crouch is still held. The weapon follows the
+-- `player.slide` events.
+local slide = nil
+local function setting_number(value, fallback, lo, hi)
+    if type(value) ~= "number" or value ~= value then return fallback end
+    return math.max(lo, math.min(hi, value))
+end
+-- The current gait and ground speed (m/s) for the view bob, footsteps and breathing.
+local published_gait = nil
+local function publish_gait(gait, speed)
+    local rounded = math.floor(speed * 1000 + 0.5) / 1000
+    if published_gait and published_gait.gait == gait and published_gait.speed_mps == rounded then return end
+    published_gait = { gait = gait, speed_mps = rounded }
+    ecs.set_resource("player.gait", { gait = gait, speed_mps = rounded })
+end
+-- The settings menu's view toggles (view bob, breathing) arrive as host requests and save with the controls.
+ecs.on("settings.view_request", function(request)
+    if type(request) ~= "table" then return end
+    local controls = ecs.get(player, "PlayerControls")
+    if not controls then return end
+    if type(request.bob_enabled) == "boolean" then controls.bob_enabled = request.bob_enabled end
+    if type(request.breathing_enabled) == "boolean" then controls.breathing_enabled = request.breathing_enabled end
+    ecs.set(player, "PlayerControls", controls)
+    ecs.emit("player.controls_changed", controls)
+end)
+ecs.set_resource("player.slide_active", false)
+local function end_slide()
+    if not slide then return end
+    slide = nil
+    ecs.set_resource("player.slide_active", false)
+    ecs.emit("player.slide", { player = player, active = false })
+end
+-- Slide speed (m/s) `t` seconds in: an ease-out burst to the peak, then a smoothstep glide down to crouch speed.
+local function slide_speed(s, t)
+    if t < s.accel then
+        local u = t / s.accel
+        return s.sprint + (s.peak - s.sprint) * (1 - (1 - u) ^ 3)
+    end
+    local u = math.min(1, (t - s.accel) / math.max(0.001, s.seconds - s.accel))
+    return s.finish + (s.peak - s.finish) * (1 - u * u * (3 - 2 * u))
+end
+local function start_slide(settings)
+    local posture = read_posture()
+    if slide or jump or aiming or not posture or posture.enabled ~= true or posture.slide_enabled == false or
+       posture.crouched or not engine.input.is_down(held, settings.bindings.sprint) then return end
+    local b = settings.bindings
+    local function down(code) return engine.input.is_down(held, code) and 1 or 0 end
+    local forward, right = down(b.forward) - down(b.backward), down(b.right) - down(b.left)
+    local length = math.sqrt(forward * forward + right * right)
+    local body = ecs.get(player, "PhysicsBody")
+    local camera = ecs.get(player, "PlayerCamera")
+    if length == 0 or not camera or waiting_for_ground(body) or (gravity_active(body) and not body.grounded) then return end
+    local sine, cosine = math.sin(camera.yaw), math.cos(camera.yaw)
+    local sprint = settings.move_speed * settings.sprint_multiplier
+    local peak = sprint * setting_number(posture.slide_speed_multiplier, 1.5, 1, 3)
+    local finish = settings.move_speed * setting_number(posture.crouch_speed_multiplier, 0.45, 0.1, 1)
+    local seconds = setting_number(posture.slide_seconds, 1.0, 0.2, 3)
+    local accel = math.min(setting_number(posture.slide_accel_seconds, 0.15, 0.01, 1), seconds * 0.5)
+    -- The movement keys held when the slide starts; releasing all of them cancels it.
+    local keys = {}
+    for _, action in ipairs({ "forward", "backward", "left", "right" }) do
+        if engine.input.is_down(held, b[action]) then keys[#keys + 1] = b[action] end
+    end
+    slide = { elapsed = 0, seconds = seconds, accel = accel, sprint = sprint, peak = peak, finish = finish, keys = keys,
+        dx = (forward * sine + right * cosine) / length, dz = (-forward * cosine + right * sine) / length }
+    ecs.set_resource("player.slide_active", true)
+    ecs.emit("player.slide", { player = player, active = true, seconds = seconds })
+end
 ecs.system("player.ground_probe_timeout", function(dt)
     if pending_ground then
         pending_ground.elapsed = pending_ground.elapsed + math.max(0, dt)
@@ -243,6 +317,7 @@ local function cancel_binding()
     sync_controls(ecs.get(player, "PlayerControls"))
 end
 ecs.on("input.reset", function()
+    end_slide()
     held = {}; aiming = false
     if waiting_for_key then cancel_binding(); notice("") end
 end)
@@ -287,7 +362,9 @@ ecs.on("input.key", function(event)
     elseif event.gameplay and not event.is_repeat then
         if not held[event.code] then
             local settings = ecs.get(player, "PlayerControls")
+            if settings and settings.enabled and event.code == settings.bindings.crouch then start_slide(settings) end
             if settings and settings.enabled and event.code == settings.bindings.jump and not jump then
+                end_slide()
                 local body = ecs.get(player, "PhysicsBody")
                 if waiting_for_ground(body) then return end
                 if gravity_active(body) then
@@ -413,30 +490,69 @@ ecs.system("player.camera", function(dt)
         jump.offset = offset
         if jump.elapsed >= duration then jump = nil end
     end
+    -- Gait: crouch, then the cautious walk, then running, then walking. Each gait has its own speed, and each
+    -- direction within it (PlayerGait.direction): forward is fastest, strafing slower, backing up slowest, and
+    -- diagonals blend between them. `player.gait` publishes the result for the view bob and footsteps.
+    local posture_now = read_posture()
+    local crouched_now = posture_now and (posture_now.crouched or (posture_now.amount or 0) > 0.001)
+    local gait_cfg = read_gait and read_gait() or nil
+    local aim_blocks_run = aiming
+    if aim_blocks_run and read_weapon_state then
+        local state = read_weapon_state()
+        local name = type(state) == "table" and state.state or nil
+        if name == "noGun" or name == "stow" or name == "equip" or name == "death" or
+           name == "dead" or name == "reload" or name == "repack" then aim_blocks_run = false end
+    end
+    local gait, multiplier
+    if crouched_now then
+        gait, multiplier = "crouch", setting_number(posture_now.crouch_speed_multiplier, 0.45, 0.1, 1)
+    elseif b.cautious and engine.input.is_down(held, b.cautious) then
+        gait, multiplier = "cautious", setting_number(gait_cfg and gait_cfg.cautious_multiplier, 0.5, 0.1, 1)
+    elseif not aim_blocks_run and engine.input.is_down(held, b.sprint) then
+        gait, multiplier = "run", settings.sprint_multiplier
+    else
+        gait, multiplier = "walk", 1
+    end
+    local factors = gait_cfg and type(gait_cfg.direction) == "table" and gait_cfg.direction[gait] or nil
+    local strafe_factor = setting_number(factors and factors.strafe, 1, 0.1, 1)
+    local back_factor = setting_number(factors and factors.backward, 1, 0.1, 1)
+    local planar = math.abs(forward) + math.abs(right)
+    local direction_factor = planar > 0 and
+        ((forward >= 0 and 1 or back_factor) * math.abs(forward) + strafe_factor * math.abs(right)) / planar or 1
+    local speed_mps = (length > 0 and not slide) and settings.move_speed * multiplier * direction_factor or 0
+    if slide then gait = "slide" end
+    publish_gait(gait, speed_mps)
+    if slide then
+        slide.elapsed = slide.elapsed + math.max(0, dt)
+        local steering = false
+        for _, code in ipairs(slide.keys) do
+            if engine.input.is_down(held, code) then steering = true; break end
+        end
+        if slide.elapsed >= slide.seconds or not steering then
+            end_slide()
+        else
+            local rig = assert(read_rig())
+            local posture = read_posture()
+            local scale = rig.units_per_meter
+            if posture and posture.crouched and type(posture.active_units_per_meter) == "number" then
+                scale = posture.active_units_per_meter
+            end
+            local step = slide_speed(slide, slide.elapsed) * scale * dt
+            local delta = ecs.array()
+            delta[1], delta[2], delta[3] = slide.dx * step, hop, slide.dz * step
+            engine.physics.move(player, delta)
+            return
+        end
+    end
     if length == 0 and hop == 0 then return end
     local camera = ecs.get(player, "PlayerCamera")
     local rig = assert(read_rig())
-    local posture = read_posture()
-    local crouched = posture and (posture.crouched or (posture.amount or 0) > 0.001)
-    local active_aim = aiming
-    if active_aim and read_weapon_state then
-        local state = read_weapon_state()
-        local name = type(state) == "table" and state.state or nil
-        -- Match the camera zoom: aim is unavailable while the weapon is stowed,
-        -- changing equipment, dead, or using a non-ADS reload.
-        if name == "noGun" or name == "stow" or name == "equip" or name == "death" or
-           name == "dead" or name == "reload" or name == "repack" then active_aim = false end
-    end
-    local multiplier = not active_aim and engine.input.is_down(held, b.sprint) and settings.sprint_multiplier or 1
-    if crouched then
-        local factor = posture.crouch_speed_multiplier
-        multiplier = type(factor) == "number" and factor == factor and math.max(0.1, math.min(1, factor)) or 0.45
-    end
+    local posture = posture_now
     local scale = rig.units_per_meter
     if posture and posture.crouched and type(posture.active_units_per_meter) == "number" then
         scale = posture.active_units_per_meter
     end
-    local speed = length > 0 and settings.move_speed * scale * multiplier * dt / length or 0
+    local speed = length > 0 and settings.move_speed * scale * multiplier * direction_factor * dt / length or 0
     local sine, cosine = math.sin(camera.yaw), math.cos(camera.yaw)
     local delta = ecs.array()
     delta[1] = (forward * sine + right * cosine) * speed

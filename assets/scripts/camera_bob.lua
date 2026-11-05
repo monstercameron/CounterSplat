@@ -8,14 +8,16 @@ local read_posture = engine.component_reader(player, "PlayerPosture")
 local read_sprint = engine.component_reader(player, "SprintVisuals")
 local read_weapon_state = ids.first_person and engine.component_reader(ids.first_person, "WeaponState")
 local read_controller = ids.camera_controller and engine.component_reader(ids.camera_controller, "CameraController")
+local read_gait = ecs.get(player, "PlayerGait") and engine.component_reader(player, "PlayerGait")
 
 -- These exports are ordinary PlayerControls fields, so Entity settings edits
 -- them directly and the existing controls persistence saves them per browser.
 engine.export(player, "bob_enabled", {component="PlayerControls", field="bob_enabled", label="View bob"})
-engine.export(player, "bob_cadence", {component="PlayerControls", field="bob_cadence", label="Bob steps / sec", min=0.2, max=6})
+engine.export(player, "bob_cadence", {component="PlayerControls", field="bob_cadence", label="Walk steps / sec", min=0.2, max=6})
 engine.export(player, "bob_vertical", {component="PlayerControls", field="bob_vertical", label="Bob vertical (m)", min=0, max=0.25})
 engine.export(player, "bob_horizontal", {component="PlayerControls", field="bob_horizontal", label="Bob sideways (m)", min=0, max=0.25})
 engine.export(player, "bob_smoothing", {component="PlayerControls", field="bob_smoothing", label="Bob response", min=1, max=30})
+engine.export(player, "breathing_enabled", {component="PlayerControls", field="breathing_enabled", label="Breathing sway"})
 
 local function bounded(value, fallback, low, high)
     if type(value)~="number" or value~=value or math.abs(value)>1000000 then return fallback end
@@ -52,6 +54,11 @@ end
 
 local phase, sideways, vertical, pitch, roll, run_blend = 0, 0, 0, 0, 0, 0
 local since_motion, since_ground, resolved_distance, speed_ratio, peripheral_blur = 1, 1, 0, 0, 0
+-- Steps: `steps` counts footfalls continuously; each whole step emits `player.step`. Breathing: `exertion`
+-- (0..1) climbs while running, drifts to a light level while walking and settles at rest.
+local steps, next_step, exertion, breath_phase, published_exertion = 0, 1, 0, 0, nil
+local GAIT_CADENCE = {walk=2.0, run=2.8, cautious=1.3, crouch=1.5, slide=0}
+local GAIT_BOB = {walk=1, run=1, cautious=0.5, crouch=0.45, slide=0.3}
 local published_blur = nil
 local function publish_blur(value)
     if published_blur == nil or math.abs(value-published_blur) >= 0.001 or (value==0 and published_blur~=0) then
@@ -91,6 +98,7 @@ end)
 local function reset()
     phase, sideways, vertical, pitch, roll, run_blend = 0, 0, 0, 0, 0, 0
     since_motion, since_ground, resolved_distance, speed_ratio, peripheral_blur = 1, 1, 0, 0, 0
+    steps, next_step, exertion, breath_phase = 0, 1, 0, 0
     held, aiming = {}, false
     publish_blur(0)
     local camera = ecs.get(player, "PlayerCamera")
@@ -159,13 +167,40 @@ ecs.system("player.camera_bob", function(dt)
     -- over several ticks. A longer response averages the arrival jitter.
     local sample = traveling and bounded(distance / (dt * nominal_walk), 0, 0, 60) or 0
     speed_ratio = speed_ratio + (sample - speed_ratio) * (1 - math.exp(-dt * 4))
-    if controls.bob_enabled and active and distance > 0.00001 then
-        local stride_scale = running and (0.85 / 1.4) or 1
-        phase = (phase + math.pi * controls.bob_cadence * distance * stride_scale / nominal_walk) % (2 * math.pi)
+    -- Simulated footsteps: each gait has a cadence (steps per second at its forward speed, scaled so walking
+    -- matches `bob_cadence`), which sets its stride. Travel advances the step count by distance over stride,
+    -- so steps slow when strafing or backing up; the bob's phase is half a cycle per step.
+    local gait_state = ecs.get_resource("player.gait")
+    local gait = type(gait_state) == "table" and type(gait_state.gait) == "string" and gait_state.gait or
+        (crouched and "crouch" or running and "run" or "walk")
+    -- The movement script's published gait is authoritative (a cautious walk overrides Shift, for one).
+    if type(gait_state) == "table" and type(gait_state.gait) == "string" then running = active and gait == "run" end
+    local gait_cfg = read_gait and read_gait() or nil
+    local cadences = gait_cfg and type(gait_cfg.cadence_hz) == "table" and gait_cfg.cadence_hz or {}
+    local walk_cadence = bounded(cadences.walk, GAIT_CADENCE.walk, 0.1, 10)
+    local cadence = bounded(cadences[gait], GAIT_CADENCE[gait] or walk_cadence, 0, 10) *
+        bounded(controls.bob_cadence, 2, 0.2, 6) / walk_cadence
+    local gait_speed = controls.move_speed * (gait == "run" and controls.sprint_multiplier or
+        gait == "cautious" and bounded(gait_cfg and gait_cfg.cautious_multiplier, 0.5, 0.1, 1) or
+        gait == "crouch" and bounded(posture and posture.crouch_speed_multiplier, 0.45, 0.1, 1) or 1)
+    if active and distance > 0.00001 and cadence > 0 then
+        local advance = distance / math.max(0.000001, gait_speed * rig.units_per_meter / cadence)
+        steps = steps + advance
+        if controls.bob_enabled then phase = (phase + math.pi * advance) % (2 * math.pi) end
+        while steps >= next_step do
+            ecs.emit("player.step", {player=player, foot=next_step % 2 == 1 and "left" or "right", gait=gait,
+                speed_mps=type(gait_state) == "table" and gait_state.speed_mps or nil})
+            next_step = next_step + 1
+        end
     end
     local blend = 1 - math.exp(-controls.bob_smoothing * dt)
     run_blend = run_blend + ((running and 1 or 0) - run_blend) * blend
-    local gain = controls.bob_enabled and active and (crouched and 0.45 or 1) or 0
+    -- The bob grows with ground speed (relative to walking) and is scaled per gait: a cautious walk barely moves
+    -- the view, a run swings it hardest.
+    local bob_scales = gait_cfg and type(gait_cfg.bob_scale) == "table" and gait_cfg.bob_scale or {}
+    local gait_bob = bounded(bob_scales[gait], GAIT_BOB[gait] or 1, 0, 3)
+    local speed_gain = bounded(math.sqrt(math.max(0, speed_ratio)), 1, 0.5, 1.6)
+    local gain = controls.bob_enabled and active and gait_bob * speed_gain or 0
     if profile then
         gain = gain * math.min(1, speed_ratio / (running and controls.sprint_multiplier or 1))
         if active_aim then gain = gain * profile.aim_bob_scale end
@@ -192,6 +227,36 @@ ecs.system("player.camera_bob", function(dt)
     local angular = profile and profile.gait_rotation_strength or 0
     local target_pitch = -wave * math.rad(0.10 + 0.22 * run_blend) * gain * angular
     local target_roll = side_wave * math.rad(0.075 + 0.205 * run_blend) * gain * angular
+
+    -- Breathing: exertion climbs while running, drifts to a light level while walking and settles at rest; the
+    -- breath gets faster and deeper with it, and aiming steadies it. It has its own toggle (breathing_enabled).
+    local breath = gait_cfg and type(gait_cfg.breathing) == "table" and gait_cfg.breathing or {}
+    local build = bounded(breath.run_build_seconds, 8, 0.5, 60)
+    local recovery = bounded(breath.recovery_seconds, 6, 0.5, 60)
+    if running then
+        exertion = math.min(1, exertion + dt / build)
+    elseif active then
+        local level = bounded(breath.walk_level, 0.25, 0, 1)
+        if exertion > level then exertion = math.max(level, exertion * math.exp(-dt / (2 * recovery)))
+        else exertion = math.min(level, exertion + dt / (3 * build)) end
+    else
+        exertion = exertion * math.exp(-dt / recovery)
+    end
+    if exertion < 0.0001 then exertion = 0 end
+    local rounded = math.floor(exertion * 1000 + 0.5) / 1000
+    if rounded ~= published_exertion then published_exertion = rounded; ecs.set_resource("player.exertion", rounded) end
+    local rest_rate = bounded(breath.rest_rate_hz, 0.22, 0.05, 2)
+    breath_phase = (breath_phase + 2 * math.pi * (rest_rate + (bounded(breath.max_rate_hz, 0.75, 0.05, 3) - rest_rate) *
+        exertion) * dt) % (2 * math.pi)
+    if controls.breathing_enabled ~= false then
+        local steady = active_aim and bounded(breath.aim_scale, 0.35, 0, 1) or 1
+        local rest_amp, rest_tilt = bounded(breath.rest_amplitude_m, 0.0015, 0, 0.05), bounded(breath.rest_pitch_deg, 0.08, 0, 3)
+        local amplitude = (rest_amp + (bounded(breath.max_amplitude_m, 0.009, 0, 0.05) - rest_amp) * exertion) * steady
+        local tilt = (rest_tilt + (bounded(breath.max_pitch_deg, 0.55, 0, 3) - rest_tilt) * exertion) * steady
+        local inhale = math.sin(breath_phase)
+        target_up = target_up + inhale * amplitude * rig.units_per_meter
+        target_pitch = target_pitch + inhale * math.rad(tilt)
+    end
     sideways = sideways + (target_side - sideways) * blend
     vertical = vertical + (target_up - vertical) * blend
     pitch = pitch + (target_pitch - pitch) * blend

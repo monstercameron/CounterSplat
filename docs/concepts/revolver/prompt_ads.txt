@@ -1,0 +1,16 @@
+This is for a video game: concept art for the first-person view-model of an indie target-practice game, where the player knocks cans off a wall. Use your image generation tool to create ONE image and save it as a PNG file named `revolver_ads.png` in the current working directory. Do not create, edit or delete any other files, including any memory or notes files.
+
+Two reference images are attached:
+
+1. `revolver_low_ready.png` is the game's existing view-model. Match its revolver prop (brushed stainless, long ported barrel with compensator, full underlug, wide five-chamber cylinder, exposed hammer, black rubber finger-groove handle, no text or logos), its dark gloves and dark jacket sleeves, its lighting, and its flat pure chroma-key green (#00FF00) background.
+2. `reference_revolver_grip.png` is a photo showing the correct way two hands hold a revolver. Copy this hand arrangement exactly: the left hand wraps over the front of the right hand's fingers, and the left thumb lies across the top of the right thumb. Both thumbs sit low on the left side of the handle, pointing down and slightly forward, below the hammer and well behind the cylinder. Nothing touches the cylinder or the barrel.
+
+The new image: the game's view-model raised to eye level, seen from the player's eyes.
+- The revolver is centred horizontally and points straight ahead into the distance, with no tilt or roll.
+- The camera is a little above and behind the hands, looking slightly down along the top of the revolver, so the rear and front sights line up near the centre of the image and the barrel is visible receding straight ahead.
+- The whole handle and both gloved hands are clearly visible in the lower-middle of the frame, in the grip from reference 2, with forearms coming in from the bottom corners. Correct anatomy: five fingers per hand, clear finger separation, thumbs clearly readable.
+- Most of the frame above and around the revolver is empty green.
+
+Style: photorealistic game render, soft studio light from the upper left, sharp focus, crisp edges against the green, no green spill, no shadow, gradient or vignette on the background. Landscape 16:9, about 1672x941 or larger. No text, watermark, crosshair or HUD.
+
+When finished, reply with the absolute path of the saved file and its pixel size. If the image tool refuses, say so and stop without retrying.

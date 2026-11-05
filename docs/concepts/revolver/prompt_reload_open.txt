@@ -1,0 +1,12 @@
+﻿This is for a video game: concept art for the first-person view-model of an indie target-practice game, where the player knocks cans off a wall. It is one pose of the weapon's animation state machine. Use your image generation tool to create ONE image and save it as a PNG file named `revolver_reload_open.png` in the current working directory. Do not create, edit or delete any other files, including any memory or notes files.
+
+The attached image `revolver_low_ready.png` is the game's existing view-model. Match exactly its revolver prop (brushed stainless, long ported barrel with compensator, full-length underlug, wide five-chamber cylinder, exposed hammer, black rubber finger-groove handle, no text or logos), its dark gloves and dark jacket sleeves, its lighting, and its flat pure chroma-key green (#00FF00) background. Seen from the player's eyes.
+
+The pose:
+Reload, stage 1: cylinder open. The right hand holds the handle and has turned the revolver slightly onto its right side, in the lower centre of the frame, close to the body, with the muzzle tilted up about 45 degrees and toward the left. The cylinder is swung fully out to the left of the frame on its crane, showing the rear of its five chambers. The left hand's middle and ring fingers push the cylinder out from the left side, and the left thumb rests on the front of the open cylinder.
+
+Correct anatomy: five fingers per hand, clear finger separation, thumbs readable. Fingers stay off the trigger, resting straight along the frame, unless the pose says otherwise.
+
+Style: photorealistic game render, soft studio light from the upper left, sharp focus, crisp edges against the green, no green spill, no shadow, gradient or vignette on the background. Landscape 16:9, about 1672x941 or larger. No text, watermark, crosshair, HUD, muzzle flash or smoke (the game adds effects itself).
+
+When finished, reply with the absolute path of the saved file and its pixel size. If the image tool refuses, say so and stop without retrying.

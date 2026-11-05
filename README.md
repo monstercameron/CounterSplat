@@ -162,15 +162,17 @@ when preparing the packaged resources.
 
 | Input | Action |
 | --- | --- |
-| W / A / S / D | Move. |
+| W / A / S / D | Walk. Forward is fastest, strafing slower, backing up slowest. |
+| Ctrl | Cautious walk (half speed, small steps). In a browser tab Ctrl+W closes the tab, so rebind it or play in fullscreen. |
 | Mouse | Look; click the canvas to capture the pointer when supported. |
-| Shift / Ctrl / Space | Run / crouch / jump. |
+| Shift / C / Space | Run / crouch / jump. C while running slides. |
 | Left / right mouse | Fire / aim down sights. |
 | V | Cycle single, burst, and automatic fire. |
 | R / hold R | Reload / consolidate partially filled magazines. |
-| F | Stow or equip the weapon. The gameplay scene spawns with it stowed. |
+| F | Stow or equip the weapon. |
+| I | Inspect the weapon briefly (from an idle low ready; aiming, firing, sprinting or reloading cancels it). |
 | T | Reset the training range: the targets move in front of you and knocked-down cans stand back up. |
-| Q | Show the inspection HUD and local map. Combat actions dismiss it. |
+| Q | Show the inspection HUD and local map; the weapon turns into its inspect pose while it is open. Combat actions dismiss it. |
 | Backquote / tilde | Show or hide ECS tools and release mouse capture. |
 | Esc | Open the pause menu; choose a level, adjust settings, or manage Pursuit. |
 
@@ -224,7 +226,8 @@ queries, and rendering; the game-specific decisions remain in Lua.
 
 See [scene format](docs/scenes.md), [ECS](crates/ecs/README.md),
 [Lua API](crates/scripting-lua/README.md),
-[shooting and ballistics](docs/ballistics.md), and
+[shooting and ballistics](docs/ballistics.md),
+[weapon profiles](docs/weapon-profiles.md), and
 [physics props and the can range](docs/props.md).
 
 ### Rendering and streaming

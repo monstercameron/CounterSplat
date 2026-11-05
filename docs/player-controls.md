@@ -45,15 +45,16 @@ single-consumer ECS queues.
 
 ## Running and crouching
 
-Either Shift key runs while held. The gameplay scene defaults to 4 m/s walking and a 1.6× sprint (6.4 m/s at the default rig scale); both remain configurable in **Player controls**. Either Ctrl key crouches while held; the
-bindings can be changed in **Player controls**. Crouch takes priority over run
+Either Shift key runs while held. The gameplay scene defaults to 4 m/s walking and a 1.6× sprint (6.4 m/s at the default rig scale) going forward; both remain configurable in **Player controls**. C crouches while held and Ctrl walks cautiously (C rather than Ctrl
+for crouch because a Ctrl+W crouch-walk closes a browser tab); the
+bindings can be changed in **Player controls**. Crouch takes priority over the cautious walk and run
 and uses the scene's crouch-speed multiplier. The player entity's
 `PlayerPosture` component exposes crouch enablement, height ratio, movement
 speed, and transition time through **Entity settings**.
 
 [`player_posture.lua`](../assets/scripts/player_posture.lua) owns the behavior.
 It shortens the player's actual capsule and preserves its foot position while
-the camera eases to the new eye height. Releasing Ctrl checks the added head
+the camera eases to the new eye height. Releasing C checks the added head
 volume on the voxel worker before restoring standing height. If a ceiling is in
 the way, the player remains crouched and can move out from under it. If the
 collider is disabled or unavailable, the player can stand without that query.
@@ -175,3 +176,25 @@ Stowing cancels an in-progress reload without swapping the magazine, and input
 reset clears queued reloads and trigger requests. Holding aim with the weapon
 stowed does not block sprint; if aim is still held when the weapon is equipped,
 the weapon and camera return to ADS together.
+
+## Gaits, footsteps and breathing
+
+Movement has four gaits, chosen in this order: crouch (C), cautious walk (Ctrl, the `cautious` binding), run
+(Shift) and walk. Each has a base speed (walk `move_speed`, run `sprint_multiplier`, cautious
+`PlayerGait.cautious_multiplier`, crouch `PlayerPosture.crouch_speed_multiplier`) and per-direction factors
+in `PlayerGait.direction`: forward is fastest, strafing slower (`strafe`), backing up slowest (`backward`), and
+diagonals blend between them. `player_controls.lua` publishes the current gait and ground speed as the
+`player.gait` resource. C while running starts a slide (see the first-person page).
+
+`camera_bob.lua` simulates footsteps: each gait has a cadence (`PlayerGait.cadence_hz`, steps per second at its
+forward speed, scaled so walking matches `bob_cadence`), which sets its stride, so steps slow down when you
+strafe or back up. Each footfall emits a `player.step` event (`foot`, `gait`, `speed_mps`), and the view bob is
+phased half a cycle per step. The bob grows with ground speed and is scaled per gait (`PlayerGait.bob_scale`):
+a cautious walk barely moves the view, a run swings it most.
+
+Breathing is layered on top. An exertion level climbs while running (`breathing.run_build_seconds`), drifts to
+a light level while walking (`walk_level`) and settles at rest (`recovery_seconds`), published as the
+`player.exertion` resource. The breath gets faster (`rest_rate_hz` to `max_rate_hz`) and deeper
+(`rest_amplitude_m` / `rest_pitch_deg` to the `max_` values) with exertion; aiming steadies it (`aim_scale`).
+Pause menu → Settings → Controls has toggles for the view bob and for breathing
+(`PlayerControls.bob_enabled`, `breathing_enabled`); both save with your controls.

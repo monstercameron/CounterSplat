@@ -39,6 +39,8 @@ impl Fixture {
             "player.default_controls",
             serde_json::to_value(PlayerControls::default()).unwrap(),
         );
+        // The step-bob tests expect a still view at rest; breathing (always slightly alive) has its own tests.
+        world.borrow_mut().get_mut::<PlayerControls>(ids["player"]).unwrap().breathing_enabled = false;
         world.borrow_mut().set_dynamic_resource(
             "player.spawn_camera",
             serde_json::to_value(PlayerCamera::default()).unwrap(),
@@ -327,14 +329,17 @@ fn bob_tracks_external_posture_changes_and_removal() {
         step(&standing);
         step(&crouched);
     }
-    let a = standing.camera().view_offset;
-    let b = crouched.camera().view_offset;
-    for i in 0..3 {
-        assert!(
-            (a[i] - b[i]).abs() < 0.0001,
-            "removing posture restores standing bob"
-        );
+    // Crouched steps come at the crouch cadence, so the two bobs are out of phase; removing posture restores the
+    // standing bob's amplitude.
+    let energy = |f: &Fixture| f.camera().view_offset.iter().map(|x| x * x).sum::<f32>();
+    let (mut a, mut b) = (0.0, 0.0);
+    for _ in 0..120 {
+        step(&standing);
+        step(&crouched);
+        a += energy(&standing);
+        b += energy(&crouched);
     }
+    assert!((b / a - 1.0).abs() < 0.15, "removing posture restores standing bob: {b} vs {a}");
 }
 
 fn sprint_fixture() -> Fixture {
@@ -532,4 +537,129 @@ fn brief_voxel_ground_gaps_do_not_cut_running_effects_but_jumps_do() {
     }
     run_for(&f, 90, 6.4 / 60.0);
     assert_eq!(blur(&f), 0.0, "jumping should suppress sprint blur");
+}
+
+fn gait_fixture() -> Fixture {
+    let f = Fixture::new(&["player_controls.lua", "camera_bob.lua"]);
+    f.world.borrow_mut().get_mut::<PhysicsBody>(f.ids["player"]).unwrap().gravity_enabled = false;
+    f
+}
+fn press(f: &Fixture, code: &str, pressed: bool) {
+    f.lua
+        .dispatch("input.key", &json!({"code": code, "pressed": pressed, "is_repeat": false, "gameplay": true}))
+        .unwrap();
+}
+fn settle(f: &Fixture, ticks: usize) {
+    for _ in 0..ticks {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+    }
+}
+/// Holds `keys` for `ticks`, then releases them and lets the view settle. Returns the ground distance covered,
+/// the footsteps emitted and the summed squared view bob.
+fn travel(f: &Fixture, keys: &[&str], ticks: usize) -> (f32, usize, f32) {
+    f.world.borrow_mut().drain_events("player.step");
+    for key in keys {
+        press(f, key, true);
+    }
+    let start = f.camera().position;
+    let mut energy = 0.0;
+    for _ in 0..ticks {
+        f.lua.run_systems(1.0 / 60.0).unwrap();
+        energy += f.camera().view_offset.iter().map(|x| x * x).sum::<f32>();
+    }
+    let end = f.camera().position;
+    for key in keys {
+        press(f, key, false);
+    }
+    let steps = f.world.borrow_mut().drain_events("player.step").len();
+    settle(f, 120);
+    (((end[0] - start[0]).powi(2) + (end[2] - start[2]).powi(2)).sqrt(), steps, energy)
+}
+
+/// Every gait has its own speed and each direction within it differs: W is fastest, strafing slower and S
+/// slowest; Shift runs, Ctrl walks cautiously.
+#[test]
+fn gaits_and_directions_set_their_own_speeds() {
+    let f = gait_fixture();
+    let (walk_w, _, _) = travel(&f, &["KeyW"], 60);
+    let (walk_d, _, _) = travel(&f, &["KeyD"], 60);
+    let (walk_s, _, _) = travel(&f, &["KeyS"], 60);
+    assert!((walk_w - 4.0).abs() < 0.05, "walking forward at move_speed: {walk_w}");
+    assert!((walk_d / walk_w - 0.85).abs() < 0.01, "strafing walk: {walk_d}");
+    assert!((walk_s / walk_w - 0.7).abs() < 0.01, "backing up: {walk_s}");
+    let sprint = f.world.borrow().get::<PlayerControls>(f.ids["player"]).unwrap().sprint_multiplier;
+    let (run_w, _, _) = travel(&f, &["ShiftLeft", "KeyW"], 60);
+    let (run_d, _, _) = travel(&f, &["ShiftLeft", "KeyD"], 60);
+    let (run_s, _, _) = travel(&f, &["ShiftLeft", "KeyS"], 60);
+    assert!((run_w / walk_w - sprint).abs() < 0.02, "running forward at the sprint multiplier: {run_w}");
+    assert!(run_w > run_d && run_d > run_s, "run W > strafe > S: {run_w} {run_d} {run_s}");
+    assert!((run_s / run_w - 0.55).abs() < 0.01);
+    let (cautious_w, _, _) = travel(&f, &["ControlLeft", "KeyW"], 60);
+    assert!((cautious_w / walk_w - 0.5).abs() < 0.01, "a cautious walk is half speed: {cautious_w}");
+    let (careful_run, _, _) = travel(&f, &["ControlLeft", "ShiftLeft", "KeyW"], 60);
+    assert!((careful_run - cautious_w).abs() < 0.01, "Ctrl overrides Shift");
+}
+
+/// Footsteps are simulated per gait cadence and the bob is phased to them; the bob grows from a cautious walk to
+/// a walk to a run.
+#[test]
+fn steps_tick_at_each_gaits_cadence_and_the_bob_grows_with_speed() {
+    let f = gait_fixture();
+    let (_, walk_steps, walk_bob) = travel(&f, &["KeyW"], 120);
+    let (_, run_steps, run_bob) = travel(&f, &["ShiftLeft", "KeyW"], 120);
+    let (_, cautious_steps, cautious_bob) = travel(&f, &["ControlLeft", "KeyW"], 120);
+    let (_, back_steps, _) = travel(&f, &["KeyS"], 120);
+    // Two seconds each: 2.0, 2.8 and 1.3 steps per second at each gait's forward speed.
+    assert!((3..=4).contains(&walk_steps), "{walk_steps}");
+    assert!((5..=6).contains(&run_steps), "{run_steps}");
+    assert!((2..=3).contains(&cautious_steps), "{cautious_steps}");
+    assert!(back_steps < walk_steps, "backing up takes slower steps: {back_steps}");
+    assert!(run_bob > walk_bob && walk_bob > cautious_bob * 2.0, "{run_bob} {walk_bob} {cautious_bob}");
+    let step = {
+        press(&f, "KeyW", true);
+        settle(&f, 40);
+        press(&f, "KeyW", false);
+        f.world.borrow_mut().drain_events("player.step").pop().unwrap()
+    };
+    assert_eq!(step["gait"], "walk");
+    assert!(step["foot"] == "left" || step["foot"] == "right");
+}
+
+/// Breathing: running builds exertion and a faster, deeper breath; standing still settles it; the settings
+/// toggle turns it off.
+#[test]
+fn breathing_builds_while_running_settles_at_rest_and_can_be_disabled() {
+    let f = gait_fixture();
+    f.lua.dispatch("settings.view_request", &json!({"breathing_enabled": true})).unwrap();
+    let exertion = |f: &Fixture| f.world.borrow().get_dynamic_resource("player.exertion").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let sway = |f: &Fixture, ticks: usize| {
+        let mut peak: f32 = 0.0;
+        for _ in 0..ticks {
+            f.lua.run_systems(1.0 / 60.0).unwrap();
+            peak = peak.max(f.camera().view_offset[1].abs());
+        }
+        peak
+    };
+    let resting = sway(&f, 300);
+    assert!(resting > 0.0, "a calm breath still moves the view slightly");
+    press(&f, "ShiftLeft", true);
+    press(&f, "KeyW", true);
+    settle(&f, 480);
+    assert!(exertion(&f) > 0.9, "eight seconds of running: {}", exertion(&f));
+    press(&f, "ShiftLeft", false);
+    press(&f, "KeyW", false);
+    settle(&f, 30);
+    let winded = sway(&f, 180);
+    assert!(winded > resting * 3.0, "out of breath after the run: {winded} vs {resting}");
+    settle(&f, 1800);
+    assert!(exertion(&f) < 0.01, "breathing settles at rest: {}", exertion(&f));
+    let recovered = sway(&f, 300);
+    assert!(recovered < winded * 0.4, "the view steadies again: {recovered}");
+
+    f.world.borrow_mut().drain_events("player.controls_changed");
+    f.lua.dispatch("settings.view_request", &json!({"breathing_enabled": false})).unwrap();
+    assert!(!f.world.borrow().get::<PlayerControls>(f.ids["player"]).unwrap().breathing_enabled);
+    assert_eq!(f.world.borrow_mut().drain_events("player.controls_changed").len(), 1, "the toggle is saved");
+    settle(&f, 120);
+    assert_eq!(f.camera().view_offset, [0.0; 3], "no breathing sway when disabled");
 }

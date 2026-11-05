@@ -1057,3 +1057,74 @@ fn missing_voxels_leave_an_honest_map_status() {
     assert!(!f.visible("inspect_minimap"));
     assert_eq!(f.text("inspect_map_status"), "MAP UNAVAILABLE");
 }
+
+/// Q end to end: the real HUD opens and, through its `hud.inspect_started` engine event, the real weapon
+/// controller turns the weapon into the inspect pose and holds it until the HUD closes.
+#[test]
+fn q_opens_the_hud_and_turns_the_weapon_into_its_inspect_pose() {
+    let f = Fixture::new();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    f.lua
+        .execute(&std::fs::read_to_string(root.join("assets/scripts/first_person_controller.lua")).unwrap())
+        .unwrap();
+    let route = |f: &Fixture| {
+        for event in f.world.borrow_mut().drain_events("engine.event") {
+            f.lua.dispatch("engine.event", &event).unwrap();
+        }
+    };
+    let state = |f: &Fixture| f.world.borrow().get_dynamic(f.ids["first_person"], "WeaponState").unwrap()["state"].clone();
+    for _ in 0..20 {
+        f.tick(0.05);
+    }
+    assert_eq!(state(&f), "lowReady");
+    f.key(true, false);
+    route(&f);
+    for _ in 0..10 {
+        f.tick(0.05);
+        route(&f);
+    }
+    assert_eq!(state(&f), "inspecting", "Q holds the weapon in its inspect pose");
+    let frame = f.world.borrow_mut().drain_events("first_person.frame").pop().unwrap();
+    assert_eq!(frame["clip"], "inspect");
+    assert_eq!(frame["index"], 5, "the observe still");
+}
+
+/// Q pressed while the weapon is still raised from a shot opens the HUD at once and turns the weapon into its
+/// inspect pose as soon as it settles back to low ready.
+#[test]
+fn q_after_a_shot_inspects_once_the_weapon_settles() {
+    let f = Fixture::new();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    f.lua
+        .execute(&std::fs::read_to_string(root.join("assets/scripts/first_person_controller.lua")).unwrap())
+        .unwrap();
+    let route = |f: &Fixture| {
+        for event in f.world.borrow_mut().drain_events("engine.event") {
+            f.lua.dispatch("engine.event", &event).unwrap();
+        }
+    };
+    let state = |f: &Fixture| f.world.borrow().get_dynamic(f.ids["first_person"], "WeaponState").unwrap()["state"].clone();
+    for _ in 0..20 {
+        f.tick(0.05);
+    }
+    f.lua.dispatch("input.mouse_button", &json!({"button": "left", "pressed": true, "gameplay": true})).unwrap();
+    f.lua.dispatch("input.mouse_button", &json!({"button": "left", "pressed": false, "gameplay": true})).unwrap();
+    for _ in 0..8 {
+        f.tick(0.05);
+        route(&f);
+    }
+    assert_ne!(state(&f), "lowReady", "still raised from the shot");
+    f.key(true, false);
+    route(&f);
+    f.tick(0.05);
+    route(&f);
+    assert!(!state(&f).as_str().unwrap().starts_with("inspect"), "not yet: {}", state(&f));
+    // The HUD closes itself after a few seconds, which ends the inspect again.
+    let mut inspected = false;
+    for _ in 0..60 {
+        f.tick(0.05);
+        route(&f);
+        inspected |= state(&f) == "inspecting";
+    }
+    assert!(inspected, "inspects once the weapon settles while the HUD is open");
+}

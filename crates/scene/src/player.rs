@@ -207,6 +207,8 @@ pub struct PlayerBindings {
     pub sprint: String,
     pub crouch: String,
     pub jump: String,
+    /// Held for a slow, careful walk.
+    pub cautious: String,
 }
 impl Default for PlayerBindings {
     fn default() -> Self {
@@ -218,8 +220,10 @@ impl Default for PlayerBindings {
             up: "KeyE".into(),
             down: "KeyQ".into(),
             sprint: "ShiftLeft".into(),
-            crouch: "ControlLeft".into(),
+            // C rather than Ctrl: Ctrl+W closes a browser tab mid-game.
+            crouch: "KeyC".into(),
             jump: "Space".into(),
+            cautious: "ControlLeft".into(),
         }
     }
 }
@@ -235,6 +239,7 @@ impl PlayerBindings {
             &self.sprint,
             &self.crouch,
             &self.jump,
+            &self.cautious,
         ] {
             if key.is_empty() || key.len() > 32 || !key.bytes().all(|c| c.is_ascii_alphanumeric()) {
                 return Err("player key bindings must be nonempty physical key codes of at most 32 letters or digits");
@@ -268,6 +273,8 @@ pub struct PlayerControls {
     pub bob_vertical: f32,
     pub bob_horizontal: f32,
     pub bob_smoothing: f32,
+    /// Breathing sway layered on the view; it grows with exertion and settles at rest.
+    pub breathing_enabled: bool,
     /// Legacy saved zoom value; ADS magnification comes from the weapon's optic.
     pub zoom_factor: f32,
     /// ADS transition response in inverse seconds.
@@ -291,6 +298,7 @@ impl Default for PlayerControls {
             bob_vertical: 0.035,
             bob_horizontal: 0.018,
             bob_smoothing: 12.0,
+            breathing_enabled: true,
             zoom_factor: 5.0,
             zoom_response: 12.0,
             bindings: PlayerBindings::default(),
