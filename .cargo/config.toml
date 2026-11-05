@@ -1,3 +1,8 @@
 # Keep all workspace build products out of the source tree.
 [build]
 target-dir = ".artifacts/target"
+
+# Every browser with WebGPU also ships WebAssembly SIMD, so the web build can use 128-bit vectors everywhere
+# (the upload encode loops and any auto-vectorised code in dependencies).
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

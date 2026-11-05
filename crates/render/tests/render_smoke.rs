@@ -58,6 +58,250 @@ fn renders_visible_synthetic_splat() {
     );
 }
 
+/// `n` small, varied splats spread over the cube [-1, 1]^3.
+fn scattered_splats(n: u32) -> Bundle {
+    let mut state = 7u32;
+    let mut byte = || {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (state >> 24) as u8
+    };
+    let stream = |f: &mut dyn FnMut(u32) -> [u8; 4]| Texture {
+        width: n,
+        height: 1,
+        rgba: (0..n).flat_map(|i| f(i)).collect(),
+    };
+    let mut textures = BTreeMap::new();
+    textures.insert("means_l", stream(&mut |_| [byte(), byte(), byte(), 255]));
+    textures.insert("means_u", stream(&mut |_| [byte(), byte(), byte(), 255]));
+    textures.insert("quats", stream(&mut |_| [byte(), byte(), byte(), 252]));
+    textures.insert("scales", stream(&mut |_| [byte() / 4 + 150, byte() / 4 + 150, byte() / 4 + 150, 255]));
+    textures.insert("sh0", stream(&mut |_| [byte(), byte(), byte(), byte() / 2 + 128]));
+    let meta = Meta {
+        count: n,
+        means_mins: [-0.7; 3],
+        means_maxs: [0.7; 3],
+        scales_codebook: (0..256).map(|i| -6.0 + i as f32 * 0.02).collect(),
+        sh0_codebook: (0..256).map(|i| -2.0 + i as f32 / 64.0).collect(),
+        sh_n_codebook: vec![0.0; 256],
+        sh_n_count: 0,
+    };
+    sog::complete(meta, textures)
+}
+
+/// The sort compacts the splats in view, so its order is defined only for that prefix; the draw must stop there even
+/// inside the last, partly filled instance of 128. A previous view that showed more splats leaves stale entries past
+/// the prefix, which would be drawn a second time. The compacting sort must give exactly the picture of the sort that
+/// orders every slot.
+#[test]
+fn compacted_and_full_sorts_draw_the_same_picture() {
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        return;
+    };
+    let pipelines = Pipelines::new(&device, countersplat_render::COLOR_FORMAT).unwrap();
+    let bundle = scattered_splats(5000);
+    let compacting = scene::build(&device, &queue, &pipelines, &bundle, 0.5).unwrap();
+    scene::set_indirect_draw(false);
+    let full = scene::build(&device, &queue, &pipelines, &bundle, 0.5);
+    scene::set_indirect_draw(true);
+    let full = full.unwrap();
+    let view = |eye: [f32; 3], target: [f32; 3]| View {
+        model: camera::IDENTITY,
+        view: camera::look_at(eye, target, [0.0, 1.0, 0.0]),
+        projection: camera::perspective(60f32.to_radians(), 1.0, 0.05, 100.0),
+        width: 96,
+        height: 96,
+        near: 0.05,
+        far: 100.0,
+    };
+    // Everything in view, then from inside the cloud looking sideways: far fewer splats in view.
+    for v in [view([0.0, 0.0, 3.0], [0.0; 3]), view([0.0, 0.0, 0.0], [1.0, 0.2, 0.0])] {
+        let a = compacting.render_rgba(&device, &queue, &pipelines, &v, None);
+        let b = full.render_rgba(&device, &queue, &pipelines, &v, None);
+        assert!(a.chunks_exact(4).any(|p| p[..3].iter().any(|&c| c > 5)), "something is drawn");
+        let differing = a.iter().zip(&b).filter(|(x, y)| x != y).count();
+        assert_eq!(differing, 0, "compacted and full sorts differ in {differing} bytes");
+    }
+}
+
+/// The sort leaves out splats the vertex stage would discard for their footprint (under `minPixelSize`, or off screen
+/// at their full extent). That must not change a single pixel, with or without depth of field and motion blur, from
+/// outside the cloud, inside it and close to splats, on a non-square viewport, and must actually leave splats out.
+#[test]
+fn footprint_cull_leaves_out_splats_without_changing_the_picture() {
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        return;
+    };
+    let pipelines = Pipelines::new(&device, countersplat_render::COLOR_FORMAT).unwrap();
+    let n = 20_000u32;
+    let mut state = 11u32;
+    let mut byte = || {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (state >> 24) as u8
+    };
+    let stream = |f: &mut dyn FnMut() -> [u8; 4]| Texture {
+        width: 2048,
+        height: n.div_ceil(2048),
+        rgba: (0..n.div_ceil(2048) * 2048).flat_map(|_| f()).collect(),
+    };
+    let mut textures = BTreeMap::new();
+    textures.insert("means_l", stream(&mut || [byte(), byte(), byte(), 255]));
+    textures.insert("means_u", stream(&mut || [byte(), byte(), byte(), 255]));
+    textures.insert("quats", stream(&mut || [byte(), byte(), byte(), 252 + byte() % 4]));
+    // Scales from a tenth of a millimetre to about a metre, independently per axis (needles and discs as well).
+    textures.insert("scales", stream(&mut || [byte(), byte(), byte(), 255]));
+    textures.insert("sh0", stream(&mut || [byte(), byte(), byte(), byte() / 2 + 100]));
+    let meta = Meta {
+        count: n,
+        means_mins: [-2.0; 3],
+        means_maxs: [2.0; 3],
+        scales_codebook: (0..256).map(|i| -9.0 + i as f32 * 0.035).collect(),
+        sh0_codebook: (0..256).map(|i| -2.0 + i as f32 / 64.0).collect(),
+        sh_n_codebook: vec![0.0; 256],
+        sh_n_count: 0,
+    };
+    let scene = scene::build(&device, &queue, &pipelines, &sog::complete(meta, textures), 0.5).unwrap();
+    let view = |eye: [f32; 3], target: [f32; 3], width: u32, height: u32| View {
+        model: camera::IDENTITY,
+        view: camera::look_at(eye, target, [0.0, 1.0, 0.0]),
+        projection: camera::perspective(70f32.to_radians(), width as f32 / height as f32, 0.05, 100.0),
+        width,
+        height,
+        near: 0.05,
+        far: 100.0,
+    };
+    let views = [
+        view([0.0, 0.0, 14.0], [0.0; 3], 160, 90),
+        view([0.0, 0.0, 0.0], [1.0, 0.2, 0.0], 160, 90),
+        view([0.3, -0.2, 0.5], [2.0, -0.5, -1.0], 96, 128),
+    ];
+    let mut dropped = 0;
+    // Plain, then depth of field focused at 3 units with motion blur on.
+    for (effects, previous) in [
+        ([0.0, 7.5, 0.0, 0.0], camera::IDENTITY),
+        ([0.0, 3.0, 6.0, 0.6], camera::mul(&views[1].projection, &views[1].view)),
+    ] {
+        scene.set_camera_effects(&queue, effects, &previous);
+        for v in &views {
+            countersplat_render::sort::set_footprint_cull(false);
+            let full = scene.render_rgba(&device, &queue, &pipelines, v, None);
+            let all = scene.drawn_splats(&device, &queue);
+            countersplat_render::sort::set_footprint_cull(true);
+            let culled = scene.render_rgba(&device, &queue, &pipelines, v, None);
+            let kept = scene.drawn_splats(&device, &queue);
+            assert!(full.chunks_exact(4).any(|p| p[..3].iter().any(|&c| c > 5)), "something is drawn");
+            let differing = full.iter().zip(&culled).filter(|(x, y)| x != y).count();
+            assert_eq!(differing, 0, "the footprint cull changed {differing} bytes (effects {effects:?})");
+            assert!(kept <= all);
+            dropped += all - kept;
+        }
+    }
+    // Counts are whole draw instances of 128, so this is a floor on the splats left out over the six renders.
+    assert!(dropped > 3_000, "the cull left out only {dropped} splats");
+}
+
+/// The impact depth prepass may leave out every splat farther than the farthest impact (`prepare_depth_range`): the
+/// depth buffer must stay bit-identical wherever the full prepass is nearer than that limit, and may only be farther
+/// elsewhere. Checked from outside the cloud and from inside it, with the limit cutting through the splats.
+#[test]
+fn depth_prepass_range_keeps_every_depth_nearer_than_the_limit() {
+    let Some((device, queue)) = countersplat_render::try_device() else {
+        return;
+    };
+    let pipelines = Pipelines::new(&device, countersplat_render::COLOR_FORMAT).unwrap();
+    let scene = scene::build(&device, &queue, &pipelines, &scattered_splats(5000), 0.5).unwrap();
+    let (width, height) = (96u32, 96u32);
+    let depth = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("range test depth"),
+        size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: countersplat_render::DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let depth_view = depth.create_view(&Default::default());
+    let row = (width * 4).div_ceil(256) * 256;
+    let read_depth = |view: &View, far: Option<f32>| -> Vec<f32> {
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("range test readback"),
+            size: u64::from(row * height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        scene.prepare(&queue, &mut encoder, view, &view.model);
+        scene.prepare_depth_range(&queue, &mut encoder, view, &view.model, far);
+        {
+            let mut pass = scene::depth_pass(&mut encoder, &depth_view, "range test prepass");
+            scene.draw_depth(&mut pass, &pipelines);
+        }
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &depth,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::DepthOnly,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        queue.submit(Some(encoder.finish()));
+        readback.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map"));
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        let data = readback.slice(..).get_mapped_range().expect("mapped depth");
+        (0..height)
+            .flat_map(|y| {
+                let start = (y * row) as usize;
+                data[start..start + (width * 4) as usize]
+                    .chunks_exact(4)
+                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    let view = |eye: [f32; 3], target: [f32; 3]| View {
+        model: camera::IDENTITY,
+        view: camera::look_at(eye, target, [0.0, 1.0, 0.0]),
+        projection: camera::perspective(60f32.to_radians(), 1.0, 0.05, 100.0),
+        width,
+        height,
+        near: 0.05,
+        far: 100.0,
+    };
+    // The cloud spans depths 2 to 4 from the first eye; its front half alone already covers every pixel the back half
+    // does, so the first limit cuts through the front.
+    for (v, far) in [(view([0.0, 0.0, 3.0], [0.0; 3]), 2.4f32), (view([0.0, 0.0, 0.0], [1.0, 0.2, 0.0]), 0.2)] {
+        // The hardware depth of a point `far` in front of the camera.
+        let p = &v.projection;
+        let limit = (p[10] * -far + p[14]) / (p[11] * -far + p[15]);
+        let full = read_depth(&v, None);
+        let limited = read_depth(&v, Some(far));
+        let (mut kept, mut dropped) = (0, 0);
+        for (i, (&a, &b)) in full.iter().zip(&limited).enumerate() {
+            if a < limit {
+                assert_eq!(a.to_bits(), b.to_bits(), "pixel {i}: depth {a} nearer than the limit changed to {b}");
+                kept += 1;
+            } else {
+                assert!(b >= a, "pixel {i}: depth {a} became nearer ({b})");
+                dropped += usize::from(b > a);
+            }
+        }
+        assert!(kept > 50, "the limit should keep near splats ({kept} pixels)");
+        assert!(dropped > 50, "the limit should leave out far splats ({dropped} pixels)");
+        // Without a limit the prepass is the full one again.
+        let again = read_depth(&v, None);
+        assert!(full.iter().zip(&again).all(|(a, b)| a.to_bits() == b.to_bits()), "an unlimited prepass is unchanged");
+    }
+}
+
 #[test]
 fn visible_splat_produces_a_draw_instance() {
     let Some((device, queue)) = countersplat_render::try_device() else {
@@ -152,13 +396,6 @@ fn streamed_splat_renders_and_respects_the_active_prefix() {
         1,
     )
     .unwrap();
-    stream.init_pool(&pool, &queue);
-    stream.select([0.0, 0.0, 3.0], [0.0, 0.0, -1.0], None, 0.0);
-    let requests = stream.requests();
-    assert_eq!(requests.len(), 1);
-    stream.insert(requests[0].0, bundle);
-    stream.apply(&pool, &queue);
-    assert_eq!(stream.stats().resident_splats, 1);
     let view = View {
         model: camera::IDENTITY,
         view: camera::look_at([0.0, 0.0, 3.0], [0.0; 3], [0.0, 1.0, 0.0]),
@@ -174,6 +411,17 @@ fn streamed_splat_renders_and_respects_the_active_prefix() {
             .filter(|pixel| pixel[..3].iter().any(|&channel| channel > 5))
             .count()
     };
+    stream.init_pool(&pool, &queue);
+    // Sort the empty pool first: later sorts skip the fade writes, and the splat uploaded into an empty slot without a
+    // crossfade (fade_s 0) must still find its share in place.
+    assert_eq!(lit(&pool.render_rgba(&device, &queue, &pipelines, &view, None)), 0);
+    assert_eq!(lit(&pool.render_rgba(&device, &queue, &pipelines, &view, None)), 0);
+    stream.select([0.0, 0.0, 3.0], [0.0, 0.0, -1.0], None, 0.0);
+    let requests = stream.requests();
+    assert_eq!(requests.len(), 1);
+    stream.insert(requests[0].0, bundle);
+    stream.apply(&pool, &queue);
+    assert_eq!(stream.stats().resident_splats, 1);
     assert!(lit(&pool.render_rgba(&device, &queue, &pipelines, &view, None)) > 10);
     pool.set_active(&queue, 0);
     assert_eq!(
@@ -211,8 +459,11 @@ fn renders_spherical_splat_without_degenerate_eigenvector() {
     );
 }
 
+/// A splat between the camera and a cutout's target is left out of the draw: the compacting sort does not count it
+/// in view. (A direct-draw sorter, which draws every slot, zeroes its fade instead; the sorter's unit tests check
+/// both agree on which splats are shown.)
 #[test]
-fn target_cutouts_clear_opacity_for_the_direct_draw_path() {
+fn target_cutouts_leave_the_cut_splat_out_of_the_draw() {
     use countersplat_render::sort::{Cutout, DepthSorter};
     let Some((device, queue)) = countersplat_render::try_device() else {
         return;
@@ -239,7 +490,7 @@ fn target_cutouts_clear_opacity_for_the_direct_draw_path() {
     let sorter = DepthSorter::new(&device, &queue, 1, &centers, &fade);
     let order = buffer("order", 4, wgpu::BufferUsages::COPY_DST);
     let readback = buffer(
-        "fade readback",
+        "visible readback",
         4,
         wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
     );
@@ -263,16 +514,13 @@ fn target_cutouts_clear_opacity_for_the_direct_draw_path() {
         Some((&cutout, &view, &camera::IDENTITY)),
         &order,
     );
-    encoder.copy_buffer_to_buffer(&fade, 0, &readback, 0, 4);
+    encoder.copy_buffer_to_buffer(sorter.visible_buffer(), 0, &readback, 0, 4);
     queue.submit(Some(encoder.finish()));
     let slice = readback.slice(..);
     slice.map_async(wgpu::MapMode::Read, |_| {});
     device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
     let bytes = slice.get_mapped_range().unwrap();
-    assert_eq!(
-        f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
-        0.0
-    );
+    assert_eq!(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]), 0, "the cut splat is not in view");
 }
 
 #[test]

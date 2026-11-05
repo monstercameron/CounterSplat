@@ -4,6 +4,9 @@
 // spent waiting inside JavaScript/Rust host calls against a healthy script.
 const INSTRUCTION_LIMIT = 10_000_000;
 const HOOK_INTERVAL = 1_000;
+// Wall-clock limit on each script's initialisation, and the time above which a slow one is reported.
+export const INIT_SCRIPT_DEADLINE_MS = 2_000;
+const SLOW_INIT_SCRIPT_MS = 500;
 // Invalid UTF-16 must keep the JSON path's escaping and validation behavior.
 const isWellFormed = String.prototype.isWellFormed;
 function directString(value, limit) {
@@ -500,10 +503,20 @@ export class LuaScene {
       // Each independently authored script gets its own execution budget.
       // A single deadline for the entire scene makes an otherwise healthy
       // script fail just because earlier scripts or a busy GPU took time.
+      // The deadline only has to stop a runaway script, not police speed. The heaviest init scripts (the weapon
+      // state machine, camera behaviour, image correction) normally take 160-210 ms here and varied from 164 to
+      // over 500 ms between identical launches, so a 500 ms deadline failed whole level launches at random
+      // ("thread timeout exceeded"). Four times the slowest normal run still catches a loop within a couple of
+      // seconds.
       const initialize = source => {
-        vm.global.setTimeout(Date.now() + 500);
+        vm.global.setTimeout(Date.now() + INIT_SCRIPT_DEADLINE_MS);
+        const began = performance.now();
         try { vm.doStringSync(source); }
         finally { vm.global.setTimeout(undefined); }
+        const took = performance.now() - began;
+        if (took > SLOW_INIT_SCRIPT_MS)
+          console.warn(`Lua script initialisation took ${took.toFixed(0)} ms (deadline ${INIT_SCRIPT_DEADLINE_MS} ms):`,
+            source.slice(0, 80).replace(/\s+/g, ' '));
       };
       initialize(BOOTSTRAP);
       initialize(engineApi);

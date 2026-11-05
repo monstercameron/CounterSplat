@@ -215,7 +215,7 @@ fn prepare_level(
     };
     let mut stream = LevelStream::new(meta, &metas, settings)?;
     let rows = stream.palette_texture_rows(device.limits().max_texture_dimension_2d);
-    let pool = scene::pool_with_centroid_rows(
+    let pool = scene::pool_for_level(
         device,
         queue,
         pipelines,

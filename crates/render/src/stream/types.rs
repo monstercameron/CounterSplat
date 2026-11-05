@@ -57,6 +57,10 @@ pub struct StreamSettings {
     /// Leaves this close to the LOD centre count as in view whichever way the camera looks: the chase camera swings
     /// around the focus, and nearby detail remains available during camera movement.
     pub any_view_m: f32,
+    /// The percentage of the pool the selection may fill with the detail it wants; the rest holds ranges while they
+    /// crossfade (a new range goes in beside the old one, which fades out). Too low leaves pool memory idle; too
+    /// high leaves no room for the crossfades, so refinements wait (or, with `allow_fade_cuts`, cut fades short).
+    pub select_share_percent: u32,
 }
 
 impl Default for StreamSettings {
@@ -79,6 +83,7 @@ impl Default for StreamSettings {
             fade_s: 0.35,
             keep_s: 1.5,
             any_view_m: 8.0,
+            select_share_percent: super::SELECT_SHARE as u32,
         }
     }
 }

@@ -3,14 +3,20 @@
 The gameplay scene defines an `image_correction` entity with an `ImageCorrection` component in
 `assets/scenes/gameplay.json`. Open **Image correction** in the tool stack, or select
 **Image correction** in **ECS entities** and edit its exported component settings in the inspector.
-The panel is collapsible and draggable. The scene preset uses a restrained filmic curve, cool
-shadows, warm highlights, controlled bloom and a mild vignette; it can be adjusted or bypassed entirely.
+The panel is collapsible and draggable. The scene preset is an action-film teal-and-orange grade: the
+filmic curve, a strong contrast pivot (1.34) with exposure pulled down 0.4 stop for deep blacks, cool teal
+shadows (`shadow_warmth` -0.44 with `tint` +0.6 to push them toward green-blue rather than violet), warmer
+highlights (+0.3), restrained bloom, a 0.32 vignette, light grain and 0.12 sharpening; it can be adjusted
+or bypassed entirely. The sky is dimmed separately (`Skybox.exposure` 0.45) so the HDR sky keeps its blue
+and cloud contrast instead of blowing out under the lifted midtones. Tint is scaled by only 0.15 stop, so
+useful values are several times larger than the other controls. The old preset sharpened at 0.24, which drew
+bright halos around edges; keep sharpening low and get crispness from resolution instead.
 
 Controls include exposure in stops, contrast, saturation, overall warmth, tint, shadow and highlight
 brightness, shadow warmth, highlight warmth, bloom strength and threshold, vignette, grain, sharpening,
 and the filmic curve. Negative tonal warmth is cool and positive is warm. **Reset cinematic grade**
 restores the values authored in the current scene JSON. Sharpening ranges from 0 to 2; the gameplay
-preset starts at 0.24.
+preset uses 0.12.
 In the browser, edits persist locally across level changes
 and reloads; they do not rewrite scene files. Camera lens exposure is applied earlier, so it combines
 with the image-correction exposure.

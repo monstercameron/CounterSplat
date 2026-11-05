@@ -1,45 +1,25 @@
 // Browser host: both the selector and gameplay render directly to the WebGPU canvas.
-import init, { Selector, Viewer } from './pkg/countersplat_web.js';
+import init, { Selector, Viewer, set_indirect_draw, set_sort_compaction, set_footprint_cull, chunk_decoder_count, preload_level_chunks,
+  DisplaySettings, display_viewport_size, MouseCapture, GameplayMouseButtons, GameplayFireButton, savedLayout, storeLayout,
+  saveSetting, savedWeaponOptic, savePlayerRig, LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl,
+  projectResourceUrl, FrameProfiler, InputFrameLatency, gameplayInputChannels, gameplayEventChannels,
+  loadLevelMetadata, FirstPersonFrames, SceneAudio, FrameStackCapture, MinimapRuntime } from './pkg/countersplat_web.js';
 import { LuaScene, EventChannels } from './lua_runtime.js';
-import { VoxelRuntime } from './pkg/voxel_runtime.js';
-import { MouseCapture } from './pkg/mouse_capture.js';
-import { GameplayMouseButtons, GameplayFireButton } from './pkg/mouse_buttons.js';
-import { FirstPersonFrames } from './pkg/first_person_frames.js';
-import { LineLayers } from './pkg/line_layers.js';
-import { layoutKey, migrateGameplayLayout } from './pkg/ui_layout_preferences.js';
-import { PLAYER_CONTROLS_KEY, LEGACY_PLAYER_CONTROLS_KEY, readControlsPreference } from './pkg/player_controls_preferences.js';
-import { SceneAudio } from './pkg/scene_audio.js';
-import { MinimapRuntime } from './pkg/minimap_runtime.js';
-import { createDisplaySettings, createHudPreferences, ASPECT_RATIOS, inferAspect, resolutionOptions,
-  presentationMapping, viewportSize, sceneResolution, MAX_RENDER_DIMENSION } from './pkg/display_settings.js';
-import { publishPlayerRigData, savePlayerRig } from './pkg/player_rig.js';
-import { ChunkDecoderPool, chunkDecoderCount } from './pkg/chunk_decoder_pool.js';
-import { preloadChunks } from './pkg/chunk_preload.js';
-import { loadMetadataInWorker } from './pkg/metadata_client.js';
-import { LoadingProgress, levelPolicies, loadPolicy, planScripts, localSceneUrl, projectResourceUrl } from './asset_loader.js';
-import { FrameProfiler } from './pkg/frame_profile.js';
-import { InputFrameLatency } from './pkg/input_latency.js';
-import { GAMEPLAY_INPUT_CHANNELS, GAMEPLAY_EVENT_CHANNELS } from './pkg/gameplay_events.js';
-import { FrameStackCapture, summarizeFrameStacks, medianGpuSample } from './pkg/frame_stack_profile.js';
 
 const canvas = document.getElementById('canvas');
 const status = document.getElementById('status');
 const message = document.getElementById('message');
 const metrics = document.getElementById('metrics');
-const sceneAudio = new SceneAudio();
+let sceneAudio = null;
 // The selector click or a later key press unlocks audio without delaying input.
-for (const name of ['pointerdown', 'keydown']) window.addEventListener(name, () => sceneAudio.unlock(), {capture:true});
+for (const name of ['pointerdown', 'keydown']) window.addEventListener(name, () => sceneAudio?.unlock(), {capture:true});
 // Profiling is opt-in and publishes read-only diagnostics on the existing metrics node.
 const profileOptions = new URLSearchParams(location.search);
 const stackRequested = profileOptions.get('stack_profile') === '1';
-const frameProfiler = profileOptions.has('profile') || stackRequested ? new FrameProfiler() : null;
-const inputLatency = frameProfiler ? new InputFrameLatency() : null;
-const stackCapture = stackRequested ? new FrameStackCapture((summary, raw) => {
-  const gpu = active && mode === 'gameplay' ? JSON.parse(active.gpu_frame_timing()) : null;
-  const selected = medianGpuSample(gpu?.samples);
-  if (raw && selected)
-    summary = summarizeFrameStacks(raw.trace, raw.frames, 1, summary.actual_interval_ms, selected.frame_timestamp_ms);
-  summary.gpu = gpu ? {...gpu, selected} : null;
+// Rust-backed host objects are created once the module is initialised (see start).
+let frameProfiler = null, inputLatency = null;
+let stackCapture = null;
+const publishStackProfile = (summary, raw) => {
   metrics.dataset.stackProfile = JSON.stringify(summary);
   if (raw) {
     metrics.dataset.stackTrace = JSON.stringify(raw);
@@ -47,187 +27,76 @@ const stackCapture = stackRequested ? new FrameStackCapture((summary, raw) => {
     download.href = URL.createObjectURL(new Blob([JSON.stringify({summary, ...raw})], {type:'application/json'}));
     download.hidden = false;
   }
-}) : null;
+};
+
 let profileState = null, lastProfileReport = 0;
 const arrangeButton = document.getElementById('arrange');
 const resetLayoutButton = document.getElementById('reset-layout');
-const inFlight = new Set();
-const mouseCapture = new MouseCapture(canvas, document);
+let mouseCapture = null;
 let active = null;
-let displayPanel = null, hudPreferences = null;
+let displayPanel = null;
 let displayViewport = {width:1, height:1};
 let arrangeMode = false;
 let mode = 'boot';
 let generation = 0;
 let lastStatus = 0;
-let aspectOwner = null, publishedAspect = null, viewportOwner = null, publishedViewport = null;
 let menuViewportOwner = null, menuViewportWidth = 0, menuViewportHeight = 0;
 let stopped = false;
 let selectorBytes, catalogBytes, sceneCatalogBytes, gameplayBytes, menuBytes, catalog, gameplayScene, menuScene;
 let selectorUrl, sceneCatalogUrl, gameplayUrl, defaultGameplayUrl, defaultGameplayBytes, menuUrl, engineApi, gameplayScripts, menuScripts, luaFactory;
 let gameplayLua = null, menuLua = null, lastScriptTime = null;
 let pendingLightPresentation = null;
-const gameplayMouse = new GameplayMouseButtons(pressed => gameplayLua?.emit('input.mouse_button', {button:'right', pressed, gameplay:true}));
-const gameplayFire = new GameplayFireButton(pressed => gameplayLua?.emit('input.mouse_button', {button:'left', pressed, gameplay:true}));
+let gameplayMouse = null, gameplayFire = null;
 let firstPersonFrames = null, minimapRuntime = null;
 let inspectionPoseEnabled = false, lastInspectionPresentation = null, lastWeaponPresentation = null;
 let dragLook = false, lastEscapeTime = -Infinity;
-const playerControlsKey = PLAYER_CONTROLS_KEY;
-const opticKey = 'countersplat.weapon-optic.first-person.v1';
 let activeWeaponId = null, gameplayEntityIds = null;
-const cameraLensKey = 'countersplat.camera-lens.v1';
-const cameraZoomLensKey = 'countersplat.camera-zoom-lens.v1';
-const cameraControllerKey = 'countersplat.camera-controller.v1';
-const imageCorrectionKey = 'countersplat.image-correction.v1';
 let loadingAbort = null, preloadedSceneAssets = new Map();
 const MAX_PRELOAD_BYTES = 512 * 1024 * 1024;
 let selectedId = '', selectedSceneId = '';
 const previewImages = new Map(), previewPending = new Map();
 let currentLevel = null;
 let levelBase = null;
-let chunkMetas = [];
-let decoder = null;
 let skyDecoder = null;
-let voxelRuntime = null;
+// The gameplay viewer while it runs level collision (Rust, with its own worker).
+let voxelGame = null;
 let skyRequest = 0;
 let skyLoadState = 'loading';
 let skyErrorUntil = 0;
 let localSkyId = 'preview-local-0';
 
-// Scene definitions remain JSON; browser-local offsets are optional user preferences.
+// Scene definitions remain JSON; browser-local offsets are optional user preferences (stored by Rust).
 function restoreLayout(target, scene) {
-  try {
-    const key = layoutKey(scene);
-    let saved = localStorage.getItem(key);
-    if (saved === null && scene === 'gameplay') {
-      saved = migrateGameplayLayout(localStorage.getItem('countersplat.ui-layout.gameplay.v1'));
-      if (saved !== null) localStorage.setItem(key, saved);
-    }
-    if (saved !== null) target.ui_restore_layout(saved);
-  } catch (error) { console.warn('Could not restore UI layout:', error); }
+  try { const saved = savedLayout(scene); if (saved) target.ui_restore_layout(saved); }
+  catch (error) { console.warn('Could not restore UI layout:', error); }
 }
-function saveLayout(target, scene) {
-  try { localStorage.setItem(layoutKey(scene), target.ui_layout()); }
-  catch (error) { console.warn('Could not save UI layout:', error); }
-}
+function saveLayout(target, scene) { storeLayout(scene, target.ui_layout()); }
 function layoutScene() { return mode === 'menu' ? 'menu' : mode === 'gameplay' ? 'gameplay' : 'selector'; }
-function resetPlayerInput() { gameplayMouse.reset(); gameplayFire.reset(); pendingLightPresentation = null; lastWeaponPresentation = null; if (gameplayLua) gameplayLua.emit('input.reset', {}); }
+function resetPlayerInput() { gameplayMouse?.reset(); gameplayFire?.reset(); pendingLightPresentation = null; lastWeaponPresentation = null; if (gameplayLua) gameplayLua.emit('input.reset', {}); }
 function releaseMouseLook() {
   dragLook = false;
-  mouseCapture.release();
-}
-function restorePlayerControls(game) {
-  try {
-    const current = localStorage.getItem(playerControlsKey);
-    const legacy = current === null ? localStorage.getItem(LEGACY_PLAYER_CONTROLS_KEY) : null;
-    if (current === null && legacy === null) return;
-    const defaults = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'player.default_controls'}))).value;
-    const saved = readControlsPreference(current, legacy, defaults?.sprint_multiplier);
-    if (!saved) return;
-    const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
-    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.player,name:'PlayerControls',value:saved.settings}));
-    // Keep v1 intact and write v2 only after ECS accepts the restored component.
-    if (saved.migrated) localStorage.setItem(playerControlsKey, JSON.stringify(saved.settings));
-  } catch (error) { console.warn('Could not restore player controls:', error); }
-}
-// Browser persistence is host plumbing; the lens itself remains a normal ECS component.
-function restoreCameraLens(game) {
-  try {
-    const raw = localStorage.getItem(cameraLensKey);
-    if (!raw) return;
-    if (raw.length > 16384) throw new Error('Saved camera settings are too large.');
-    const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
-    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.player,name:'CameraLens',value:JSON.parse(raw)}));
-  } catch (error) { console.warn('Could not restore camera settings:', error); }
-}
-function saveCameraLens(settings) {
-  try { localStorage.setItem(cameraLensKey, JSON.stringify(settings)); }
-  catch (error) { console.warn('Could not save camera settings:', error); }
-}
-function restoreCameraZoomLens(game) {
-  try {
-    const raw = localStorage.getItem(cameraZoomLensKey);
-    if (!raw) return;
-    if (raw.length > 16384) throw new Error('Saved zoom lens settings are too large.');
-    const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
-    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.player,name:'CameraZoomLens',value:JSON.parse(raw)}));
-  } catch (error) { console.warn('Could not restore zoom lens settings:', error); }
-}
-function saveCameraZoomLens(settings) {
-  try { localStorage.setItem(cameraZoomLensKey, JSON.stringify(settings)); }
-  catch (error) { console.warn('Could not save zoom lens settings:', error); }
-}
-// Persist camera tuning without moving behavior out of the Lua/ECS layer.
-function restoreCameraController(game) {
-  try {
-    const raw = localStorage.getItem(cameraControllerKey);
-    if (!raw) return;
-    if (raw.length > 16384) throw new Error('Saved camera controller settings are too large.');
-    const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
-    if (!ids.camera_controller) return;
-    const current = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get',id:ids.camera_controller,name:'CameraController'}))).value;
-    const saved = JSON.parse(raw);
-    if (!current || !saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid saved camera controller.');
-    // Tuning is a preference; the target remains owned by the current scene.
-    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.camera_controller,name:'CameraController',value:{...saved,target:current.target}}));
-  } catch (error) { console.warn('Could not restore camera controller:', error); }
-}
-function saveCameraController(settings) {
-  try { localStorage.setItem(cameraControllerKey, JSON.stringify(settings)); }
-  catch (error) { console.warn('Could not save camera controller:', error); }
-}
-// The browser stores the validated ECS value; the scene JSON remains the reset preset.
-function restoreImageCorrection(game) {
-  try {
-    const raw = localStorage.getItem(imageCorrectionKey);
-    if (!raw) return;
-    if (raw.length > 16384) throw new Error('Saved image settings are too large.');
-    const ids = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get_resource',name:'scene.entities'}))).value;
-    if (!ids.image_correction) return;
-    const current = JSON.parse(game.ecs_operation('gameplay', JSON.stringify({op:'get',id:ids.image_correction,name:'ImageCorrection'}))).value;
-    const saved = JSON.parse(raw);
-    if (!current || !saved || typeof saved !== 'object' || Array.isArray(saved)) throw new Error('Invalid saved image settings.');
-    // Old saved grades predate new fields such as sharpness. Keep their saved
-    // values and initialize only missing fields from this scene's preset.
-    game.ecs_operation('gameplay', JSON.stringify({op:'set',id:ids.image_correction,name:'ImageCorrection',value:{...current,...saved}}));
-  } catch (error) { console.warn('Could not restore image correction:', error); }
-}
-function saveImageCorrection(settings) {
-  try { localStorage.setItem(imageCorrectionKey, JSON.stringify(settings)); }
-  catch (error) { console.warn('Could not save image correction:', error); }
-}
-function savePlayerControls(settings) {
-  try { localStorage.setItem(playerControlsKey, JSON.stringify(settings)); }
-  catch (error) { console.warn('Could not save player controls:', error); }
-}
-// Persist only the currently equipped first-person weapon; Lua validates restored data.
-function saveWeaponOptic(setting) {
-  if (setting.entity !== activeWeaponId) return;
-  try { localStorage.setItem(opticKey, JSON.stringify({kind:setting.kind, scope_magnification:setting.scope_magnification})); }
-  catch (error) { console.warn('Could not save weapon optic:', error); }
+  mouseCapture?.release();
 }
 function restoreWeaponOptic(runtime) {
-  try {
-    const raw=localStorage.getItem(opticKey);
-    if (raw && raw.length <= 4096) runtime.dispatch('weapon.optic_set', JSON.parse(raw));
-  } catch (error) { console.warn('Could not restore weapon optic:', error); }
+  const optic = savedWeaponOptic();
+  if (optic) runtime.dispatch('weapon.optic_set', optic);
 }
-const gameplayInputChannels = new EventChannels(GAMEPLAY_INPUT_CHANNELS);
-const gameplayEventChannels = new EventChannels(GAMEPLAY_EVENT_CHANNELS);
+let gameplayInputs = null, gameplayEvents = null;
 const scriptEventChannels = new EventChannels(['engine.event']);
 const tickEventChannels = new EventChannels(['weapon.shot', 'weapon.dry_fire', 'weapon.reload_started', 'projectile.spawned',
   'projectile.impact', 'projectile.expired', 'combat.damage', 'combat.death',
   'combat.near_miss', 'combat.suppression', 'engine.event']);
 const outputChannels = new EventChannels(['player.controls_changed', 'camera.lens_changed', 'camera.zoom_lens_changed',
   'camera.controller_changed', 'image.correction_changed', 'first_person.frame', 'audio.layer', 'audio.play', 'lighting.flash_started', 'weapon.optic_changed', 'hud.pose_tracking', 'hud.map_request']);
-const hitboxLineLayers = new LineLayers();
 const trailingOutputChannels = new EventChannels(['projectile.visuals', 'player.rig_changed', 'impact.visuals', 'hitbox.visuals']);
 const outputConsumers = [
-  savePlayerControls, saveCameraLens, saveCameraZoomLens, saveCameraController, saveImageCorrection,
+  event => saveSetting('player_controls', event), event => saveSetting('camera_lens', event),
+  event => saveSetting('camera_zoom_lens', event), event => saveSetting('camera_controller', event),
+  event => saveSetting('image_correction', event),
   () => {}, // First-person frames are handled as a batch below.
   event => sceneAudio.setLayer(event), event => sceneAudio.play(event),
   event => { if (Number.isSafeInteger(event.id) && event.id > 0) pendingLightPresentation = event.id; },
-  saveWeaponOptic,
+  event => saveSetting('weapon_optic', event, activeWeaponId),
   event => { inspectionPoseEnabled = event.enabled === true; lastInspectionPresentation = null; },
   event => { ensureMinimapRuntime()?.request(event); },
 ];
@@ -235,8 +104,8 @@ function ensureMinimapRuntime() {
   if (!active || !gameplayLua || !levelBase) return null;
   if (!minimapRuntime) {
     const game=active, lua=gameplayLua;
-    try { minimapRuntime=new MinimapRuntime(game,levelBase,()=>active===game && gameplayLua===lua,
-      result=>lua.dispatch('hud.map_result',result),undefined,currentLevel?.rotate_z_180 !== false); }
+    try { minimapRuntime=new MinimapRuntime(new URL('./pkg/minimap-worker.js', import.meta.url).href,game,levelBase.href,()=>active===game && gameplayLua===lua,
+      result=>lua.dispatch('hud.map_result',result),currentLevel?.rotate_z_180 !== false); }
     catch (error) { console.warn('Level map:',error); lua.dispatch('hud.map_result',{status:'unavailable'}); }
   }
   return minimapRuntime;
@@ -263,29 +132,11 @@ function consumeGameplayOutput(index, events) {
   for (const event of events) outputConsumers[index](event);
 }
 function consumeTrailingOutput(index, events) {
-  if (index === 3) {
-    let changed = false;
-    for (const snapshot of events) changed = hitboxLineLayers.update(snapshot) || changed;
-    if (changed) active.set_hitbox_debug_lines_colored(hitboxLineLayers.packed());
-    return;
-  }
+  // Impact, projectile and hitbox snapshots are validated and packed in Rust.
+  if (index === 3) { active.applyHitboxVisuals(events); return; }
   if (index === 2) {
     const snapshot = events[events.length - 1];
-    if (!snapshot) return;
-    const decals = Array.isArray(snapshot.decals) ? snapshot.decals.slice(0, 96) : [];
-    const smoke = Array.isArray(snapshot.smoke) ? snapshot.smoke.slice(0, 160) : [];
-    const packed = [];
-    for (const [kind, sprites] of [[0, decals], [1, smoke]]) {
-      for (const sprite of sprites) {
-        if (!Array.isArray(sprite.position) || sprite.position.length !== 3 ||
-            !Array.isArray(sprite.normal) || sprite.normal.length !== 3 ||
-            ![...sprite.position, ...sprite.normal, sprite.radius, sprite.opacity, sprite.variation].every(Number.isFinite)) continue;
-        packed.push(...sprite.position, sprite.radius, ...sprite.normal, kind,
-          sprite.opacity, sprite.variation, 0, 0);
-      }
-    }
-    active.set_impact_sprites(new Float32Array(packed));
-    metrics.dataset.impactEffects = JSON.stringify({decals:decals.length, smoke:smoke.length});
+    if (snapshot) metrics.dataset.impactEffects = JSON.stringify(active.applyImpactVisuals(snapshot));
     return;
   }
   if (index === 1) {
@@ -293,18 +144,13 @@ function consumeTrailingOutput(index, events) {
     return;
   }
   const snapshot = events[events.length - 1];
-  if (snapshot) {
-    const packed = [];
-    for (const segment of (snapshot.segments || []).slice(0, 256))
-      packed.push(...segment.start, ...segment.finish, segment.alpha);
-    active.set_projectile_traces(new Float32Array(packed));
-  }
+  if (snapshot) active.applyProjectileVisuals(snapshot);
 }
 function dispatchGameplayEvents(runtime) {
-  runtime.dispatchPending(gameplayEventChannels);
+  runtime.dispatchPending(gameplayEvents);
 }
 function closeScripts() {
-  hitboxLineLayers.clear();
+  active?.clearHitboxVisuals?.();
   inputLatency?.clearPending();
   gameplayLua?.close(); menuLua?.close();
   gameplayLua = null; menuLua = null; lastScriptTime = null; pendingLightPresentation = null; activeWeaponId = null;
@@ -320,42 +166,9 @@ function sceneAsset(scene, base, id) {
 // The ECS pause menu requests changes; the host validates device limits and
 // persists preferences, then sends the accepted values back to the scene.
 function menuSettings(error = '') {
-  const preferences=displayPanel.preferences;
-  const current=sceneResolution(preferences,displayViewport);
-  const aspect=preferences.mode==='viewport' ? inferAspect(current.width,current.height) : preferences.aspect;
-  const mapping=presentationMapping(current,displayViewport,preferences.scaling);
-  const warning=preferences.scaling==='pixel' ? (mapping.cropped ?
-    'Pixel perfect: 1× cropped · choose a smaller resolution to fit.' :
-    `Pixel perfect: ${mapping.factor}× · whole pixels`) : '';
-  const ratio=preferences.mode==='viewport' ? current :
-    {width:preferences.ratio_width ?? current.width,height:preferences.ratio_height ?? current.height};
-  const read=(role,name)=>{
-    const id=gameplayEntityIds?.[role];
-    if (!active || !id) return null;
-    try { return JSON.parse(active.ecs_operation('gameplay',JSON.stringify({op:'get',id,name}))).value ?? null; }
-    catch { return null; }
-  };
-  const readResource=name=>{
-    if (!active) return null;
-    try { return JSON.parse(active.ecs_operation('gameplay',JSON.stringify({op:'get_resource',name}))).value ?? null; }
-    catch { return null; }
-  };
-  const controls=read('player','PlayerControls'), level=read('active_level','LevelSettings');
-  const assets=read('active_level','LevelAssets'), sky=read('skybox','Skybox'), layer=read('audio_root','AudioLayer');
-  let stats={};
-  try { if (active && currentLevel) stats=JSON.parse(active.status()); } catch { /* Optional status. */ }
-  const ticks=Number(stats.ticks);
-  const game={name:currentLevel?.name,format:currentLevel?.format,resident_splats:stats.resident_splats,
-    chunks_loaded:stats.lod_chunks_loaded,
-    playtime_seconds:Number.isFinite(ticks) && active ? ticks*active.script_tick_seconds() : null};
-  return {display:{...preferences,aspect,actual_width:current.width,actual_height:current.height,
-    ratio_width:ratio.width,ratio_height:ratio.height}, show_performance:hudPreferences.showPerformance,
-    game,controls,graphics:{lod:level?.lod,draw_distance:level?.draw_distance,lod_count:assets?.lod_count,sky_enabled:sky?.enabled},
-    audio:{gain:layer?.mix?.gain,muted:layer?.mix?.muted},
-    mode_state:readResource('game.mode_state'), mode_config:read('pursuit_mode','PursuitConfig'),
-    weapon_ballistics:read('first_person','Ballistics'),
-    aspects:ASPECT_RATIOS, presets:resolutionOptions(aspect,current,displayViewport,active?.max_texture_dimension() ?? MAX_RENDER_DIMENSION,ratio),
-    error:error || warning};
+  if (!active?.menu_settings) return {};
+  return JSON.parse(active.menu_settings(displayPanel, displayViewport.width, displayViewport.height,
+    currentLevel?.name, currentLevel?.format, error));
 }
 function processMenuSettings(runtime) {
   for (const request of runtime.drain('game.mode_request')) {
@@ -364,16 +177,16 @@ function processMenuSettings(runtime) {
     runtime.dispatch('menu.settings',menuSettings());
   }
   for (const request of runtime.drain('settings.aspect_request')) {
-    const result=displayPanel.setAspect(request.aspect,displayViewport);
-    runtime.dispatch('menu.settings', menuSettings(result.error || ''));
+    const error=displayPanel.set_aspect(String(request.aspect),displayViewport.width,displayViewport.height,active.max_texture_dimension());
+    runtime.dispatch('menu.settings', menuSettings(error));
   }
   for (const request of runtime.drain('settings.display_request')) {
-    const result = displayPanel.set(request);
-    runtime.dispatch('menu.settings', menuSettings(result.error || ''));
+    const error = displayPanel.set(JSON.stringify(request ?? null), active.max_texture_dimension());
+    runtime.dispatch('menu.settings', menuSettings(error));
   }
   for (const request of runtime.drain('settings.hud_request')) {
-    if (hudPreferences.set(request.show_performance)) {
-      gameplayLua?.dispatch('hud.preferences_changed', {show_performance:hudPreferences.showPerformance});
+    if (displayPanel.set_show_performance(JSON.stringify(request?.show_performance ?? null))) {
+      gameplayLua?.dispatch('hud.preferences_changed', {show_performance:displayPanel.show_performance()});
     }
     runtime.dispatch('menu.settings', menuSettings());
   }
@@ -390,7 +203,7 @@ function processMenuSettings(runtime) {
       else if (request.target==='audio_muted') gameplayLua.dispatch('settings.sound_request',{muted:request.value});
       else if (gameplayEntityIds?.[request.target]) gameplayLua.dispatch('ui.action',
         {id:gameplayEntityIds[request.target],kind:{type:kind,value:request.value}});
-      for (const event of gameplayLua.drain('player.controls_changed')) savePlayerControls(event);
+      for (const event of gameplayLua.drain('player.controls_changed')) saveSetting('player_controls', event);
       for (const event of gameplayLua.drain('audio.layer')) sceneAudio.setLayer(event);
     }
     runtime.dispatch('menu.settings',menuSettings());
@@ -399,11 +212,11 @@ function processMenuSettings(runtime) {
 function processSceneRequests(runtime) {
   for (const request of runtime.drain('engine.scene')) {
     if (mode === 'gameplay' && request.action === 'push' && sceneAsset(gameplayScene, gameplayUrl, request.scene) === menuUrl.href) {
-      gameplayMouse.reset(); gameplayFire.reset(); pendingLightPresentation = null;
+      gameplayMouse?.reset(); gameplayFire?.reset(); pendingLightPresentation = null;
       // Keep the ammo callout's pose subscription across pause/resume.
       lastInspectionPresentation = null; lastWeaponPresentation = null;
       runtime.dispatch('input.reset', {});
-      voxelRuntime?.suspend(); inputLatency?.clearPending(); sceneAudio.stopVoices();
+      voxelGame?.voxel_suspend(); inputLatency?.clearPending(); sceneAudio?.stopVoices();
       releaseMouseLook();
       active.ui_focus(false); active.ui_pointer_gone();
       active.set_menu_visible(true); active.set_paused(true); mode = 'menu';
@@ -483,8 +296,8 @@ async function preloadSceneAssets(scene, base, cache, signal, tracker, from, to)
   if (!entries.length) tracker.update('Loading scene assets', from, to, 1, 1);
 }
 async function preloadScripts(gameScene, gameBase, menu, menuBase, signal, tracker, cache) {
-  const gamePlan = planScripts(gameScene, gameBase, location.origin);
-  const menuPlan = planScripts(menu, menuBase, location.origin);
+  const gamePlan = planScripts(gameScene, new URL(gameBase), location.origin);
+  const menuPlan = planScripts(menu, new URL(menuBase), location.origin);
   const tasks = [...gamePlan.map(item => ({...item, scope:'game'})), ...menuPlan.map(item => ({...item, scope:'menu'})),
     {id:'engine-api', url:new URL('./pkg/engine_api.lua', import.meta.url), scope:'engine', execute:true}];
   let done = 0;
@@ -526,26 +339,6 @@ async function preloadSkies(scene, base, cache, signal, tracker) {
   } finally { worker.terminate(); }
 }
 function parseJson(bytes) { return JSON.parse(new TextDecoder().decode(bytes)); }
-function retryChunk(index, error, game, token) {
-  console.warn(`Chunk ${index} failed:`, error);
-  setTimeout(() => {
-    if (generation === token && active === game && (mode === 'gameplay' || mode === 'menu')) {
-      game.chunk_failed(index);
-      inFlight.delete(index);
-    }
-  }, 3000);
-}
-function requestChunk(index, folder, metadata, game, token) {
-  inFlight.add(index);
-  if (!metadata) { retryChunk(index, 'metadata is unavailable', game, token); return; }
-  const accepted = decoder?.submit({index, folder, metadata, base: levelBase.href, single: currentLevel.format === 'single_sog'});
-  if (!accepted) {
-    // The streamer only reserves work for idle workers; release any reservation
-    // if the pool stopped or lost a worker between selection and submission.
-    game.chunk_failed(index);
-    inFlight.delete(index);
-  }
-}
 function showSkyError(error) {
   skyLoadState = 'error';
   skyErrorUntil = performance.now() + 5000;
@@ -592,15 +385,12 @@ function startSkyWorker(game, token, preloaded) {
   }
 }
 function stopWorkers() {
-  sceneAudio.clear();
+  sceneAudio?.clear();
   firstPersonFrames?.close(); firstPersonFrames = null;
-  voxelRuntime?.stop(); voxelRuntime = null;
+  voxelGame?.voxel_stop(); voxelGame = null;
   minimapRuntime?.stop(); minimapRuntime = null;
-  if (decoder) decoder.stop();
   if (skyDecoder) skyDecoder.terminate();
-  decoder = null;
   skyDecoder = null;
-  inFlight.clear();
 }
 
 // Convert an unstreamed SOG into one synthetic streaming leaf without modifying its files.
@@ -688,7 +478,8 @@ async function launchLevel(id, sceneId = '') {
     const chosenScene = parseJson(chosenBytes);
     const chosenMenuUrl = new URL(sceneAsset(chosenScene, chosenUrl, 'pause_menu'));
     const policies = levelPolicies(selected.assets);
-    const decoderCount = chunkDecoderCount(navigator.hardwareConcurrency, chosenScene.resources?.preview?.chunk_decoder_workers);
+    const decoderCount = chunk_decoder_count(navigator.hardwareConcurrency, chosenScene.resources?.preview?.chunk_decoder_workers);
+    const decoderUrl = new URL('./decoder.js', import.meta.url).href;
     if (loadPolicy(chosenScene.resources?.assets?.pause_menu?.load) !== 'preload')
       throw new Error('The gameplay pause menu must be preloaded by this host.');
     levelBase = new URL(`./assets/levels/${encodeURIComponent(id)}/`, import.meta.url);
@@ -718,10 +509,16 @@ async function launchLevel(id, sceneId = '') {
       if (!Array.isArray(lod.filenames) || !lod.filenames.length || lod.filenames.length > 10_000)
         throw new Error('The level does not contain a valid chunk list.');
       filenames = lod.filenames; lodCount = lod.lodLevels;
+      // A fixed pool starves a dense scan: the scene's `capacity` is only the floor. Size the pool to about 70% of
+      // the level's finest-detail splats, up to `max_capacity`, which bounds GPU memory (about 49 bytes a splat).
+      const finest = Array.isArray(lod.counts) ? Number(lod.counts[0]) : 0;
+      const ceiling = chosenScene.resources?.preview?.max_capacity;
+      if (Number.isInteger(ceiling) && ceiling > capacity && Number.isFinite(finest) && finest > 0)
+        capacity = Math.max(capacity, Math.min(ceiling, Math.ceil(finest * 0.7)));
     } else throw new Error('This level format is not supported.');
     tracker.update('Reading chunk metadata', 0.1, 0.5, 0, filenames.length);
-    const {metas, levelAssets} = await loadMetadataInWorker(
-      new Worker(new URL('./pkg/metadata-worker.js', import.meta.url), {type:'module'}),
+    const {metas, levelAssets} = await loadLevelMetadata(
+      new URL('./pkg/metadata-worker.js', import.meta.url).href,
       {level:selected, lodCount, filenames, base:levelBase.href, singleMetadata, inventoryBytes,
         viewerSettings:settings.length > 0, hasSource:sourceBytes.length > 0,
         source:chosenScene.resources?.preview?.level_asset || 'level',
@@ -739,11 +536,9 @@ async function launchLevel(id, sceneId = '') {
     const skies = await preloadSkies(chosenScene, chosenUrl, sceneAssets, signal, tracker);
     tracker.update('Decoding splat chunks', 0.85, 0.96, 0, 1);
     const chunks = policies.splat_chunks === 'preload'
-      ? await preloadChunks({metas, filenames, single:selected.format === 'single_sog', base:levelBase.href, signal,
-          size:decoderCount,
-          createWorker:() => new Worker(new URL('./decoder.js', import.meta.url), {type:'module'}), maxBytes:MAX_PRELOAD_BYTES,
-          onProgress:(done, total) => tracker.update('Decoding splat chunks', 0.85, 0.96, done, total)})
-      : (tracker.update('Splat chunks will stream in the scene', 0.85, 0.96, 1, 1), []);
+      ? await preload_level_chunks(levelBase.href, decoderUrl, metas, filenames, selected.format === 'single_sog', decoderCount,
+          MAX_PRELOAD_BYTES, (done, total) => tracker.update('Decoding splat chunks', 0.85, 0.96, done, total), signal)
+      : (tracker.update('Splat chunks will stream in the scene', 0.85, 0.96, 1, 1), null);
     if (generation !== token) return;
     tracker.update('Starting renderer', 0.96, 0.99, 0, 1);
     selector.set_loading_cancellable(false);
@@ -759,15 +554,11 @@ async function launchLevel(id, sceneId = '') {
     pendingGame = await Viewer.create(canvas, lodBytes, metas, settings, [chosenBytes, chosenMenuBytes], capacity, selected.rotate_z_180 !== false, policies.splat_chunks === 'preload', JSON.stringify(levelAssets), stackRequested);
     if (generation !== token) { pendingGame.free(); pendingGame = null; return; }
     for (const sky of skies) pendingGame.install_skybox(sky.id, sky.size, sky.pixels);
-    for (const chunk of chunks) pendingGame.insert_decoded_chunk(chunk.index, chunk.metadata, chunk.dimensions, chunk.pixels);
-    restorePlayerControls(pendingGame);
-    restoreCameraLens(pendingGame);
-    restoreCameraZoomLens(pendingGame);
-    restoreCameraController(pendingGame);
-    restoreImageCorrection(pendingGame);
-    publishPlayerRigData(pendingGame, selected);
+    if (chunks) pendingGame.insert_preloaded_chunks(chunks);
+    pendingGame.restoreSavedSettings();
+    pendingGame.publishPlayerRigData(selected);
     pendingGame.ecs_operation('gameplay', JSON.stringify({op:'set_resource', name:'hud.preferences',
-      value:{show_performance:hudPreferences.showPerformance}}));
+      value:{show_performance:displayPanel.show_performance()}}));
     // Publish selected level identity as data for scene-owned systems.
     pendingGame.ecs_operation('gameplay', JSON.stringify({op:'set_resource', name:'scene.level',
       value:{id:selected.id, name:selected.name}}));
@@ -790,42 +581,25 @@ async function launchLevel(id, sceneId = '') {
     void loadLevelPreview(selected).then(image=>{
       if (image && active===previewOwner) previewOwner.install_menu_preview(image.width,image.height,image.rgba);
     }).catch(error=>console.warn(`Preview unavailable for ${selected.id}:`,error));
-    chunkMetas = metas;
     preloadedSceneAssets = sceneAssets;
-    await sceneAudio.load(chosenScene, chosenUrl, sceneAssets);
+    await sceneAudio.load(chosenScene, String(chosenUrl), sceneAssets);
     if (generation !== token) return;
     const footage = chosenScene.resources?.assets?.['first-person-footage'];
     if (footage) {
       if (footage.kind !== 'first_person_manifest' || loadPolicy(footage.load) !== 'preload') throw new Error('First-person footage manifest must be a preloaded scene asset.');
       const bytes = sceneAssets.get(new URL(footage.uri, chosenUrl).href);
       if (!bytes) throw new Error('First-person footage manifest is missing.');
-      firstPersonFrames = new FirstPersonFrames(chosenScene, chosenUrl, parseJson(bytes), sceneAssets, active);
+      firstPersonFrames = new FirstPersonFrames(chosenScene, String(chosenUrl), parseJson(bytes), sceneAssets, active);
     }
-    inFlight.clear();
     mode = 'gameplay';
     const game = active;
-    decoder = new ChunkDecoderPool({
-      size: decoderCount,
-      createWorker: () => new Worker(new URL('./decoder.js', import.meta.url), {type: 'module'}),
-      onResult: data => {
-        if (generation !== token || active !== game || (mode !== 'gameplay' && mode !== 'menu')) return;
-        try {
-          game.insert_decoded_chunk(data.index, data.metadata, data.dimensions, data.pixels);
-          inFlight.delete(data.index);
-        } catch (error) { retryChunk(data.index, error, game, token); }
-      },
-      onFailure: (index, error) => {
-        if (generation === token && active === game) retryChunk(index, error, game, token);
-      },
-      onFatal: error => {
-        if (generation === token && active === game) showError(new Error(`Asset workers failed: ${error}`));
-      },
-    });
+    // Chunk decoding and streaming run in Rust; the frame loop drives them.
+    game.start_chunk_streaming(levelBase.href, decoderUrl, selected.format === 'single_sog', decoderCount);
     startSkyWorker(game, token, new Set(skies.map(sky => sky.id)));
-    voxelRuntime = new VoxelRuntime(game, levelBase, () => generation === token && active === game);
+    game.start_voxels(new URL('./pkg/voxel-worker.js', import.meta.url).href, levelBase.href); voxelGame = game;
     // Prewarm only scans without voxel files: their fallback decodes SOG means.
     if (selected.collision === false) ensureMinimapRuntime();
-    if (frameProfiler) voxelRuntime.enableLatencyProfile();
+    if (frameProfiler) game.voxel_enable_latency();
     status.textContent = 'Streaming scan';
     message.hidden = true;
   } catch (error) {
@@ -1034,6 +808,8 @@ function attachInput() {
 }
 function tick(timestamp) {
   if (stopped) return;
+  // Collision replies that arrived since the last frame apply before input and scripts see the world.
+  voxelGame?.voxel_receive();
   const stackFrame = stackCapture?.beginFrame(mode === 'gameplay' && !!active, gameplayLua);
   const profileStart = frameProfiler ? performance.now() : 0;
   let renderMs = 0, scriptsMs = 0, submitted = false;
@@ -1042,7 +818,8 @@ function tick(timestamp) {
     if (active) {
       const bounds = canvas.getBoundingClientRect();
       if (bounds.width < 1 || bounds.height < 1) { requestAnimationFrame(tick); return; }
-      const output = viewportSize(bounds.width, bounds.height, window.devicePixelRatio || 1, active.max_texture_dimension());
+      const [outputWidth, outputHeight] = display_viewport_size(bounds.width, bounds.height, window.devicePixelRatio || 1, active.max_texture_dimension());
+      const output = {width:outputWidth, height:outputHeight};
       const viewportChanged = output.width !== displayViewport.width || output.height !== displayViewport.height;
       if (viewportChanged) displayViewport = output;
       active.ui_set_width(bounds.width);
@@ -1053,42 +830,20 @@ function tick(timestamp) {
         menuViewportOwner = active; menuViewportWidth = bounds.width; menuViewportHeight = bounds.height;
       }
       if (mode === 'menu' && menuLua && viewportChanged) menuLua.dispatch('menu.settings', menuSettings());
+      // Render resolution, presentation and the viewport resources scene scripts read are applied in Rust.
       if (mode === 'gameplay' || mode === 'menu') {
-        const render = sceneResolution(displayPanel.preferences, output);
-        active.set_render_resolution(render.width,render.height);
-        active.set_viewport_scaling(displayPanel.preferences.scaling);
-        // Lua projects the filmed weapon sight through this render aspect.
-        const aspect = render.width / render.height;
-        if (mode === 'gameplay' && (active !== aspectOwner || aspect !== publishedAspect)) {
-          active.ecs_operation('gameplay', JSON.stringify({op:'set_resource',name:'render.scene_aspect',value:aspect}));
-          aspectOwner = active; publishedAspect = aspect;
-        }
-        // UI scripts use the same logical viewport and presentation mapping as the canvas.
-        if (mode === 'gameplay') {
-          const scaling = displayPanel.preferences.scaling;
-          if (active !== viewportOwner || !publishedViewport || bounds.width !== publishedViewport.width ||
-              bounds.height !== publishedViewport.height || aspect !== publishedViewport.scene_aspect || scaling !== publishedViewport.scaling ||
-              output.width !== publishedViewport.output_width || output.height !== publishedViewport.output_height ||
-              render.width !== publishedViewport.render_width || render.height !== publishedViewport.render_height) {
-            const mapping=presentationMapping(render,output,scaling);
-            publishedViewport = {width:bounds.width, height:bounds.height, scene_aspect:aspect, scaling,
-              output_width:output.width, output_height:output.height, render_width:render.width, render_height:render.height,
-              uv_scale:mapping.scale, uv_offset:mapping.offset};
-            active.ecs_operation('gameplay', JSON.stringify({op:'set_resource',name:'render.viewport',value:publishedViewport}));
-            viewportOwner = active;
-          }
-        }
+        active.apply_display(displayPanel, bounds.width, bounds.height, output.width, output.height, mode === 'gameplay');
       }
       let earlyInputMs = 0;
       if (mode === 'gameplay' && gameplayLua) {
         const inputStart = frameProfiler ? performance.now() : 0;
         // Input updates camera and control state before this frame is drawn.
         // The remaining channels are still visited once, in their original order.
-        gameplayLua.dispatchPending(gameplayInputChannels);
+        gameplayLua.dispatchPending(gameplayInputs);
         inputLatency?.markDispatched();
         if (frameProfiler) earlyInputMs = performance.now() - inputStart;
       }
-      const timedRenderer = stackFrame?.before ? active : null;
+      const timedRenderer = stackFrame && stackCapture.detailed ? active : null;
       timedRenderer?.arm_frame_timing();
       const renderStart = frameProfiler ? performance.now() : 0;
       submitted = active.frame(timestamp);
@@ -1104,7 +859,7 @@ function tick(timestamp) {
         }
       }
       if (submitted && frameProfiler && mode === 'gameplay') {
-        voxelRuntime?.markFrame(); inputLatency.markSubmitted();
+        voxelGame?.voxel_mark_frame(); inputLatency.markSubmitted();
       }
       if (frameProfiler) renderMs = performance.now() - renderStart;
       const rustTiming = timedRenderer ? JSON.parse(timedRenderer.take_frame_timing()) : null;
@@ -1143,7 +898,7 @@ function tick(timestamp) {
             runtime.consumePending(trailingOutputChannels, consumeTrailingOutput);
             if (frameProfiler) stages.output_ms = performance.now() - outputStart;
             const voxelStart = frameProfiler ? performance.now() : 0;
-            voxelRuntime?.tick(runtime, timestamp);
+            voxelGame?.voxel_tick(timestamp);
             processSceneRequests(runtime);
             if (frameProfiler) stages.voxel_ms = performance.now() - voxelStart;
           }
@@ -1152,14 +907,6 @@ function tick(timestamp) {
           runtime.dispatchPending(scriptEventChannels);
           processMenuSettings(runtime);
           processSceneRequests(runtime);
-        }
-        if (mode === 'gameplay' && active) {
-          const streamStart = frameProfiler ? performance.now() : 0;
-          const game = active, token = generation;
-          for (const [index, folder] of JSON.parse(game.requests(decoder?.available ?? 0))) {
-            if (!inFlight.has(index)) requestChunk(index, folder, chunkMetas[index], game, token);
-          }
-          if (frameProfiler) stages.stream_ms = performance.now() - streamStart;
         }
         if (frameProfiler) scriptsMs = earlyInputMs + performance.now() - scriptStart;
       }
@@ -1178,15 +925,16 @@ function tick(timestamp) {
             largestFree:state.lod_largest_free, pendingDetails:state.lod_pending_details, loaded:state.lod_chunks_loaded,
             inFlight:state.lod_chunks_in_flight, fading:state.lod_fading, switches:state.lod_switches,
             fadeCuts:state.fade_cuts, hardSwaps:state.hard_swaps, octreeNodes:state.octree_nodes,
-            decoders:decoder ? {total:decoder.size, available:decoder.available} : null});
+            decoders:state.decoders});
           let posture = null;
-          if (voxelRuntime?.player && gameplayScene.component_types?.PlayerPosture) {
-            try { posture = JSON.parse(active.ecs_operation('gameplay', JSON.stringify({op:'get', id:voxelRuntime.player, name:'PlayerPosture'}))).value; }
+          const voxelPlayer = voxelGame?.voxel_player();
+          if (voxelPlayer && gameplayScene.component_types?.PlayerPosture) {
+            try { posture = JSON.parse(active.ecs_operation('gameplay', JSON.stringify({op:'get', id:voxelPlayer, name:'PlayerPosture'}))).value; }
             catch (error) { console.debug('Player posture diagnostics:', error); }
           }
           metrics.dataset.audio = JSON.stringify(sceneAudio.diagnostics());
           metrics.dataset.player = JSON.stringify({camera:state.player_camera, physics:state.player_physics, rig:state.player_rig, posture});
-          metrics.dataset.display = JSON.stringify({...state.display, scaling:displayPanel.preferences.scaling});
+          metrics.dataset.display = JSON.stringify({...state.display, scaling:JSON.parse(displayPanel.preferences()).scaling});
           metrics.dataset.lens = JSON.stringify(state.camera_lens ?? null);
           // Recent ECS events make projectile timing and collision observable in development.
           const combatValue = name => JSON.parse(active.ecs_operation('gameplay', JSON.stringify({op:'get_resource', name}))).value ?? null;
@@ -1211,11 +959,11 @@ function tick(timestamp) {
       }
       if (frameProfiler && mode === 'gameplay') {
         const callbackMs = performance.now() - profileStart;
-        stackCapture?.endFrame(stackFrame, submitted, renderMs, scriptsMs, stages, gameplayLua, rustTiming, timestamp);
+        if (stackFrame) stackCapture.endFrame(submitted, renderMs, scriptsMs, stages, gameplayLua, rustTiming, timestamp);
         frameProfiler.record(timestamp, submitted, renderMs, scriptsMs, callbackMs, stages);
         if (timestamp - lastProfileReport >= 500) {
           const report = frameProfiler.snapshot(profileState, gameplayLua?.profileReport());
-          report.voxel_worker = voxelRuntime?.latencyReport() ?? null;
+          report.voxel_worker = voxelGame?.voxel_latency_report() ?? null;
           report.mouse_input = inputLatency.snapshot();
           metrics.dataset.profile = JSON.stringify(report);
           lastProfileReport = timestamp;
@@ -1228,28 +976,42 @@ function tick(timestamp) {
 async function start() {
   if (!navigator.gpu) throw new Error('This browser does not expose WebGPU. Open the preview in a WebGPU-capable browser.');
   status.textContent = 'Loading level selector';
+  // Host logic is Rust: initialise the module before anything calls into it.
+  await init();
+  sceneAudio = new SceneAudio();
+  // Every third captured frame is detailed (and GPU-timed), so a capture reports up to 60 GPU samples.
+  if (stackRequested) stackCapture = new FrameStackCapture(publishStackProfile,
+    () => active && mode === 'gameplay' ? active.gpu_frame_timing() : null, 3);
   selectorUrl = new URL('./assets/scenes/level-selector.json', import.meta.url);
   selectorBytes = await getBytes(selectorUrl);
   const selectorScene = parseJson(selectorBytes);
   const resources = selectorScene.resources?.assets;
   if (!resources?.catalog?.uri || !resources?.gameplay_scene?.uri || !resources?.scene_catalog?.uri)
     throw new Error('Selector scene resources are missing.');
-  defaultGameplayUrl = projectResourceUrl(resources.gameplay_scene.uri, new URL('.', import.meta.url), selectorUrl);
-  sceneCatalogUrl = projectResourceUrl(resources.scene_catalog.uri, new URL('.', import.meta.url), selectorUrl);
+  defaultGameplayUrl = projectResourceUrl(resources.gameplay_scene.uri, new URL('.', import.meta.url).href, selectorUrl.href);
+  sceneCatalogUrl = projectResourceUrl(resources.scene_catalog.uri, new URL('.', import.meta.url).href, selectorUrl.href);
   [catalogBytes, defaultGameplayBytes, sceneCatalogBytes] = await Promise.all([
-    getBytes(projectResourceUrl(resources.catalog.uri, new URL('.', import.meta.url), selectorUrl)), getBytes(defaultGameplayUrl), getBytes(sceneCatalogUrl)]);
+    getBytes(projectResourceUrl(resources.catalog.uri, new URL('.', import.meta.url).href, selectorUrl.href)), getBytes(defaultGameplayUrl), getBytes(sceneCatalogUrl)]);
   catalog = parseJson(catalogBytes);
   if (loadPolicy(resources.catalog.load) !== 'preload' || loadPolicy(resources.gameplay_scene.load) !== 'preload' ||
       loadPolicy(resources.scene_catalog.load) !== 'preload')
     throw new Error('The selector catalogs and gameplay scene must be preloaded.');
   if (!globalThis.wasmoon?.LuaFactory) throw new Error('Lua 5.4 runtime did not load.');
   luaFactory = new globalThis.wasmoon.LuaFactory(new URL('./pkg/wasmoon/glue.wasm', import.meta.url).href);
-  await init();
+  if (profileOptions.has('profile') || stackRequested) { frameProfiler = new FrameProfiler(); inputLatency = new InputFrameLatency(); }
+  mouseCapture = new MouseCapture(canvas, document);
+  gameplayMouse = new GameplayMouseButtons(pressed => gameplayLua?.emit('input.mouse_button', {button:'right', pressed, gameplay:true}));
+  gameplayFire = new GameplayFireButton(pressed => gameplayLua?.emit('input.mouse_button', {button:'left', pressed, gameplay:true}));
+  gameplayInputs = new EventChannels(gameplayInputChannels());
+  gameplayEvents = new EventChannels(gameplayEventChannels());
+  // Splat draws use GPU-written indirect arguments; `?indirect_draw=0` restores the older full-prefix direct draw.
+  if (profileOptions.get('indirect_draw') === '0') set_indirect_draw(false);
+  // `?sort_compaction=0` sorts every slot instead of only the splats in view (same picture; for A/B timing).
+  if (profileOptions.get('sort_compaction') === '0') set_sort_compaction(false);
+  // `?footprint_cull=0` keeps splats the vertex stage discards anyway in the sort and draw (same picture; A/B timing).
+  if (profileOptions.get('footprint_cull') === '0') set_footprint_cull(false);
   active = await Selector.create(canvas, selectorBytes, catalogBytes, sceneCatalogBytes, '', '');
-  let displayStorage = null;
-  try { displayStorage = window.localStorage; } catch { /* Persistence is optional. */ }
-  displayPanel = createDisplaySettings(displayStorage, () => active?.max_texture_dimension() ?? MAX_RENDER_DIMENSION);
-  hudPreferences = createHudPreferences(displayStorage);
+  displayPanel = new DisplaySettings();
   restoreLayout(active, 'selector');
   mode = 'selector';
   void populateSelectorPreviews(active);

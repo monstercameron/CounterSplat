@@ -154,7 +154,7 @@ def main():
             route = unquote(urlsplit(self.path).path)
             if route in ("/", "/index.html"):
                 path = safe_child(PREVIEW, "index.html")
-            elif route in ("/main.js", "/decoder.js", "/lua_runtime.js", "/asset_loader.js"):
+            elif route in ("/main.js", "/decoder.js", "/lua_runtime.js"):
                 path = safe_child(PREVIEW, route.removeprefix("/"))
             elif route == "/pkg/scene.json":
                 path = safe_child(ROOT / "assets" / "scenes", "gameplay.json")

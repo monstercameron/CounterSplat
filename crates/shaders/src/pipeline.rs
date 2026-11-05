@@ -81,6 +81,36 @@ pub fn sog_v2_sh_overrides() -> Overrides {
             "    uv: half2,            // corner uv\n    lensFactor: f32,",
         ),
     );
+    // A compacting sort (see the render crate's `sort` module) leaves its order defined only for the splats in view,
+    // so the draw must stop at that count even inside the last, partly filled instance. `splatVisible` is the GPU's
+    // count, or all ones for a sort that does not compact.
+    const SOURCE: &str = include_str!("../shaders/gsplat/vert/gsplatSource.wgsl");
+    let source = SOURCE.replace("\r\n", "\n");
+    const NUM_SPLATS: &str = "        let numSplats = uniform.numSplats;";
+    const ORDER_DECL: &str = "    var<storage, read> splatOrder: array<u32>;";
+    // The depth prepass draws only the nearer part of the order, from `splatDepthStart` on (the render crate's
+    // `depth_range.wgsl`); its draw arguments cover that part.
+    const ORDER: &str =
+        "    source.order = pcInstanceIndex * {GSPLAT_INSTANCE_SIZE}u + u32(vertex_position.z);";
+    assert_eq!(source.matches(NUM_SPLATS).count(), 1, "splat count hook changed");
+    assert_eq!(source.matches(ORDER_DECL).count(), 1, "splat order hook changed");
+    assert_eq!(source.matches(ORDER).count(), 1, "splat order index hook changed");
+    o.insert(
+        "gsplatSourceVS".into(),
+        source
+            .replace(
+                NUM_SPLATS,
+                "        let numSplats = min(uniform.numSplats, splatVisible[0]);",
+            )
+            .replace(
+                ORDER_DECL,
+                "    var<storage, read> splatOrder: array<u32>;\n    var<storage, read> splatVisible: array<u32>;\n#ifdef PREPASS_PASS\n    var<storage, read> splatDepthStart: array<u32>;\n#endif",
+            )
+            .replace(
+                ORDER,
+                "#ifdef PREPASS_PASS\n    source.order = splatDepthStart[0] + pcInstanceIndex * {GSPLAT_INSTANCE_SIZE}u + u32(vertex_position.z);\n#else\n    source.order = pcInstanceIndex * {GSPLAT_INSTANCE_SIZE}u + u32(vertex_position.z);\n#endif",
+            ),
+    );
     let corner = CORNER.replace("\r\n", "\n");
     const VIEWPORT: &str = "uniform viewport_size: vec4f;";
     assert_eq!(
@@ -237,7 +267,9 @@ varying gaussianUV: half2;
     );
     const READ_COLOR: &str = "var clr: half4 = half4(getColor());";
     assert!(vs.contains(READ_COLOR), "gsplat color hook changed");
-    o.insert("gsplatVS".into(), vs.replace(READ_COLOR, "#ifdef PREPASS_PASS\n var clr: half4 = half4(0.0, 0.0, 0.0, textureLoad(sh0, splat.uv, 0).w);\n#else\n var clr: half4 = half4(getColor());\n#endif"));
+    let vs = vs.replace(READ_COLOR, "#ifdef PREPASS_PASS\n var clr: half4 = half4(0.0, 0.0, 0.0, textureLoad(sh0, splat.uv, 0).w);\n#else\n var clr: half4 = half4(getColor());\n#endif");
+
+    o.insert("gsplatVS".into(), vs);
 
     o
 }

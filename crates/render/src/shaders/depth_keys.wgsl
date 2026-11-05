@@ -26,6 +26,17 @@ struct DepthUniforms {
     cut_params: vec4f,
     count: u32,
     fade_count: u32,
+    // The vertex stage's footprint tests (see `footprint_culled`). x, y: its focal lengths (viewport size times the
+    // projection's x and y scale); z, w: the viewport in pixels.
+    footprint_focal: vec4f,
+    // x: minPixelSize; y: a bound on the squared stretch of view_model's 3x3 part; z: depth-of-field focus distance;
+    // w: depth-of-field blur scale (pixels, 0 when off).
+    footprint_params: vec4f,
+    // x: the most variance motion blur can add (0 when off); y: 1 when the cull is on; z: the kernel's size clamp
+    // (vmin); w: the splat textures' width (u32 bits).
+    footprint_extra: vec4f,
+    // How this pass writes `fade` (see `put_fade`). Not part of the sort's cache key.
+    fade_mode: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: DepthUniforms;
@@ -36,9 +47,21 @@ struct DepthUniforms {
 @group(0) @binding(4) var<storage, read> fades: array<vec4u>;
 // Per splat: the share of its opacity drawn.
 @group(0) @binding(5) var<storage, read_write> fade: array<f32>;
+// Compaction (indirect sorts only): the splats in view per 256-slot group, then each group's first output position.
+@group(0) @binding(6) var<storage, read_write> group_counts: array<u32>;
+// The radix sort's first-pass inputs: only the splats in view, in slot order, with their slot as the value.
+@group(0) @binding(7) var<storage, read_write> compact_keys: array<u32>;
+@group(0) @binding(8) var<storage, read_write> compact_values: array<u32>;
+// The splats' scale texture (SOG v2 codebook indices) and the 256-entry codebook (log scale in .r), as the vertex
+// stage reads them. 1x1 stand-ins when the cull is off.
+@group(0) @binding(9) var splat_scales: texture_2d<f32>;
+@group(0) @binding(10) var splat_codebook: texture_2d<f32>;
 
 // A centre this far outside the view (in units of the half-screen) can still reach into it with a large splat.
 const CULL_MARGIN: f32 = 1.5;
+// The depth key's range: 1 mm to 100 km in scene units, 65,536 logarithmic steps (log2(1e8) = 26.575).
+const KEY_LOG2_NEAR: f32 = -9.965784;
+const KEY_STEPS_PER_LOG2: f32 = 2466.0;
 
 
 fn hash01(i: u32) -> f32 {
@@ -95,8 +118,69 @@ fn fade_share(i: u32) -> f32 {
     return select(1.0, bitcast<f32>(f.z), i < f.y);
 }
 
+// True when the vertex stage is sure to discard splat `i` (clip-space centre `p`, view-space centre `v`): its
+// footprint is under minPixelSize, or off screen even at its full extent. Those splats draw nothing, so leaving them
+// out of the sort and the draw changes no pixel; they would otherwise each cost four vertex invocations.
+//
+// The vertex stage projects the covariance R S S R^T through W (view_model's 3x3) and the perspective Jacobian J.
+// Its largest eigenvalue is at most s_max^2 |W|^2 |J|^2, with |J|^2 bounded by J's Frobenius norm; the stage then adds
+// 0.3 to the diagonal, plus depth-of-field and motion-blur variance when those are on. The bound only ever grows the
+// footprint (with a margin for the vertex stage's half-precision scale), so a cut splat is one the stage discards.
+fn footprint_culled(i: u32, p: vec4f, v: vec3f) -> bool {
+    let extra = params.footprint_extra;
+    if (extra.y == 0.0) {
+        return false;
+    }
+    let z = -v.z;
+    if (!(z > 1e-6)) {
+        return false;
+    }
+    let width = bitcast<u32>(extra.w);
+    let s = textureLoad(splat_scales, vec2i(i32(i % width), i32(i / width)), 0).xyz;
+    let b = vec3i(s * 255.0 + 0.5);
+    let log_max = max(textureLoad(splat_codebook, vec2i(b.x, 0), 0).r,
+        max(textureLoad(splat_codebook, vec2i(b.y, 0), 0).r, textureLoad(splat_codebook, vec2i(b.z, 0), 0).r));
+    let s_max = exp(log_max);
+    let focal = params.footprint_focal;
+    let fp = params.footprint_params;
+    let z2 = z * z;
+    let jacobian2 = (focal.x * focal.x * (z2 + v.x * v.x) + focal.y * focal.y * (z2 + v.y * v.y)) / (z2 * z2);
+    var lambda = s_max * s_max * fp.y * jacobian2 * 1.02 + 0.3;
+    if (fp.w > 0.0) {
+        let diameter = min(24.0, fp.w * abs(1.0 - fp.z / max(z, 0.001)));
+        lambda += diameter * diameter / 16.0 * 1.02;
+    }
+    lambda += extra.x;
+    // The vertex stage's kernel extent in its units (`l1` in gsplatCorner), never larger than this bound.
+    let l = 2.0 * min(sqrt(2.0 * lambda), extra.z);
+    if (l < fp.x * 0.99) {
+        return true;
+    }
+    // Its frustum test: |proj.xy| - l * proj.w / viewport > proj.w culls.
+    let reach = p.w * (vec2f(1.0) + vec2f(l) / focal.zw) * 1.001 + vec2f(1e-6);
+    return any(abs(p.xy) > reach);
+}
+
 // Keep the global count to one atomic per workgroup rather than one per visible Gaussian.
 var<workgroup> local_visible: atomic<u32>;
+
+// Writes splat `i`'s share into `fade` as `fade_mode` says: 0 (direct draws, which visit every active slot) the share,
+// or 0 for a culled slot so it stays transparent; 1 (compacting sorts, which never draw a culled slot) the share
+// whether culled or not, so the buffer is right for any later view; 2 nothing, as the shares have not changed since a
+// mode-1 pass wrote them all. Mode 2 saves a write of 4 bytes a slot on every sort.
+fn put_fade(i: u32, share: f32, culled: bool) {
+    if (params.fade_mode == 0u) {
+        fade[i] = select(share, 0.0, culled);
+    } else if (params.fade_mode == 1u) {
+        fade[i] = share;
+    }
+}
+
+fn cull(i: u32, share: f32) -> bool {
+    put_fade(i, share, true);
+    keys[i] = 0xffffffffu;
+    return false;
+}
 
 fn write_key(i: u32) -> bool {
     if (i >= params.count) {
@@ -105,33 +189,43 @@ fn write_key(i: u32) -> bool {
     // An empty slot (released by a streamed level) has a NaN centre. Comparisons with NaN are all false, so the
     // tests below would let it through and its stale splat would still be drawn; the exponent bits catch it.
     if ((bitcast<u32>(centers[i * 3u]) & 0x7f800000u) == 0x7f800000u) {
-        fade[i] = 0.0;
-        keys[i] = 0xffffffffu;
-        return false;
+        // Its share, not 0: a share depends only on the slot and the fade ranges, and with fade writes skipped (mode
+        // 2) a splat uploaded into this slot later must find its share already in place.
+        return cull(i, fade_share(i));
     }
     let share = fade_share(i);
-    fade[i] = share;
     let c = vec3f(centers[i * 3u], centers[i * 3u + 1u], centers[i * 3u + 2u]);
     let p = params.clip * vec4f(c, 1.0);
     if (p.w <= 0.0 || abs(p.x) > p.w * CULL_MARGIN || abs(p.y) > p.w * CULL_MARGIN || share <= 0.0) {
-        fade[i] = 0.0; // Direct draws still visit active slots; culled entries must remain transparent.
-        keys[i] = 0xffffffffu;
-        return false;
+        return cull(i, share);
     }
     let v = (params.view_model * vec4f(c, 1.0)).xyz;
-    if (in_cutout(v, c, i)) {
-        fade[i] = 0.0;
-        keys[i] = 0xffffffffu;
-        return false;
+    if (in_cutout(v, c, i) || footprint_culled(i, p, v)) {
+        return cull(i, share);
     }
-    let bits = bitcast<u32>(v.z);
-    // Flip the sign bit for positives, and every bit for negatives, so unsigned order equals float order.
-    keys[i] = select(bits | 0x80000000u, ~bits, (bits & 0x80000000u) != 0u);
+    // A 16-bit logarithmic depth key in the top half of the word (the radix passes sort bits 16..31). Over
+    // KEY_NEAR..KEY_FAR (scene units) a step is 0.028% of the depth: finer than the 11 mantissa bits the float key
+    // kept before (0.05%), and one radix pass fewer. Ascending keys still run farthest first. Splats behind the
+    // camera (only possible without a clip test) all share the last key and keep their slot order.
+    let depth = -v.z;
+    var level = 0.0;
+    if (depth > 0.0) {
+        level = clamp((log2(depth) - KEY_LOG2_NEAR) * KEY_STEPS_PER_LOG2, 0.0, 65535.0);
+    }
+    let key = (65535u - u32(level)) << 16u;
+    // The all-ones key marks a culled slot; a (NaN-depth) splat that happened to produce it is culled too, so the
+    // visible count and the compaction below always agree.
+    if (key == 0xffffffffu) {
+        return cull(i, share);
+    }
+    put_fade(i, share, false);
+    keys[i] = key;
     return true;
 }
 
 @compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) id: vec3u, @builtin(local_invocation_index) lane: u32) {
+fn main(@builtin(global_invocation_id) id: vec3u, @builtin(local_invocation_index) lane: u32,
+        @builtin(workgroup_id) group: vec3u) {
     if (lane == 0u) { atomicStore(&local_visible, 0u); }
     workgroupBarrier();
     let shown = write_key(id.x);
@@ -139,7 +233,66 @@ fn main(@builtin(global_invocation_id) id: vec3u, @builtin(local_invocation_inde
     // This also avoids the partial-wave atomic issue seen on Adreno.
     atomicAdd(&local_visible, select(0u, 1u, shown));
     workgroupBarrier();
-    if (lane == 0u) { atomicAdd(&visible, atomicLoad(&local_visible)); }
+    if (lane == 0u) {
+        let n = atomicLoad(&local_visible);
+        group_counts[group.x] = n;
+        atomicAdd(&visible, n);
+    }
+}
+
+// Exclusive scan of the per-group counts, in place: afterwards `group_counts[g]` is the number of splats in view in
+// groups before g, so group g's splats land at that offset. One workgroup; each thread sums a contiguous chunk.
+var<workgroup> scan_sums: array<u32, 256>;
+
+@compute @workgroup_size(256)
+fn scan_groups(@builtin(local_invocation_index) lane: u32) {
+    let groups = (params.count + 255u) / 256u;
+    let chunk = (groups + 255u) / 256u;
+    let first = min(lane * chunk, groups);
+    let last = min(first + chunk, groups);
+    var sum = 0u;
+    for (var g = first; g < last; g++) { sum += group_counts[g]; }
+    scan_sums[lane] = sum;
+    workgroupBarrier();
+    for (var offset = 1u; offset < 256u; offset <<= 1u) {
+        var v = scan_sums[lane];
+        if (lane >= offset) { v += scan_sums[lane - offset]; }
+        workgroupBarrier();
+        scan_sums[lane] = v;
+        workgroupBarrier();
+    }
+    var running = scan_sums[lane] - sum;
+    for (var g = first; g < last; g++) {
+        let c = group_counts[g];
+        group_counts[g] = running;
+        running += c;
+    }
+}
+
+// Stable stream compaction of the keys of the splats in view (slot order is kept, so equal keys keep the order the
+// full sort would give them) together with their slot indices.
+var<workgroup> flags: array<u32, 256>;
+
+@compute @workgroup_size(256)
+fn compact(@builtin(global_invocation_id) id: vec3u, @builtin(local_invocation_index) lane: u32,
+           @builtin(workgroup_id) group: vec3u) {
+    var key = 0xffffffffu;
+    if (id.x < params.count) { key = keys[id.x]; }
+    let flag = select(0u, 1u, key != 0xffffffffu);
+    flags[lane] = flag;
+    workgroupBarrier();
+    for (var offset = 1u; offset < 256u; offset <<= 1u) {
+        var v = flags[lane];
+        if (lane >= offset) { v += flags[lane - offset]; }
+        workgroupBarrier();
+        flags[lane] = v;
+        workgroupBarrier();
+    }
+    if (flag == 1u) {
+        let position = group_counts[group.x] + flags[lane] - 1u;
+        compact_keys[position] = key;
+        compact_values[position] = id.x;
+    }
 }
 
 // Direct draws already cover the active prefix and reject culled slots in the

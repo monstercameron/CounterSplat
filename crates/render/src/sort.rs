@@ -1,8 +1,8 @@
 //! GPU depth sort for splats, ported from the engine's `ComputeRadixSortMultipass` (LSD radix, 4-bit digits)
 //! and its `PrefixSumKernel`. The radix and scan WGSL is supplied by `countersplat-shaders`.
 //!
-//! Each frame: a compute pass writes an order-preserving key per splat from its view depth. Five 4-bit
-//! radix passes over the key's top 20 bits then sort (key, splat index) pairs ascending, leaving the indices
+//! Each frame: a compute pass writes an order-preserving key per splat from its view depth (16-bit logarithmic) and
+//! compacts the splats in view. Four 4-bit radix passes then sort their (key, splat index) pairs ascending, leaving the indices
 //! farthest-first. The final indices are copied into `splatOrder`. A frame whose view-model matrix is the same as
 //! the last sorted one keeps that order and only repeats the copy.
 
@@ -13,13 +13,12 @@ use std::cell::Cell;
 const THREADS_PER_WORKGROUP: u32 = 256; // 16 × 16
 const ELEMENTS_PER_THREAD: u32 = 8;
 const ELEMENTS_PER_WORKGROUP: u32 = THREADS_PER_WORKGROUP * ELEMENTS_PER_THREAD;
-const BUCKET_COUNT: u32 = 16;
+/// The default radix digit width (`radix_bits`); 8-bit digits are an option under test.
 const BITS_PER_PASS: u32 = 4;
-/// Key bits the sort ignores. The key is an order-preserving float (sign, 8 exponent bits, 23 mantissa bits), so
-/// dropping the low 12 leaves 11 mantissa bits: splats whose depths differ by under about 0.05% may swap places,
-/// far below what blending shows. It takes five radix passes instead of eight.
-const SKIPPED_KEY_BITS: u32 = 12;
-const PASS_COUNT: u32 = (32 - SKIPPED_KEY_BITS) / BITS_PER_PASS;
+/// Key bits the sort ignores. The depth-key pass writes a 16-bit logarithmic depth in the top half of the word
+/// (`depth_keys.wgsl`): one step is 0.028% of the depth from 1 mm to 100 km, finer than the float key it replaced
+/// (whose top 20 bits kept 11 mantissa bits, 0.05%), in four radix passes instead of five.
+const SKIPPED_KEY_BITS: u32 = 16;
 /// The scan kernel's block size: two items per thread.
 const ITEMS_PER_SCAN_WORKGROUP: u32 = THREADS_PER_WORKGROUP * 2;
 
@@ -28,13 +27,151 @@ const REORDER_SRC: &str = countersplat_shaders::radix::REORDER;
 const PREFIX_SUM_SRC: &str = countersplat_shaders::radix::PREFIX_SUM;
 const DEPTH_KEYS_SRC: &str = include_str!("shaders/depth_keys.wgsl");
 const DRAW_ARGS_SRC: &str = include_str!("shaders/draw_args.wgsl");
+const DEPTH_RANGE_SRC: &str = include_str!("shaders/depth_range.wgsl");
+/// WGSL size of depth_range.wgsl's uniform.
+const DEPTH_RANGE_UNIFORM_SIZE: u64 = 80;
 
 /// WGSL depth uniform size, including alignment padding.
-const DEPTH_UNIFORM_SIZE: u64 = 240;
+const DEPTH_UNIFORM_SIZE: u64 = 304;
+/// Where `fade_mode` sits in the depth uniform: after everything the cached order depends on.
+const FADE_MODE_OFFSET: usize = 288;
+/// Where the footprint-cull fields start in the depth uniform (after the 232-byte payload and its padding).
+const FOOTPRINT_OFFSET: usize = 240;
 // Payload excludes the WGSL struct's final 8 bytes of alignment padding.
 const DEPTH_UNIFORM_PAYLOAD: usize = 232;
 /// Crossfading ranges the depth-key pass can hold.
 const MAX_FADES: u32 = 8192;
+
+/// Whether sorters created from now on compact the splats in view before the radix passes (the default). Off, they
+/// sort every active slot as before; the picture is the same. A diagnostic switch for A/B timing in the browser
+/// (`?sort_compaction=0`); natively `COUNTERSPLAT_SORT_COMPACTION=0` does the same.
+static SORT_COMPACTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_sort_compaction(enabled: bool) {
+    SORT_COMPACTION.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether sorts leave out the splats the vertex stage would discard for their footprint (the default; see
+/// `footprint_culled` in `depth_keys.wgsl`). The picture is the same either way. A diagnostic switch for A/B timing
+/// (`?footprint_cull=0` in the browser); natively `COUNTERSPLAT_FOOTPRINT_CULL=0` does the same.
+static FOOTPRINT_CULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_footprint_cull(enabled: bool) {
+    FOOTPRINT_CULL.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn footprint_cull_enabled() -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static ENV_OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *ENV_OFF.get_or_init(|| std::env::var("COUNTERSPLAT_FOOTPRINT_CULL").is_ok_and(|v| v == "0")) {
+            return false;
+        }
+    }
+    FOOTPRINT_CULL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The splats' scale texture and its codebook, as the scene's vertex stage reads them, for the footprint cull.
+#[derive(Clone, Copy)]
+pub struct SplatTextures<'a> {
+    /// RGBA8 codebook indices of each splat's three log scales, `width` splats a row.
+    pub scales: &'a wgpu::TextureView,
+    /// The 256x1 RGBA32F SOG codebook; `.r` is the log scale.
+    pub codebook: &'a wgpu::TextureView,
+    pub width: u32,
+}
+
+/// What the vertex stage needs to size a splat's footprint this frame (see `scene`'s `viewport_size`,
+/// `minPixelSize` and camera effects).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Footprint {
+    /// The camera's projection (only its x and y scale are used).
+    pub projection: Mat4,
+    /// The viewport in pixels.
+    pub viewport: [f32; 2],
+    pub min_pixel_size: f32,
+    /// Depth-of-field focus distance and blur scale in pixels (0: off), as in the scene's camera effects.
+    pub focus_distance: f32,
+    pub blur_scale: f32,
+    /// Whether motion blur is on (it can stretch a footprint by up to 32 pixels).
+    pub motion_blur: bool,
+}
+
+impl Footprint {
+    /// The 48 bytes at `FOOTPRINT_OFFSET` of the depth uniform for `view_model`.
+    fn uniform_bytes(&self, view_model: &Mat4, texture_width: u32) -> [u8; FADE_MODE_OFFSET - FOOTPRINT_OFFSET] {
+        let [w, h] = self.viewport;
+        // The vertex stage adds motion m m^T / 12 with |m| at most 32 pixels: at most 1024 / 12 to an eigenvalue.
+        let motion = if self.motion_blur { 1024.0 / 12.0 * 1.02 } else { 0.0 };
+        let values = [
+            w * self.projection[0],
+            h * self.projection[5],
+            w,
+            h,
+            self.min_pixel_size,
+            stretch_bound(view_model),
+            self.focus_distance,
+            self.blur_scale.max(0.0),
+            motion,
+            1.0,
+            1024f32.min(w.min(h)),
+            f32::from_bits(texture_width),
+        ];
+        let mut bytes = [0u8; FADE_MODE_OFFSET - FOOTPRINT_OFFSET];
+        for (dst, value) in bytes.chunks_exact_mut(4).zip(values) {
+            dst.copy_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    }
+}
+
+/// An upper bound on |W x|^2 / |x|^2 for the 3x3 part W of `m`: the largest eigenvalue of W^T W, by power iteration
+/// from a start that cannot be orthogonal to every eigenvector, raised by 1% plus a tiny absolute margin. For a
+/// rigid view and a uniformly scaled model it is the scale squared.
+fn stretch_bound(m: &Mat4) -> f32 {
+    let w = |r: usize, c: usize| f64::from(m[c * 4 + r]);
+    let mut g = [[0f64; 3]; 3];
+    for (i, row) in g.iter_mut().enumerate() {
+        for (j, value) in row.iter_mut().enumerate() {
+            *value = (0..3).map(|k| w(k, i) * w(k, j)).sum();
+        }
+    }
+    // Gershgorin: no eigenvalue exceeds the largest absolute row sum, which also bounds the iteration's estimate.
+    let gershgorin = g.iter().map(|row| row.iter().map(|v| v.abs()).sum::<f64>()).fold(0.0, f64::max);
+    let mut x = [1.0, 0.7548776662, 0.5698402910];
+    let mut estimate = 0.0;
+    for _ in 0..64 {
+        let y = [0, 1, 2].map(|i| (0..3).map(|j| g[i][j] * x[j]).sum::<f64>());
+        let norm = y.iter().map(|v| v * v).sum::<f64>().sqrt();
+        if norm == 0.0 {
+            break;
+        }
+        estimate = norm / x.iter().map(|v| v * v).sum::<f64>().sqrt();
+        x = y.map(|v| v / norm);
+    }
+    // Power iteration converges from below; Gershgorin is a guaranteed (looser) bound to fall back on if it is slow.
+    let tight = estimate * 1.01 + 1e-9;
+    (if tight.is_finite() { tight.min(gershgorin * 1.0001 + 1e-9) } else { gershgorin }) as f32
+}
+
+/// Radix digit width for sorters created from now on: 4 (16 buckets, four passes over the 16-bit key) or 8 (256
+/// buckets, two passes). Both give the same order. Natively `COUNTERSPLAT_RADIX_BITS` overrides it.
+static RADIX_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(BITS_PER_PASS);
+
+pub fn set_radix_bits(bits: u32) {
+    assert!(bits == 4 || bits == 8, "radix digits are 4 or 8 bits");
+    RADIX_BITS.store(bits, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn radix_bits() -> u32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(bits) = std::env::var("COUNTERSPLAT_RADIX_BITS") {
+        if let Ok(bits @ (4 | 8)) = bits.parse::<u32>() {
+            return bits;
+        }
+    }
+    RADIX_BITS.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// A hole cut through the scene to keep a target visible: splats between the camera and `target` (world space),
 /// within `radius` metres of it on screen, are culled; the road (world height below `floor_y`) is kept.
@@ -77,15 +214,25 @@ pub struct DepthSorter {
     depth_pipeline: wgpu::ComputePipeline,
     /// Whether the caller needs a visibility count and indirect draw arguments.
     count_visible: bool,
+    /// Whether the splats in view are compacted before the radix passes (count_visible, unless the
+    /// COUNTERSPLAT_SORT_COMPACTION=0 diagnostic switch is set): then only they are sorted.
+    compact: bool,
     /// Splats the depth-key pass found in view, reset each indirect sort.
     visible: wgpu::Buffer,
     args_pipeline: wgpu::ComputePipeline,
+    /// Stable compaction of the splats in view ahead of the radix sort (indirect sorts only).
+    scan_groups_pipeline: wgpu::ComputePipeline,
+    compact_pipeline: wgpu::ComputePipeline,
     args: wgpu::BindGroup,
     /// `draw_indirect` arguments covering the visible splats: written each sort.
     draw_args: wgpu::Buffer,
     /// Crossfading slot ranges (`set_fades`) and how many are in use.
     fades: wgpu::Buffer,
     fade_count: Cell<u32>,
+    /// Only the crossfade shares changed since the last sort (see set_fades): rewrite them, keep the order.
+    fades_dirty: Cell<bool>,
+    /// The key pass without visibility counting, used to rewrite fade shares alone.
+    fade_pipeline: wgpu::ComputePipeline,
     /// Last uploaded fade bytes, also reused as the next upload buffer.
     fade_data: std::cell::RefCell<Vec<u8>>,
     depth: wgpu::BindGroup,
@@ -98,8 +245,33 @@ pub struct DepthSorter {
     /// Final sorted indices live in `values[0]` after the last pass.
     values: [wgpu::Buffer; 2],
     /// Exact depth/cull inputs for the cached index order; None before the first sort.
-    sorted_for: std::cell::RefCell<Option<[u8; DEPTH_UNIFORM_PAYLOAD]>>,
+    sorted_for: std::cell::RefCell<Option<[u8; FADE_MODE_OFFSET]>>,
+    /// Whether `fade` holds every slot's current share (a compacting sort's mode-1 key pass wrote them and `set_fades`
+    /// has not changed them since), so later sorts can skip the fade writes (`fade_mode` 2 in `depth_keys.wgsl`).
+    fades_written: Cell<bool>,
+    /// The `fade_mode` last written to the depth uniform (u32::MAX before the first).
+    last_fade_mode: Cell<u32>,
+    /// Whether a compacting sorter skips unchanged fade writes (see `write_fade_mode`).
+    fade_skip: bool,
+    /// The splat textures' width when the key pass can read the splats' scales (`SplatTextures`), for the footprint cull.
+    footprint_width: Option<u32>,
+    /// This frame's vertex-stage footprint parameters (`set_footprint`); None leaves the cull off.
+    footprint: Cell<Option<Footprint>>,
     last_output: std::cell::RefCell<Option<wgpu::Buffer>>,
+    /// The depth prepass's share of the order (sorters that count the splats in view only).
+    depth_range: Option<DepthRange>,
+}
+
+/// Which part of the sorted order the depth prepass draws (`depth_range.wgsl`).
+struct DepthRange {
+    pipeline: wgpu::ComputePipeline,
+    /// Every splat in view: recorded after each sort, so a prepass without a limit draws everything.
+    full: wgpu::BindGroup,
+    /// Only the splats no farther than a depth (`limit_uniform`).
+    limited: wgpu::BindGroup,
+    limit_uniform: wgpu::Buffer,
+    start: wgpu::Buffer,
+    args: wgpu::Buffer,
 }
 
 impl DepthSorter {
@@ -116,11 +288,31 @@ impl DepthSorter {
         centers: &wgpu::Buffer,
         fade: &wgpu::Buffer,
     ) -> Self {
-        Self::with_visibility_count(device, queue, count, centers, fade, true)
+        Self::with_visibility_count(device, queue, count, centers, fade, true, None)
     }
 
-    /// Scene drawing uses a direct active-prefix draw and never consumes the
-    /// indirect arguments. Skip its visibility-count work on the GPU.
+    /// `new`, with the splats' scale texture and codebook, so the key pass can also cull the splats the vertex stage
+    /// would discard for their footprint (`set_footprint`).
+    pub fn with_splat_textures(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        count: u32,
+        centers: &wgpu::Buffer,
+        fade: &wgpu::Buffer,
+        textures: SplatTextures<'_>,
+    ) -> Self {
+        Self::with_visibility_count(device, queue, count, centers, fade, true, Some(textures))
+    }
+
+    /// The vertex-stage parameters for this frame's footprint cull, read by the next `encode`. None (the default)
+    /// keeps every splat the coarse view test keeps. A sorter without splat textures ignores it.
+    pub fn set_footprint(&self, footprint: Option<Footprint>) {
+        self.footprint.set(footprint);
+    }
+
+    /// A sorter that skips the GPU visibility count and draw arguments. The scene now draws through those
+    /// arguments, so only tests that compare the two key passes still build this form.
+    #[cfg(test)]
     pub(crate) fn new_for_direct_draw(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -128,18 +320,25 @@ impl DepthSorter {
         centers: &wgpu::Buffer,
         fade: &wgpu::Buffer,
     ) -> Self {
-        Self::with_visibility_count(device, queue, count, centers, fade, false)
+        Self::with_visibility_count(device, queue, count, centers, fade, false, None)
     }
 
-    fn with_visibility_count(
+    /// `count_visible`: count the splats in view on the GPU, compact them before the radix passes and write indirect
+    /// draw arguments (the draw must then use `draw_args`); otherwise sort every active slot and draw them all.
+    pub(crate) fn with_visibility_count(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         count: u32,
         centers: &wgpu::Buffer,
         fade: &wgpu::Buffer,
         count_visible: bool,
+        splat_textures: Option<SplatTextures<'_>>,
     ) -> Self {
         assert!(count > 0, "sorting needs at least one splat");
+        let compact = count_visible && SORT_COMPACTION.load(std::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(target_arch = "wasm32"))]
+        let compact = compact
+            && std::env::var("COUNTERSPLAT_SORT_COMPACTION").map_or(true, |value| value != "0");
         let workgroups = count.div_ceil(ELEMENTS_PER_WORKGROUP);
         let storage = |label: &str, bytes: u64| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -161,15 +360,17 @@ impl DepthSorter {
         };
         let key_bytes = u64::from(count) * 4;
         let keys_in = storage("depth keys", key_bytes);
-        let keys = [
-            storage("sort keys 0", key_bytes),
-            storage("sort keys 1", key_bytes),
-        ];
+        // The depth keys are only read by the first radix pass and rewritten by the next sort, so they are free
+        // scratch afterwards: they serve as the second ping-pong buffer instead of a buffer of their own.
+        let keys = [storage("sort keys 0", key_bytes), keys_in.clone()];
         let values = [
             storage("sort values 0", key_bytes),
             storage("sort values 1", key_bytes),
         ];
-        let block_sums = storage("radix block sums", u64::from(BUCKET_COUNT * workgroups) * 4);
+        let bits_per_pass = radix_bits();
+        let bucket_count = 1u32 << bits_per_pass;
+        let pass_count = (32 - SKIPPED_KEY_BITS) / bits_per_pass;
+        let block_sums = storage("radix block sums", u64::from(bucket_count * workgroups) * 4);
         let depth_uniform = uniform("depth uniform", DEPTH_UNIFORM_SIZE);
         let radix_uniform = uniform("radix uniform", 8);
         queue.write_buffer(&radix_uniform, 0, &u32s(&[workgroups, count]));
@@ -184,9 +385,49 @@ impl DepthSorter {
                 storage_entry(3, false),
                 storage_entry(4, true),
                 storage_entry(5, false),
+                storage_entry(6, false),
+                storage_entry(7, false),
+                storage_entry(8, false),
+                texture_entry(9),
+                texture_entry(10),
             ],
         );
+        // Without the splats' textures the footprint cull stays off, and the key pass binds 1x1 stand-ins.
+        let stand_ins = splat_textures.is_none().then(|| {
+            let texture = |label, format| {
+                device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    })
+                    .create_view(&Default::default())
+            };
+            (
+                texture("no splat scales", wgpu::TextureFormat::Rgba8Unorm),
+                texture("no scale codebook", wgpu::TextureFormat::Rgba32Float),
+            )
+        });
+        let (scales_view, codebook_view) = match (&splat_textures, &stand_ins) {
+            (Some(textures), _) => (textures.scales, textures.codebook),
+            (None, Some((scales, codebook))) => (scales, codebook),
+            (None, None) => unreachable!("stand-ins exist whenever textures do not"),
+        };
         let visible = storage("visible splats", 4);
+        // Splats in view per 256-slot group, scanned into output offsets by scan_groups (indirect sorts only).
+        let group_counts = storage(
+            "visible per group",
+            if count_visible {
+                u64::from(count.div_ceil(THREADS_PER_WORKGROUP)) * 4
+            } else {
+                4
+            },
+        );
         let fades = storage("splat fades", u64::from(MAX_FADES) * 16);
         let draw_args = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("splat draw args"),
@@ -202,7 +443,7 @@ impl DepthSorter {
             &draw_args,
             0,
             &u32s(&[
-                crate::scene::INSTANCE_SIZE * 6,
+                crate::scene::INSTANCE_SIZE * crate::scene::INDICES_PER_SPLAT,
                 count.div_ceil(crate::scene::INSTANCE_SIZE),
                 0,
                 0,
@@ -214,7 +455,7 @@ impl DepthSorter {
             &args_uniform,
             0,
             &u32s(&[
-                crate::scene::INSTANCE_SIZE * 6,
+                crate::scene::INSTANCE_SIZE * crate::scene::INDICES_PER_SPLAT,
                 crate::scene::INSTANCE_SIZE,
                 0,
                 0,
@@ -240,27 +481,26 @@ impl DepthSorter {
                 (2, draw_args.as_entire_binding()),
             ],
         );
-        let histogram_layout = layout(
-            device,
-            "histogram",
-            &[
-                storage_entry(0, true),
-                storage_entry(1, false),
-                uniform_entry(2),
-            ],
-        );
-        let reorder_layout = layout(
-            device,
-            "reorder",
-            &[
-                storage_entry(0, true),
-                storage_entry(1, false),
-                storage_entry(2, true),
-                storage_entry(3, true),
-                storage_entry(4, false),
-                uniform_entry(5),
-            ],
-        );
+        let mut histogram_entries = vec![
+            storage_entry(0, true),
+            storage_entry(1, false),
+            uniform_entry(2),
+        ];
+        let mut reorder_entries = vec![
+            storage_entry(0, true),
+            storage_entry(1, false),
+            storage_entry(2, true),
+            storage_entry(3, true),
+            storage_entry(4, false),
+            uniform_entry(5),
+        ];
+        if compact {
+            // The element count comes from the GPU's own visible count (USE_INDIRECT_SORT).
+            histogram_entries.push(storage_entry(3, true));
+            reorder_entries.push(storage_entry(6, true));
+        }
+        let histogram_layout = layout(device, "histogram", &histogram_entries);
+        let reorder_layout = layout(device, "reorder", &reorder_entries);
         let scan_layout = layout(
             device,
             "prefix sum",
@@ -278,6 +518,7 @@ impl DepthSorter {
             DEPTH_KEYS_SRC,
             if count_visible { "main" } else { "direct" },
         );
+        let fade_pipeline = pipeline(device, "fade shares", &depth_layout, DEPTH_KEYS_SRC, "direct");
         let depth = bind(
             device,
             "depth keys",
@@ -289,24 +530,44 @@ impl DepthSorter {
                 (3, visible.as_entire_binding()),
                 (4, fades.as_entire_binding()),
                 (5, fade.as_entire_binding()),
+                (6, group_counts.as_entire_binding()),
+                // Compaction writes the sort's first-pass inputs: the second ping-pong key buffer and the value
+                // buffer pass 0 reads.
+                (7, keys[0].as_entire_binding()),
+                (8, values[(pass_count % 2) as usize].as_entire_binding()),
+                (9, wgpu::BindingResource::TextureView(scales_view)),
+                (10, wgpu::BindingResource::TextureView(codebook_view)),
             ],
         );
+        let scan_groups_pipeline = pipeline(device, "scan visible groups", &depth_layout, DEPTH_KEYS_SRC, "scan_groups");
+        let compact_pipeline = pipeline(device, "compact visible", &depth_layout, DEPTH_KEYS_SRC, "compact");
 
         let mut histogram_pipelines = Vec::new();
         let mut reorder_pipelines = Vec::new();
         let mut passes = Vec::new();
-        for pass in 0..PASS_COUNT {
-            let bit = SKIPPED_KEY_BITS + pass * BITS_PER_PASS;
-            let histogram_src = specialize(HISTOGRAM_SRC, &[("CURRENT_BIT", bit)]);
-            let reorder_src = specialize(
+        // Compacting sorts let workgroups past the visible count stop early (`skip_empty_workgroups`);
+        // COUNTERSPLAT_RADIX_SKIP=0 natively keeps every workgroup running, for A/B timing.
+        #[cfg(not(target_arch = "wasm32"))]
+        let skip_empty = compact && std::env::var("COUNTERSPLAT_RADIX_SKIP").map_or(true, |v| v != "0");
+        #[cfg(target_arch = "wasm32")]
+        let skip_empty = compact;
+        let finish = |src: String| {
+            widen_digits(if skip_empty { skip_empty_workgroups(src) } else { src }, bits_per_pass)
+        };
+        for pass in 0..pass_count {
+            let bit = SKIPPED_KEY_BITS + pass * bits_per_pass;
+            let histogram_src = finish(specialize_with(HISTOGRAM_SRC, &[("CURRENT_BIT", bit)], compact));
+            let reorder_src = finish(specialize_with(
                 REORDER_SRC,
                 &[
                     ("CURRENT_BIT", bit),
-                    ("IS_FIRST_PASS", u32::from(pass == 0)),
+                    // Compacted sorts start from (key, slot) pairs; direct ones start from the identity order.
+                    ("IS_FIRST_PASS", u32::from(pass == 0 && !compact)),
                     // The next sort regenerates keys; only the final values are consumed.
-                    ("IS_LAST_PASS", u32::from(pass + 1 == PASS_COUNT)),
+                    ("IS_LAST_PASS", u32::from(pass + 1 == pass_count)),
                 ],
-            );
+                compact,
+            ));
             let histogram_pipeline = pipeline(
                 device,
                 "radix histogram",
@@ -322,41 +583,44 @@ impl DepthSorter {
                 "main",
             );
 
-            // Keys ping-pong from `keys_in`, then keys[0], keys[1], ...; values alternate so that the last pass
-            // writes values[0], whatever the pass count.
-            let key_src = if pass == 0 {
-                &keys_in
-            } else {
-                &keys[((pass - 1) % 2) as usize]
-            };
-            let key_dst = &keys[(pass % 2) as usize];
-            let value_src = &values[((pass + PASS_COUNT) % 2) as usize];
-            let value_dst = &values[((pass + PASS_COUNT + 1) % 2) as usize];
+            // Keys ping-pong between keys[1] (the depth keys, which pass 0 reads) and keys[0]; values alternate so
+            // that the last pass writes values[0], whatever the pass count.
+            // A compacted sort starts from keys[0] (written by compact); a direct one from the depth keys in keys[1].
+            let first = usize::from(!compact);
+            let key_src = &keys[(pass as usize + first) % 2];
+            let key_dst = &keys[(pass as usize + first + 1) % 2];
+            let value_src = &values[((pass + pass_count) % 2) as usize];
+            let value_dst = &values[((pass + pass_count + 1) % 2) as usize];
 
+            let mut histogram_bindings = vec![
+                (0, key_src.as_entire_binding()),
+                (1, block_sums.as_entire_binding()),
+                (2, radix_uniform.as_entire_binding()),
+            ];
+            let mut reorder_bindings = vec![
+                (0, key_src.as_entire_binding()),
+                (1, key_dst.as_entire_binding()),
+                (2, block_sums.as_entire_binding()),
+                (3, value_src.as_entire_binding()),
+                (4, value_dst.as_entire_binding()),
+                (5, radix_uniform.as_entire_binding()),
+            ];
+            if compact {
+                histogram_bindings.push((3, visible.as_entire_binding()));
+                reorder_bindings.push((6, visible.as_entire_binding()));
+            }
             let histogram = bind(
                 device,
                 "radix histogram",
                 &histogram_pipeline.get_bind_group_layout(0),
-                &[
-                    (0, key_src.as_entire_binding()),
-                    (1, block_sums.as_entire_binding()),
-                    (2, radix_uniform.as_entire_binding()),
-                ],
+                &histogram_bindings,
             );
             let reorder = bind(
                 device,
                 "radix reorder",
                 &reorder_pipeline.get_bind_group_layout(0),
-                &[
-                    (0, key_src.as_entire_binding()),
-                    (1, key_dst.as_entire_binding()),
-                    (2, block_sums.as_entire_binding()),
-                    (3, value_src.as_entire_binding()),
-                    (4, value_dst.as_entire_binding()),
-                    (5, radix_uniform.as_entire_binding()),
-                ],
-            );
-            histogram_pipelines.push(histogram_pipeline);
+                &reorder_bindings,
+            );            histogram_pipelines.push(histogram_pipeline);
             reorder_pipelines.push(reorder_pipeline);
             passes.push(Pass { histogram, reorder });
         }
@@ -378,7 +642,7 @@ impl DepthSorter {
 
         // Recursive exclusive scan over the histograms: level i scans `items[i]` into `items[i + 1]`.
         let mut items = vec![block_sums.clone()];
-        let mut item_counts = vec![BUCKET_COUNT * workgroups];
+        let mut item_counts = vec![bucket_count * workgroups];
         let mut scan_levels = Vec::new();
         loop {
             let level = scan_levels.len();
@@ -420,6 +684,68 @@ impl DepthSorter {
         // `items` holds the block-sum buffers; bind groups keep them alive, so the Vec can go.
         drop(items);
 
+        let depth_range = count_visible.then(|| {
+            let start = storage("depth prepass start", 4);
+            let args = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("depth prepass draw args"),
+                size: 20,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            // The view matrix and depth (bytes 0..68) are written only for a limited range.
+            let range_uniform = |enabled: u32| {
+                let buffer = uniform("depth range uniform", DEPTH_RANGE_UNIFORM_SIZE);
+                let mut bytes = vec![0u8; DEPTH_RANGE_UNIFORM_SIZE as usize];
+                bytes[68..80].copy_from_slice(&u32s(&[
+                    enabled,
+                    crate::scene::INSTANCE_SIZE * crate::scene::INDICES_PER_SPLAT,
+                    crate::scene::INSTANCE_SIZE,
+                ]));
+                queue.write_buffer(&buffer, 0, &bytes);
+                buffer
+            };
+            let (full_uniform, limit_uniform) = (range_uniform(0), range_uniform(1));
+            let range_layout = layout(
+                device,
+                "depth range",
+                &[
+                    uniform_entry(0),
+                    storage_entry(1, true),
+                    storage_entry(2, true),
+                    storage_entry(3, true),
+                    storage_entry(4, false),
+                    storage_entry(5, false),
+                ],
+            );
+            let pipeline = pipeline(device, "depth prepass range", &range_layout, DEPTH_RANGE_SRC, "main");
+            let group = |uniform: &wgpu::Buffer| {
+                bind(
+                    device,
+                    "depth prepass range",
+                    &pipeline.get_bind_group_layout(0),
+                    &[
+                        (0, uniform.as_entire_binding()),
+                        (1, centers.as_entire_binding()),
+                        (2, values[0].as_entire_binding()),
+                        (3, visible.as_entire_binding()),
+                        (4, start.as_entire_binding()),
+                        (5, args.as_entire_binding()),
+                    ],
+                )
+            };
+            let (full, limited) = (group(&full_uniform), group(&limit_uniform));
+            DepthRange {
+                pipeline,
+                full,
+                limited,
+                limit_uniform,
+                start,
+                args,
+            }
+        });
+
         Self {
             metrics: Default::default(),
             count,
@@ -429,12 +755,17 @@ impl DepthSorter {
             depth_uniform,
             depth_pipeline,
             count_visible,
+            compact,
             visible,
             args_pipeline,
+            scan_groups_pipeline,
+            compact_pipeline,
             args,
             draw_args,
             fades,
             fade_count: Cell::new(0),
+            fades_dirty: Cell::new(false),
+            fade_pipeline,
             fade_data: Default::default(),
             depth,
             histogram_pipelines,
@@ -446,6 +777,16 @@ impl DepthSorter {
             values,
             sorted_for: Default::default(),
             last_output: Default::default(),
+            depth_range,
+            footprint_width: splat_textures.map(|textures| textures.width),
+            footprint: Cell::new(None),
+            fades_written: Cell::new(false),
+            last_fade_mode: Cell::new(u32::MAX),
+            // COUNTERSPLAT_FADE_SKIP=0 natively writes every share on every sort, for A/B timing.
+            #[cfg(not(target_arch = "wasm32"))]
+            fade_skip: std::env::var("COUNTERSPLAT_FADE_SKIP").map_or(true, |v| v != "0"),
+            #[cfg(target_arch = "wasm32")]
+            fade_skip: true,
         }
     }
 
@@ -467,19 +808,39 @@ impl DepthSorter {
 
     /// Slot ranges crossfading, sorted by start and not overlapping: (first slot, one past the last, share drawn).
     /// The depth-key pass writes each splat's share into the per-slot opacity buffer the splat shaders read, so a
-    /// range fades smoothly; a range at share 0 is left out of the draw. Past `MAX_FADES` the rest are drawn whole. While any range fades, every frame
-    /// sorts.
+    /// range fades smoothly; a range at share 0 is left out of the draw. Past `MAX_FADES` the rest are drawn whole.
+    ///
+    /// The shares change every frame of a crossfade, but the order depends only on which splats are drawn: when the
+    /// ranges are the same and no share crosses zero, a still camera keeps its sort and only the shares are rewritten
+    /// (`fade_updates` in the profile); anything else sorts again.
     pub fn set_fades(&self, queue: &wgpu::Queue, fades: &[(u32, u32, f32)]) {
         let fades = &fades[..fades.len().min(MAX_FADES as usize)];
         let mut data = self.fade_data.borrow_mut();
+        let shares_only = same_ranges_and_visibility(&data, fades);
         if !update_fade_data(&mut data, fades) {
             return;
         }
+        self.fades_written.set(false);
         if !data.is_empty() {
             queue.write_buffer(&self.fades, 0, &data);
         }
         self.fade_count.set(fades.len() as u32);
-        *self.sorted_for.borrow_mut() = None;
+        if shares_only {
+            self.fades_dirty.set(true);
+        } else {
+            *self.sorted_for.borrow_mut() = None;
+        }
+    }
+
+    /// Whether this sorter compacts the splats in view. Its order is then defined only for that prefix, so it must be
+    /// drawn through `draw_args`.
+    pub fn counts_visible(&self) -> bool {
+        self.count_visible
+    }
+
+    /// The GPU's count of splats in view after the last sort (one `u32`); meaningful only when `counts_visible`.
+    pub fn visible_buffer(&self) -> &wgpu::Buffer {
+        &self.visible
     }
 
     /// `draw_indirect` arguments for the splats in view (all of them before the first sort).
@@ -523,19 +884,47 @@ impl DepthSorter {
         let clip = clip.unwrap_or(&NO_CULL);
         let active = self.active.get();
         let bytes = u64::from(active.max(1)) * 4;
+        // When `output` is the sorter's own result buffer (see `indices_buffer`) there is nothing to copy.
+        let in_place = output == &self.values[0];
 
-        let uniform = pack_depth_uniform(view_model, clip, cutout, active, self.fade_count.get());
+        let mut uniform = [0u8; FADE_MODE_OFFSET];
+        uniform[..DEPTH_UNIFORM_PAYLOAD]
+            .copy_from_slice(&pack_depth_uniform(view_model, clip, cutout, active, self.fade_count.get()));
+        if let (Some(width), Some(footprint)) = (self.footprint_width, self.footprint.get()) {
+            if footprint_cull_enabled() {
+                uniform[FOOTPRINT_OFFSET..FADE_MODE_OFFSET].copy_from_slice(&footprint.uniform_bytes(view_model, width));
+            }
+        }
         // Nothing changed since the last sort (an unchanged camera and scene): the order is still right.
         if self.sorted_for.borrow().as_ref() == Some(&uniform) {
-            self.metrics.borrow_mut().count("cache_hits", 1);
-            if self.last_output.borrow().as_ref() != Some(output) {
+            if self.fades_dirty.replace(false) {
+                // Only crossfade shares changed (see `set_fades`): rewrite them for the active slots with the same
+                // key pass, without counting, compacting or sorting. The depth uniform on the GPU is still this one.
+                self.metrics.borrow_mut().count("fade_updates", 1);
+                self.write_fade_mode(queue);
+                let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("splat fade shares"),
+                    timestamp_writes: None,
+                });
+                dispatch(
+                    &mut compute,
+                    &self.fade_pipeline,
+                    &self.depth,
+                    active.div_ceil(THREADS_PER_WORKGROUP).max(1),
+                );
+            } else {
+                self.metrics.borrow_mut().count("cache_hits", 1);
+            }
+            if !in_place && self.last_output.borrow().as_ref() != Some(output) {
                 encoder.copy_buffer_to_buffer(&self.values[0], 0, output, 0, bytes);
                 *self.last_output.borrow_mut() = Some(output.clone());
             }
             return;
         }
+        self.fades_dirty.set(false);
         self.metrics.borrow_mut().count("sorts", 1);
         queue.write_buffer(&self.depth_uniform, 0, &uniform);
+        self.write_fade_mode(queue);
         *self.sorted_for.borrow_mut() = Some(uniform);
 
         if self.count_visible {
@@ -543,54 +932,164 @@ impl DepthSorter {
         }
         // Block sums past the active workgroups would hold a previous sort's counts; the scan reads all of them.
         encoder.clear_buffer(&self.block_sums, 0, None);
-        let workgroups = active.div_ceil(ELEMENTS_PER_WORKGROUP).max(1);
         // Dispatches are ordered inside one compute pass. WebGPU resolves the storage read/write hazards at
         // each dispatch; ending a pass for every histogram/scan/reorder made dozens of Metal encoders per frame.
-        let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("splat sort"),
-            timestamp_writes: None,
-        });
-        dispatch(
-            &mut compute,
-            &self.depth_pipeline,
-            &self.depth,
-            active.div_ceil(THREADS_PER_WORKGROUP).max(1),
-        );
-        if self.count_visible {
-            dispatch(&mut compute, &self.args_pipeline, &self.args, 1);
-        }
-        for pass in 0..PASS_COUNT as usize {
-            let bind_pass = &self.passes[pass];
-            dispatch(
-                &mut compute,
-                &self.histogram_pipelines[pass],
-                &bind_pass.histogram,
-                workgroups,
-            );
-            for level in &self.scan_levels {
-                dispatch(
-                    &mut compute,
-                    &self.scan_pipeline,
-                    &level.scan,
-                    level.workgroups,
-                );
-            }
-            for level in self.scan_levels.iter().rev() {
-                if let Some(add) = &level.add {
-                    dispatch(&mut compute, &self.add_pipeline, add, level.workgroups);
+        // Only a stage timer (`set_stage_timer`, a diagnostic) splits the pass, to place a timestamp after each stage.
+        let stages = [SortStage::Keys, SortStage::Compact]
+            .into_iter()
+            .filter(|stage| self.compact || *stage != SortStage::Compact)
+            .chain((0..self.passes.len() as u8).map(SortStage::Radix));
+        match STAGE_TIMER.with(|timer| timer.borrow().clone()) {
+            None => {
+                let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("splat sort"),
+                    timestamp_writes: None,
+                });
+                for stage in stages {
+                    self.record_stage(&mut compute, stage, active);
                 }
             }
-            dispatch(
-                &mut compute,
-                &self.reorder_pipelines[pass],
-                &bind_pass.reorder,
-                workgroups,
-            );
+            Some(timer) => {
+                for stage in stages {
+                    {
+                        let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("splat sort stage"),
+                            timestamp_writes: None,
+                        });
+                        self.record_stage(&mut compute, stage, active);
+                    }
+                    timer.mark(encoder, stage.label());
+                }
+            }
         }
-        drop(compute);
-        encoder.copy_buffer_to_buffer(&self.values[0], 0, output, 0, bytes);
-        *self.last_output.borrow_mut() = Some(output.clone());
+        if !in_place {
+            encoder.copy_buffer_to_buffer(&self.values[0], 0, output, 0, bytes);
+            *self.last_output.borrow_mut() = Some(output.clone());
+        }
     }
+
+    /// Records which part of the sorted order the depth prepass draws: with `limit` (`(view_model, far_depth)`), only
+    /// the splats no farther than `far_depth` in view space, which are all a depth test of fragments no farther than
+    /// that can see; without, every splat in view. Record it after `encode` each frame (the scene does), and again with
+    /// a limit before a prepass that has one. Sorters that do not count the splats in view have no range.
+    pub fn encode_depth_range(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, limit: Option<(&Mat4, f32)>) {
+        let Some(range) = &self.depth_range else {
+            return;
+        };
+        let group = match limit {
+            Some((view_model, far_depth)) => {
+                let mut bytes = Vec::with_capacity(68);
+                bytes.extend(view_model.iter().flat_map(|v| v.to_le_bytes()));
+                bytes.extend(far_depth.to_le_bytes());
+                queue.write_buffer(&range.limit_uniform, 0, &bytes);
+                &range.limited
+            }
+            None => &range.full,
+        };
+        let mut compute = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("depth prepass range"),
+            timestamp_writes: None,
+        });
+        dispatch(&mut compute, &range.pipeline, group, 1);
+    }
+
+    /// The first entry of the sorted order the depth prepass draws (one `u32`), when the sorter has a range.
+    pub fn depth_start_buffer(&self) -> Option<&wgpu::Buffer> {
+        self.depth_range.as_ref().map(|range| &range.start)
+    }
+
+    /// `draw_indexed_indirect` arguments for the depth prepass's range, when the sorter has one.
+    pub fn depth_draw_args(&self) -> Option<&wgpu::Buffer> {
+        self.depth_range.as_ref().map(|range| &range.args)
+    }
+
+    /// The buffer the sorted splat indices end up in (farthest first). Passing it as `encode`'s `output` skips the
+    /// copy into a second buffer: the draw can read it directly. It holds the order only until the next sort.
+    pub fn indices_buffer(&self) -> &wgpu::Buffer {
+        &self.values[0]
+    }
+}
+
+impl DepthSorter {
+    /// Sets how the next key pass writes the per-slot fade shares (see `put_fade` in `depth_keys.wgsl`): direct
+    /// sorters always write every slot (0 for culled ones, which they still draw); compacting sorters write every
+    /// share once after `set_fades` changes them (1), then nothing (2) until they change again.
+    fn write_fade_mode(&self, queue: &wgpu::Queue) {
+        let mode: u32 = if !self.compact || !self.fade_skip {
+            0
+        } else if self.fades_written.replace(true) {
+            2
+        } else {
+            1
+        };
+        if self.last_fade_mode.replace(mode) != mode {
+            queue.write_buffer(&self.depth_uniform, FADE_MODE_OFFSET as u64, &mode.to_le_bytes());
+        }
+    }
+
+    /// Records one stage of a sort into `compute` (see `SortStage`).
+    fn record_stage(&self, compute: &mut wgpu::ComputePass<'_>, stage: SortStage, active: u32) {
+        let workgroups = active.div_ceil(ELEMENTS_PER_WORKGROUP).max(1);
+        match stage {
+            SortStage::Keys => {
+                dispatch(compute, &self.depth_pipeline, &self.depth, active.div_ceil(THREADS_PER_WORKGROUP).max(1));
+                if self.count_visible {
+                    dispatch(compute, &self.args_pipeline, &self.args, 1);
+                }
+            }
+            SortStage::Compact => {
+                // Only the splats in view go through the radix passes (the rest sort last and are never drawn):
+                // scan the per-group counts into output offsets, then compact keys and slots in slot order.
+                dispatch(compute, &self.scan_groups_pipeline, &self.depth, 1);
+                dispatch(compute, &self.compact_pipeline, &self.depth, active.div_ceil(THREADS_PER_WORKGROUP).max(1));
+            }
+            SortStage::Radix(pass) => {
+                let pass = pass as usize;
+                let bind_pass = &self.passes[pass];
+                dispatch(compute, &self.histogram_pipelines[pass], &bind_pass.histogram, workgroups);
+                for level in &self.scan_levels {
+                    dispatch(compute, &self.scan_pipeline, &level.scan, level.workgroups);
+                }
+                for level in self.scan_levels.iter().rev() {
+                    if let Some(add) = &level.add {
+                        dispatch(compute, &self.add_pipeline, add, level.workgroups);
+                    }
+                }
+                dispatch(compute, &self.reorder_pipelines[pass], &bind_pass.reorder, workgroups);
+            }
+        }
+    }
+}
+
+/// The parts of a sort, in order: depth keys (with the visible count and draw arguments), compaction of the splats in
+/// view, and each radix pass (histogram, scan, reorder).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortStage {
+    Keys,
+    Compact,
+    Radix(u8),
+}
+
+impl SortStage {
+    fn label(self) -> &'static str {
+        match self {
+            SortStage::Keys => "sort keys",
+            SortStage::Compact => "sort compact",
+            SortStage::Radix(pass) => ["radix 0", "radix 1", "radix 2", "radix 3"][usize::from(pass).min(3)],
+        }
+    }
+}
+
+thread_local! {
+    static STAGE_TIMER: std::cell::RefCell<Option<std::rc::Rc<crate::gpu_timing::GpuFrameTimer>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// A diagnostic: while set, every sort encoded on this thread splits its compute pass per stage and marks `timer`
+/// after each (`sort keys`, `sort compact`, `radix 0`..). The caller begins and ends the timer around the frame.
+/// Splitting the pass costs a little, so the stages add up to slightly more than an unsplit sort.
+pub fn set_stage_timer(timer: Option<std::rc::Rc<crate::gpu_timing::GpuFrameTimer>>) {
+    STAGE_TIMER.with(|slot| *slot.borrow_mut() = timer);
 }
 
 fn dispatch(
@@ -604,8 +1103,9 @@ fn dispatch(
     pass.dispatch_workgroups(workgroups, 1, 1);
 }
 
-/// Replaces the engine's `{NAME}` tokens and strips preprocessor blocks, as the engine's `Shader` does.
-fn specialize(src: &str, tokens: &[(&str, u32)]) -> String {
+/// Replaces the engine's `{NAME}` tokens and strips preprocessor blocks, as the engine's `Shader` does. `indirect` selects the engine's `USE_INDIRECT_SORT` variant, which reads the number of elements
+/// to sort from a storage buffer (the GPU's own visible count) instead of the uniform.
+fn specialize_with(src: &str, tokens: &[(&str, u32)], indirect: bool) -> String {
     let mut out = src
         .replace("{WORKGROUP_SIZE_X}", "16")
         .replace("{WORKGROUP_SIZE_Y}", "16")
@@ -617,7 +1117,69 @@ fn specialize(src: &str, tokens: &[(&str, u32)]) -> String {
     for (name, value) in tokens {
         out = out.replace(&format!("{{{name}}}"), &value.to_string());
     }
-    strip_preprocessor(&out)
+    let mut defines = Defines::new();
+    if indirect {
+        defines.insert("USE_INDIRECT_SORT".into(), String::new());
+    }
+    preprocess_source(&out, &mut defines)
+        .unwrap_or_else(|e| panic!("preprocessing radix shader: {e:?}"))
+}
+
+/// Lets a workgroup of the indirect (compacting) histogram or reorder kernel that lies wholly past the GPU's count of
+/// splats in view stop at once. The passes are dispatched for every active slot, so with a fraction of the slots in
+/// view most workgroups used to run every round and barrier for nothing. The count is read once into workgroup memory
+/// (`workgroupUniformLoad`), which keeps the early return in uniform control flow. A skipped histogram workgroup still
+/// writes zero counts: its block-sum slots hold the previous pass's scanned offsets otherwise.
+fn skip_empty_workgroups(src: String) -> String {
+    const COUNT: &str = "let elementCount = sortElementCount[0];";
+    const ENTRY: &str = "@compute @workgroup_size";
+    assert!(src.contains(COUNT) && src.contains(ENTRY), "radix kernel pattern not found");
+    let reorder = src.contains("digit_masks");
+    let empty = if reorder {
+        "return;".to_owned()
+    } else {
+        "if (TID < 16u && WORKGROUP_ID < uniforms.workgroupCount) {\n            block_sums[TID * uniforms.workgroupCount + WORKGROUP_ID] = 0u;\n        }\n        return;".to_owned()
+    };
+    src.replacen(ENTRY, &format!("var<workgroup> wg_element_count: u32;\n\n{ENTRY}"), 1).replace(
+        COUNT,
+        &format!(
+            "if (TID == 0u) {{ wg_element_count = sortElementCount[0]; }}\n    let elementCount = workgroupUniformLoad(&wg_element_count);\n    if (WID >= elementCount) {{\n        {empty}\n    }}"
+        ),
+    )
+}
+
+/// Rewrites the engine's 4-bit histogram or reorder kernel for `bits`-wide digits. The engine hardcodes 16 buckets:
+/// the digit mask, the bucket arrays (the reorder's ranking masks are 8 words a bucket, one bit a thread) and the
+/// threads that own a bucket. With 256 buckets every thread owns one, and the mask clear becomes a strided loop.
+/// Every pattern must be present, so a change in the upstream source fails here instead of sorting wrongly.
+fn widen_digits(src: String, bits: u32) -> String {
+    if bits == 4 {
+        return src;
+    }
+    assert_eq!(bits, 8, "radix digits are 4 or 8 bits");
+    let buckets = 1u32 << bits;
+    assert!(buckets <= THREADS_PER_WORKGROUP, "each bucket needs a thread");
+    let words = buckets * (THREADS_PER_WORKGROUP / 32);
+    let reorder = src.contains("digit_masks");
+    let mut out = src;
+    let mut swap = |from: &str, to: &str| {
+        assert!(out.contains(from), "radix kernel pattern not found: {from}");
+        out = out.replace(from, to);
+    };
+    swap("& 0xFu", &format!("& {:#X}u", buckets - 1));
+    swap("TID < 16u", &format!("TID < {buckets}u"));
+    if reorder {
+        swap("array<atomic<u32>, 128>", &format!("array<atomic<u32>, {words}>"));
+        swap("array<u32, 16>", &format!("array<u32, {buckets}>"));
+        swap(
+            "if (TID < 128u) {\n        atomicStore(&digit_masks[TID], 0u);",
+            &format!("for (var m = TID; m < {words}u; m += THREADS_PER_WORKGROUP) {{\n        atomicStore(&digit_masks[m], 0u);"),
+        );
+        swap("select(16u,", &format!("select({buckets}u,"));
+    } else {
+        swap("array<atomic<u32>, 16>", &format!("array<atomic<u32>, {buckets}>"));
+    }
+    out
 }
 
 /// The scan kernel only has the workgroup and item tokens, so it gets its own substitution.
@@ -700,6 +1262,20 @@ fn bind(
     })
 }
 
+/// A 2D float texture read with `textureLoad` (unfilterable, so RGBA32F binds without the float32-filterable feature).
+fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
 fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -728,6 +1304,20 @@ fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 
 fn u32s(values: &[u32]) -> Vec<u8> {
     values.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// Whether `fades` has the same ranges as the uploaded `data` and every share stays on the same side of zero (a
+/// share of 0, or one that is not a number, leaves the range out of the draw), so the sorted order still holds.
+fn same_ranges_and_visibility(data: &[u8], fades: &[(u32, u32, f32)]) -> bool {
+    data.len() == fades.len() * 16
+        && data
+            .chunks_exact(16)
+            .zip(fades)
+            .all(|(bytes, &(start, end, share))| {
+                let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+                let old = f32::from_bits(word(8));
+                word(0) == start && word(4) == end && (old > 0.0) == (share > 0.0)
+            })
 }
 
 // Keep the GPU's little-endian range bytes for change detection and reuse.
@@ -806,14 +1396,21 @@ mod uniform_tests {
 
     // Recreate the previous final pass for paired GPU comparisons.
     fn use_final_key_write(sorter: &mut DepthSorter, device: &wgpu::Device) {
-        let pass = PASS_COUNT - 1;
-        let src = specialize(
-            REORDER_SRC,
-            &[
-                ("CURRENT_BIT", SKIPPED_KEY_BITS + pass * BITS_PER_PASS),
-                ("IS_FIRST_PASS", u32::from(pass == 0)),
-                ("IS_LAST_PASS", 0),
-            ],
+        let passes = sorter.passes.len() as u32;
+        let bits = (32 - SKIPPED_KEY_BITS) / passes;
+        let pass = passes - 1;
+        let indirect = sorter.compact;
+        let src = widen_digits(
+            specialize_with(
+                REORDER_SRC,
+                &[
+                    ("CURRENT_BIT", SKIPPED_KEY_BITS + pass * bits),
+                    ("IS_FIRST_PASS", u32::from(pass == 0 && !indirect)),
+                    ("IS_LAST_PASS", 0),
+                ],
+                indirect,
+            ),
+            bits,
         );
         let index = pass as usize;
         let layout = sorter.reorder_pipelines[index].get_bind_group_layout(0);
@@ -933,7 +1530,7 @@ mod uniform_tests {
             let cutout = (scenario == 2).then_some((&cut, &matrix, &matrix));
             let readback = buffer(
                 "sort comparison readback",
-                bytes * 4,
+                bytes * 4 + 4,
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             );
             let mut encoder = device.create_command_encoder(&Default::default());
@@ -943,6 +1540,7 @@ mod uniform_tests {
             encoder.copy_buffer_to_buffer(&order_b, 0, &readback, bytes, bytes);
             encoder.copy_buffer_to_buffer(&fade_a, 0, &readback, bytes * 2, bytes);
             encoder.copy_buffer_to_buffer(&fade_b, 0, &readback, bytes * 3, bytes);
+            encoder.copy_buffer_to_buffer(counted.visible_buffer(), 0, &readback, bytes * 4, 4);
             queue.submit(Some(encoder.finish()));
             let slice = readback.slice(..);
             let (tx, rx) = std::sync::mpsc::channel();
@@ -953,16 +1551,30 @@ mod uniform_tests {
             rx.recv().unwrap().unwrap();
             let data = slice.get_mapped_range().unwrap();
             let n = bytes as usize;
+            // The counted sort compacts the splats in view, so only that prefix is defined (the direct sort puts
+            // the culled slots after it); its GPU count says how many are in view.
+            let shown = u32::from_le_bytes(data[4 * n..4 * n + 4].try_into().unwrap()) as usize;
+            assert!(shown > 0, "scenario {scenario} draws something");
+            if let Some(at) = (0..shown).find(|&i| data[i * 4..i * 4 + 4] != data[n + i * 4..n + i * 4 + 4]) {
+                let word = |o: usize, i: usize| u32::from_le_bytes(data[o + i * 4..o + i * 4 + 4].try_into().unwrap());
+                panic!("scenario {scenario}: first difference at {at} of {shown}: counted {} direct {} (neighbours counted {:?} direct {:?})", word(0, at), word(n, at), (at.saturating_sub(2)..(at + 3).min(shown)).map(|i| word(0, i)).collect::<Vec<_>>(), (at.saturating_sub(2)..(at + 3).min(shown)).map(|i| word(n, i)).collect::<Vec<_>>());
+            }
             assert_eq!(
-                &data[..n],
-                &data[n..2 * n],
+                &data[..shown * 4],
+                &data[n..n + shown * 4],
                 "sort order scenario {scenario}"
             );
-            assert_eq!(
-                &data[2 * n..3 * n],
-                &data[3 * n..4 * n],
-                "fade values scenario {scenario}"
-            );
+            // The direct sorter zeroes culled slots (it draws them); the compacting one keeps every slot's share (it
+            // never draws a culled one). They must agree on every slot the direct sorter shows.
+            let fade = |o: usize, i: usize| f32::from_le_bytes(data[o + i * 4..o + i * 4 + 4].try_into().unwrap());
+            for i in 0..active as usize {
+                let direct_share = fade(3 * n, i);
+                if direct_share != 0.0 {
+                    assert_eq!(fade(2 * n, i).to_bits(), direct_share.to_bits(), "fade of slot {i}, scenario {scenario}");
+                }
+            }
+            let direct_shown = (0..active as usize).filter(|&i| fade(3 * n, i) != 0.0).count();
+            assert_eq!(shown, direct_shown, "splats in view, scenario {scenario}");
         }
     }
 

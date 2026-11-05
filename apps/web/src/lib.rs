@@ -6,9 +6,21 @@
 
 #![cfg(target_arch = "wasm32")]
 
+mod audio;
+mod chunks;
+mod display;
+mod footage;
+mod host;
 mod menu;
+mod metadata;
+mod minimap;
+mod prefs;
+mod stacks;
 mod selector;
 mod ui_layer;
+mod voxels;
+pub use chunks::{chunk_decoder_count, chunk_worker_handle, preload_level_chunks, PreloadedChunks};
+pub use display::{display_viewport_size, DisplaySettings};
 pub use selector::Selector;
 
 use countersplat_assets::{environment, lod::LodMeta, sog, viewer::CameraHint};
@@ -31,6 +43,10 @@ use js_sys::{Array, Uint8Array};
 use std::{collections::BTreeMap, time::Duration};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
+
+/// One-shot GPU timers available to the local profiler. Each timer measures one detailed frame, so this bounds the
+/// GPU samples a capture can report.
+const GPU_TIMER_SLOTS: usize = 64;
 
 fn js_error(error: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&error.to_string())
@@ -134,9 +150,71 @@ pub struct Viewer {
     last_frame_timing: Option<FrameCpuProfile>,
     gpu_timing_requested: bool,
     gpu_timers: Vec<GpuFrameTimer>,
+    /// Each chunk's metadata bytes, sent with its decode request.
+    chunk_metas: Vec<Option<Vec<u8>>>,
+    /// Chunk decoding and streaming, once `start_chunk_streaming` has run.
+    streaming: Option<chunks::ChunkStreaming>,
+    /// Viewport resources last published to the gameplay scene (see `apply_display`).
+    published_viewport: display::PublishedViewport,
+    /// World-line layers that scene scripts publish (hitbox debug lines).
+    line_layers: countersplat_scene::line_layers::LineLayers,
+    /// Level collision coordination and its worker, while a gameplay scene runs it.
+    voxels: Option<voxels::VoxelLink>,
 }
 
 impl Viewer {
+    /// Validate and insert a decoded chunk (a worker reply or a preloaded chunk).
+    fn insert_reply(&mut self, file: usize, reply: &JsValue) -> Result<(), JsValue> {
+        let (metadata, streams) = chunks::reply_streams(reply)?;
+        let meta = sog::parse_meta_json(&metadata).map_err(js_error)?;
+        if !self.stream.accepts_chunk_meta(file, &meta) {
+            return Err(js_error("chunk metadata does not match the selected level"));
+        }
+        let mut staged = StagedChunk::new(file, meta);
+        for (index, (width, height, pixels)) in streams.into_iter().enumerate() {
+            staged
+                .push(index, width, height, pixels.to_vec())
+                .map_err(js_error)?;
+        }
+        let (file, bundle) = staged.finish().map_err(js_error)?;
+        self.stream.insert(file, bundle);
+        Ok(())
+    }
+
+    /// One frame of chunk streaming: collect finished decodes, insert them within the frame's budget, give failed
+    /// chunks back to the streamer after their delay, and request new ones for idle workers.
+    fn pump_chunks(&mut self) {
+        let Some(mut streaming) = self.streaming.take() else {
+            return;
+        };
+        streaming.collect();
+        streaming.drain_ready(|file, reply| self.insert_reply(file, reply));
+        for file in streaming.due_retries() {
+            self.stream.failed(file);
+        }
+        // The pause menu finishes what is in flight but starts no new decodes.
+        let capacity = if self.menu_visible {
+            0
+        } else {
+            streaming.capacity()
+        };
+        for (file, folder) in self.stream.requests_up_to(capacity) {
+            let submitted = match self.chunk_metas.get(file).and_then(Option::as_ref) {
+                Some(metadata) => streaming.submit(file, &folder, metadata),
+                None => {
+                    streaming.fail(file, "metadata is unavailable", js_sys::Date::now());
+                    streaming.in_flight.insert(file);
+                    continue;
+                }
+            };
+            if !submitted {
+                // The streamer reserved this chunk for an idle worker that is gone; release it.
+                self.stream.failed(file);
+            }
+        }
+        self.streaming = Some(streaming);
+    }
+
     fn route_ui_input(&mut self, event: InputEvent) -> Result<(), JsValue> {
         if self.menu_visible {
             self.menu.input(event)
@@ -215,12 +293,16 @@ impl Viewer {
             },
             fade_s: 0.45,
             keep_s: 2.5,
-            near_lod0_m: 24.0,
+            // Forced finest detail close to the camera, where a coarser LOD is plainly visible. A wider radius
+            // spends the pool on splats the camera passes within a few seconds, and in a dense scan makes leaves
+            // swap LODs as they cross it: 12 m measured 24% fewer uploads and far fewer holes than 24 m at the same
+            // image quality (the `stream_bench` example in the render crate).
+            near_lod0_m: 12.0,
             center_lod0_m: 1000.0,
             offscreen_keep_m: 12.0,
             allow_fade_cuts: false,
-            // The host starts at most four decoders and requests only for idle workers.
-            max_in_flight: 4,
+            // The host starts at most eight decoders and requests only for idle workers.
+            max_in_flight: 8,
             // Keep explicitly preloaded chunks available for the lifetime of this level.
             cache_chunks: if retain_preloaded_chunks {
                 metas.len()
@@ -238,6 +320,9 @@ impl Viewer {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
+                // Gameplay is GPU-bound (the splat draw and sort): on a machine with two GPUs ask for the faster one.
+                // A single-GPU machine gets the same adapter either way.
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 ..Default::default()
             })
             .await
@@ -279,7 +364,9 @@ impl Viewer {
             Err(error) => return Err(js_error(error)),
         };
         let gpu_timers = if gpu_timing_requested {
-            (0..6).filter_map(|_| GpuFrameTimer::new(&device)).collect()
+            (0..GPU_TIMER_SLOTS)
+                .filter_map(|_| GpuFrameTimer::new(&device))
+                .collect()
         } else {
             Vec::new()
         };
@@ -322,7 +409,7 @@ impl Viewer {
         let impacts = ImpactRenderer::new(&device, postprocess::SCENE_FORMAT);
         let pipelines = Pipelines::new(&device, postprocess::SCENE_FORMAT).map_err(js_error)?;
         let rows = stream.palette_texture_rows(device.limits().max_texture_dimension_2d);
-        let pool = scene::pool_with_centroid_rows(
+        let pool = scene::pool_for_level(
             &device,
             &queue,
             &pipelines,
@@ -405,6 +492,11 @@ impl Viewer {
             last_frame_timing: None,
             gpu_timing_requested,
             gpu_timers,
+            chunk_metas: metas,
+            streaming: None,
+            published_viewport: Default::default(),
+            line_layers: Default::default(),
+            voxels: None,
         })
     }
 
@@ -865,6 +957,7 @@ impl Viewer {
         } else {
             None
         };
+        self.pump_chunks();
         let now = Duration::try_from_secs_f64(now_ms / 1000.0).map_err(js_error)?;
         let pending_frames = self.gpu_frames.count();
         let resizing = self.pending_resize.is_some() || self.pending_render_size.is_some();
@@ -1126,6 +1219,14 @@ impl Viewer {
         // Gaussian colour is blended without depth writes. Generate a depth
         // surface only while impacts exist so marks and smoke respect occlusion.
         if !self.menu_visible && !self.impacts.is_empty() {
+            // Only splats no farther than the farthest impact can occlude one; the rest are left out of the prepass.
+            self.pool.prepare_depth_range(
+                &self.queue,
+                &mut encoder,
+                &view,
+                &view.model,
+                self.impacts.far_view_depth(&view.view),
+            );
             {
                 let mut pass = scene::depth_pass(&mut encoder, &self.depth, "impact splat depth");
                 self.pool.draw_depth(&mut pass, &self.pipelines);
@@ -1309,49 +1410,30 @@ impl Viewer {
         self.voxel_debug.clear();
     }
 
-    /// Chunk folders requested for currently idle workers, as JSON `[file, folder]` pairs.
-    pub fn requests(&mut self, available: usize) -> String {
-        serde_json::to_string(&self.stream.requests_up_to(available))
-            .unwrap_or_else(|_| "[]".into())
-    }
-
-    /// Validate and insert a chunk decoded by the browser's asset worker.
-    pub fn insert_decoded_chunk(
+    /// Start decoding level chunks on `workers` Web Workers (`worker_url` is the bootstrap that loads this module).
+    /// From now on each `frame` inserts finished chunks within a time budget and requests more for idle workers.
+    pub fn start_chunk_streaming(
         &mut self,
-        file: usize,
-        metadata: Vec<u8>,
-        dimensions: Vec<u32>,
-        pixels: Array,
+        base: String,
+        worker_url: String,
+        single: bool,
+        workers: u32,
     ) -> Result<(), JsValue> {
-        if dimensions.len() != sog::streams().len() * 2
-            || pixels.length() as usize != sog::streams().len()
-        {
-            return Err(js_error("incorrect decoded chunk stream count"));
-        }
-        let meta = sog::parse_meta_json(&metadata).map_err(js_error)?;
-        if !self.stream.accepts_chunk_meta(file, &meta) {
-            return Err(js_error("chunk metadata does not match the selected level"));
-        }
-        let mut staged = StagedChunk::new(file, meta);
-        for index in 0..sog::streams().len() {
-            let rgba = Uint8Array::new(&pixels.get(index as u32)).to_vec();
-            staged
-                .push(
-                    index,
-                    dimensions[index * 2],
-                    dimensions[index * 2 + 1],
-                    rgba,
-                )
-                .map_err(js_error)?;
-        }
-        let (file, bundle) = staged.finish().map_err(js_error)?;
-        self.stream.insert(file, bundle);
+        self.streaming = Some(chunks::ChunkStreaming::new(
+            &base,
+            &worker_url,
+            single,
+            workers,
+        )?);
         Ok(())
     }
 
-    /// Report a fetch or decode failure so the streamer can retry it.
-    pub fn chunk_failed(&mut self, file: usize) {
-        self.stream.failed(file);
+    /// Insert the chunks decoded before the level started (`preload_level_chunks`).
+    pub fn insert_preloaded_chunks(&mut self, preloaded: PreloadedChunks) -> Result<(), JsValue> {
+        for (file, chunk) in preloaded.chunks {
+            self.insert_reply(file, &chunk)?;
+        }
+        Ok(())
     }
 
     /// Small diagnostic snapshot for the host UI. Submitted frames are not display-present feedback.
@@ -1385,6 +1467,9 @@ impl Viewer {
         status["display"] = serde_json::json!({
             "render": [self.render_size.0, self.render_size.1],
             "viewport": [self.config.width, self.config.height],
+        });
+        status["decoders"] = self.streaming.as_ref().map_or(serde_json::Value::Null, |s| {
+            serde_json::json!({"total": s.pool.size(), "available": s.pool.idle(), "waiting": s.ready.len()})
         });
         status.to_string()
     }
@@ -1565,6 +1650,27 @@ impl DecodedSkybox {
         std::mem::take(&mut self.rgba16f)
     }
 }
+/// Choose indirect (`true`, the default) or full-prefix direct splat draws. The preview page exposes `false` as
+/// `?indirect_draw=0`, a fallback for a GPU or browser where indirect draws misbehave.
+#[wasm_bindgen]
+pub fn set_indirect_draw(enabled: bool) {
+    countersplat_render::scene::set_indirect_draw(enabled);
+}
+
+/// Compact the splats in view before the depth sort (`true`, the default) or sort every slot. The picture is the
+/// same; the preview page exposes `false` as `?sort_compaction=0` for A/B timing.
+#[wasm_bindgen]
+pub fn set_sort_compaction(enabled: bool) {
+    countersplat_render::sort::set_sort_compaction(enabled);
+}
+
+/// Leave out of the sort and draw the splats the vertex stage would discard for their footprint (`true`, the
+/// default). The picture is the same; the preview page exposes `false` as `?footprint_cull=0` for A/B timing.
+#[wasm_bindgen]
+pub fn set_footprint_cull(enabled: bool) {
+    countersplat_render::sort::set_footprint_cull(enabled);
+}
+
 /// Decode a Radiance HDR panorama and convert it to unrotated cube faces off the render thread.
 #[wasm_bindgen]
 pub fn decode_skybox_hdr(bytes: Vec<u8>, face_size: u32) -> Result<DecodedSkybox, JsValue> {

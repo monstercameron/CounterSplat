@@ -21,6 +21,7 @@ use crate::sog::{self, Bundle, Meta};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod selection;
+mod simd;
 mod spatial;
 mod types;
 mod upload;
@@ -512,7 +513,8 @@ impl LevelStream {
             )),
             DrawRegion::Radial => None,
         };
-        let mut budget = i64::from(self.settings.capacity) * SELECT_SHARE / 100;
+        let mut budget =
+            i64::from(self.settings.capacity) * i64::from(self.settings.select_share_percent) / 100;
         self.selection.clear();
         // The octree indexes the level regions; active IDs are also revisited so leaving regions can fade out.
         self.candidates.clear();

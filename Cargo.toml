@@ -52,3 +52,9 @@ zip = { version = "2", default-features = false }
 wgpu = "30"
 pollster = "0.4"
 rapier3d = "0.36.1"
+
+# Release builds favour smaller, faster-starting code: the browser host downloads
+# and compiles this WebAssembly module on every launch.
+[profile.release]
+lto = "thin"
+codegen-units = 1

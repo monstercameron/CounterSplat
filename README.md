@@ -311,9 +311,10 @@ see the command usage in [apps/viewer/src/main.rs](apps/viewer/src/main.rs).
 cargo test --workspace --locked
 python scripts/test_preview.py
 node scripts/test_lua_runtime.mjs
-node scripts/test_voxel_runtime.mjs
-node scripts/test_line_layers.mjs
 ```
+
+Browser host logic is Rust, so its tests (chunk streaming, collision coordination, the level map, audio mixing,
+profiling) run with `cargo test`; the remaining JavaScript test covers the wasmoon Lua bridge.
 
 GPU tests use an available compatible adapter and report when they must skip.
 The dependency-boundary check is `python scripts/check_boundaries.py`. In

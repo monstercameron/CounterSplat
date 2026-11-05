@@ -3,6 +3,14 @@
 //! A host owns assets separately from scene state. Components reference opaque asset IDs rather
 //! than filesystem paths or GPU objects, so snapshots can cross subsystem and scripting boundaries.
 mod camera;
+pub mod asset_policy;
+pub mod audio_mix;
+pub mod display;
+pub mod first_person_frames;
+pub mod host_preferences;
+pub mod line_layers;
+pub mod minimap;
+pub mod voxel_host;
 mod camera_controller;
 mod image_correction;
 mod level;

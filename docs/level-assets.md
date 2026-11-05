@@ -28,7 +28,7 @@ retention boundary, a short delay, and complementary fades keep transitions from
 In automatic mode, regions intersecting the central half of the camera view request LOD 0 first; nearby visible
 regions also request it directly. This preference remains subject to available source data, asynchronous loading,
 and the GPU pool: when all requested detail cannot fit, more distant or peripheral regions may use coarser LODs.
-The browser's default pool holds three million splats and reserves part of it for transitions. Fragmented free
+The scene's `resources.preview.capacity` (three million splats) is the pool's floor; a streamed level's pool is sized to about 70% of its finest-detail splat count, up to `resources.preview.max_capacity` (six million), which bounds GPU memory: a pool costs about 49 bytes a splat (measured from the GPU allocator; 76 before the sorter reused its scratch buffers and a level without spherical harmonics stopped allocating per-slot SH labels), so six million slots is about 280 MiB. Part of the pool is reserved for transitions. In a dense scan this matters: the 17-million-splat Nelson Ghost Town has 8.8 million finest-detail splats in one 50 m block, and growing the pool from 3 to 6 million raised image fidelity by about 2 dB against a full-detail reference and cut LOD swaps by a third. Fragmented free
 ranges are compacted incrementally so a centered fine-detail region is not blocked by scattered holes. The footer
 shows how many regions currently have LOD 0 resident. A manual LOD request overrides the automatic preference.
 

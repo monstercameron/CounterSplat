@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {Worker} from 'node:worker_threads';
-import {LuaScene, EventChannels} from '../preview/lua_runtime.js';
-import {GAMEPLAY_INPUT_CHANNELS, GAMEPLAY_EVENT_CHANNELS} from '../preview/gameplay_events.js';
+import {LuaScene, EventChannels, INIT_SCRIPT_DEADLINE_MS} from '../preview/lua_runtime.js';
+// The channel order is defined in Rust (countersplat_scene::host_preferences); mirrored here for the Lua tests.
+const GAMEPLAY_INPUT_CHANNELS = ['input.key', 'input.mouse_delta', 'input.mouse_button', 'input.reset'];
+const GAMEPLAY_EVENT_CHANNELS = ['ui.action', 'editor.entity_selected', 'physics.ready', 'physics.ground_result',
+  'physics.clearance_result', 'physics.trace_result', 'physics.motion_resolved', 'physics.motion_error',
+  'physics.collision', 'physics.error', 'combat.reset', 'weapon.trigger', 'weapon.aim', 'weapon.reload',
+  'weapon.equip', 'weapon.optic_set', 'weapon.mode', 'weapon.hit', 'weapon.die', 'weapon.reset', 'weapon.posture'];
 
 const require = createRequire(import.meta.url);
 const {LuaFactory} = require('../third_party/wasmoon/index.js');
@@ -721,9 +726,10 @@ try {
       get() { return () => {}; },
     },
     doStringSync() {
-      assert.equal(deadline - clock, 500);
+      assert.equal(deadline - clock, INIT_SCRIPT_DEADLINE_MS);
       starts++;
-      clock += 200;
+      // Each script takes most of its own deadline; together they take several times it.
+      clock += INIT_SCRIPT_DEADLINE_MS * 3 / 4;
     },
   };
   const fake = await LuaScene.create({async createEngine() { return fakeVm; }}, world, 'gameplay', 'engine', ['one', 'two']);

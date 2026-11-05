@@ -111,35 +111,54 @@ pub(super) fn encode_upload_into(
     resize(&mut encoded.centres, n, [0.0; 3]);
     let label_base = palette.map(|p| 64 + p as u32 * PALETTE_CENTROIDS);
     let available = n.min(src_l.len() / 4);
-    for i in 0..available {
-        let s = i * 4;
-        for c in 0..3 {
-            let q = f32::from(src_l[s + c]) + 256.0 * f32::from(src_u[s + c]);
-            let v = (q * factor[c].0 + factor[c].1).round().clamp(0.0, 65535.0);
-            encoded.centres[i][c] = decoded_shared_centre(shared, c, v, lookup);
-        }
-        encoded.scales[s..s + 4].copy_from_slice(&[
-            remap.scales[src_s[s] as usize],
-            remap.scales[src_s[s + 1] as usize],
-            remap.scales[src_s[s + 2] as usize],
-            src_s[s + 3],
-        ]);
-        encoded.sh0[s..s + 4].copy_from_slice(&[
-            remap.sh0[src_c[s] as usize],
-            remap.sh0[src_c[s + 1] as usize],
-            remap.sh0[src_c[s + 2] as usize],
-            src_c[s + 3],
-        ]);
-        let label = label_base.map_or(0, |base| {
-            base + u32::from(src_n[s]) + 256 * u32::from(src_n[s + 1])
-        });
-        encoded.labels[s..s + 4].copy_from_slice(&[
-            (label & 255) as u8,
-            ((label >> 8) & 255) as u8,
-            (label >> 16) as u8,
-            255,
+    let a4 = available * 4;
+    // Byte-table remaps and labels are straight loops over fixed 4-byte texels with no bounds checks; LLVM
+    // vectorises the label arithmetic (NEON / wasm simd128) and unrolls the 256-entry table gathers.
+    for (dst, src) in encoded.scales[..a4]
+        .chunks_exact_mut(4)
+        .zip(src_s[..a4].chunks_exact(4))
+    {
+        dst.copy_from_slice(&[
+            remap.scales[src[0] as usize],
+            remap.scales[src[1] as usize],
+            remap.scales[src[2] as usize],
+            src[3],
         ]);
     }
+    for (dst, src) in encoded.sh0[..a4]
+        .chunks_exact_mut(4)
+        .zip(src_c[..a4].chunks_exact(4))
+    {
+        dst.copy_from_slice(&[
+            remap.sh0[src[0] as usize],
+            remap.sh0[src[1] as usize],
+            remap.sh0[src[2] as usize],
+            src[3],
+        ]);
+    }
+    // `(base + n0 + 256·n1) & 0xFFFFFF` in the low three bytes, opaque alpha in the fourth. Without a palette the
+    // label stream may be empty (no SH bands) and is never read.
+    if let Some(base) = label_base {
+        for (dst, src) in encoded.labels[..a4]
+            .chunks_exact_mut(4)
+            .zip(src_n[..a4].chunks_exact(4))
+        {
+            let label = base + u32::from(src[0]) + 256 * u32::from(src[1]);
+            dst.copy_from_slice(&((label & 0x00FF_FFFF) | 0xFF00_0000).to_le_bytes());
+        }
+    } else {
+        for dst in encoded.labels[..a4].chunks_exact_mut(4) {
+            dst.copy_from_slice(&[0, 0, 0, 255]);
+        }
+    }
+    super::simd::centres(
+        &mut encoded.centres[..available],
+        src_l,
+        src_u,
+        &factor,
+        shared,
+        lookup,
+    );
     // A short means stream leaves zeroed slots, including after a larger
     // previous upload reused these buffers.
     encoded.centres[available..].fill([0.0; 3]);

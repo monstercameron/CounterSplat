@@ -301,6 +301,8 @@ impl State {
         let surface = instance.create_surface(window.clone())?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
+            // The splat draw and sort are GPU-bound: prefer the faster GPU where there are two.
+            power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
         }))?;
         let limits = adapter.limits();

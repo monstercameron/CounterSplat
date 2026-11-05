@@ -83,7 +83,7 @@ frame-aligned samples are available in `data-stack-trace` on the same element,
 or through the **Download frame trace** link after capture.
 
 This is an opt-in local diagnostic: it does not send a trace anywhere. When
-the adapter supports timestamp queries, the report also contains up to six GPU
+the adapter supports timestamp queries, the report also contains up to sixty GPU
 measurements, with the median completed sample aligned to the selected CPU
 frame. Named GPU spans cover splat preparation/sorting, the scene draw,
 first-person/post-processing, and UI draw in the main command buffer. They
@@ -206,7 +206,11 @@ Fixed-tick systems and event dispatch use an approximate ten-million-instruction
 budget, checked every 1,000 Lua instructions. It resets for each host call and
 does not count time spent waiting inside JavaScript or Rust callbacks. A runaway
 script raises an error even through protected calls. Scene initialization keeps
-its separate per-script wall-clock deadline.
+its separate per-script wall-clock deadline: 2 seconds each (`INIT_SCRIPT_DEADLINE_MS`
+in `preview/lua_runtime.js`). The heaviest init scripts normally take 160–210 ms and
+the same script varied from 164 to over 500 ms between identical launches, so the
+former 500 ms deadline failed whole level launches at random with "thread timeout
+exceeded". A script that takes over 500 ms is reported in the console.
 
 Run `node scripts/benchmark_lua_tick.mjs` to compare the overhead of the
 browser Lua tick and its ECS bridge using a small fixture.

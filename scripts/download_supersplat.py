@@ -36,10 +36,11 @@ SCENES = {
     "9cbaba42": ("Fort Clatsop", "virtualworldtours", None),
     "b0ff3cb9": ("El Romeral", "getarq", None),
     "fb3b5ed5": ("Nelson Ghost Town", "tosolini", "CC BY 4.0"),
+    "942c5f7e": ("Sunlit Office Lobby, Multi-level", "unknown", None),
 }
 # Finish smaller scenes before the 123-million-splat greenhouse.
 ORDER = ["58d333ae", "9f0f903a", "947dbaec", "b8262a29", "ff1a8800", "9649b9e2", "541bac0c",
-         "fb3b5ed5", "b0ff3cb9", "9cbaba42", "fd3083e4"]
+         "fb3b5ed5", "b0ff3cb9", "9cbaba42", "fd3083e4", "942c5f7e"]
 
 
 def relative_path(value):

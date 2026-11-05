@@ -36,6 +36,19 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Splats per instance (`GSplatResourceBase.instanceSize` in the engine).
 pub const INSTANCE_SIZE: u32 = 128;
+/// Indices per splat: two triangles over the four quad corners.
+pub const INDICES_PER_SPLAT: u32 = 6;
+
+/// Whether scene draws use the GPU-written indirect arguments (the default) or draw the whole active prefix.
+static INDIRECT_DRAW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Chooses how scenes are drawn from now on. The default draws only the splats the depth pass found in view,
+/// through `draw_indexed_indirect`. Passing `false` draws every active slot and lets the vertex stage reject the
+/// invisible ones: slower, but it avoids indirect draws entirely, for a backend where those misbehave (a blank frame
+/// has been seen on one development machine).
+pub fn set_indirect_draw(enabled: bool) {
+    INDIRECT_DRAW.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
 // Reuse up to roughly 3 MiB of retired-centre data per scene. Unusually large
 // releases use a temporary buffer so they do not permanently enlarge the cache.
 const RELEASE_SCRATCH_SPLATS: usize = 262_144;
@@ -101,6 +114,7 @@ impl Pipelines {
             layouts,
             bindings,
         };
+
         Ok(Self { color, depth })
     }
 }
@@ -147,6 +161,9 @@ pub struct GsplatScene {
     pub bounds: ([f32; 3], [f32; 3]),
     /// The splat textures by stream name, kept so a pool can be written in place.
     textures: BTreeMap<String, wgpu::Texture>,
+    /// Whether `sh_labels` has a texel per slot. A pool for a level without SH keeps a 1x1 stand-in instead (see
+    /// `pool_for_level`), which uploads and compaction must leave alone.
+    per_slot_sh_labels: bool,
     centers: wgpu::Buffer,
     release_scratch: std::cell::RefCell<Vec<[f32; 3]>>,
     lod_label_scratch: std::cell::RefCell<Vec<u32>>,
@@ -156,6 +173,9 @@ pub struct GsplatScene {
     frame_effects: std::cell::RefCell<[f32; 12]>,
     io_metrics: std::cell::RefCell<crate::metrics::Metrics>,
 }
+
+/// The vertex stage's `minPixelSize`: splats whose footprint is smaller are discarded (and culled by the sort).
+const MIN_PIXEL_SIZE: f32 = 2.0;
 
 /// Uploads the bundle's textures, codebook and centres for `pipelines`. In the depth pass, fragments with alpha
 /// below `depth_alpha_clip` are discarded, so it sets how solid a splat must be to hide what is behind it.
@@ -196,16 +216,61 @@ fn build_inner(
         })
         .collect();
     let width = bundle.textures["means_l"].width;
+    let centres = sog::centres(bundle);
     assemble(
         device,
         queue,
         pipelines,
         &bundle.meta,
         textures,
-        &sog::centres(bundle),
+        Centres::Known(&centres),
         width,
         depth_alpha_clip,
+        true,
     )
+}
+
+/// Fills `buffer` (which needs `COPY_DST`) with one repeated 4-byte value using GPU copies from a 1 MiB pattern.
+///
+/// `write_buffer`, and a buffer mapped at creation, both stage a full second copy in memory until the first submit
+/// completes (16 bytes a slot for a pool's centres and fade, a third of its steady size); copying from a small
+/// pattern keeps the peak at the buffer's own size.
+fn fill_buffer(device: &wgpu::Device, queue: &wgpu::Queue, buffer: &wgpu::Buffer, value: [u8; 4]) {
+    const CHUNK: u64 = 1 << 20;
+    let size = buffer.size();
+    let chunk = CHUNK.min(size);
+    let source = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("fill pattern"),
+        size: chunk,
+        usage: wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: true,
+    });
+    let pattern: Vec<u8> = value.iter().copied().cycle().take(chunk as usize).collect();
+    source
+        .slice(..)
+        .get_mapped_range_mut()
+        .expect("pattern buffer is mapped at creation")
+        .copy_from_slice(&pattern);
+    source.unmap();
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("fill buffer"),
+    });
+    let mut at = 0;
+    while at < size {
+        let n = chunk.min(size - at);
+        encoder.copy_buffer_to_buffer(&source, 0, buffer, at, n);
+        at += n;
+    }
+    queue.submit(Some(encoder.finish()));
+}
+
+/// Where a scene's splat centres come from.
+enum Centres<'a> {
+    /// One centre per slot, decoded from the asset.
+    Known(&'a [[f32; 3]]),
+    /// Every slot empty (a streaming pool): the centres are NaN, which the sort culls. Built straight into GPU memory,
+    /// without a CPU copy or a staging buffer.
+    Empty,
 }
 
 /// Width of a streaming pool's per-splat textures.
@@ -247,18 +312,68 @@ pub fn pool_with_centroid_rows(
     depth_alpha_clip: f32,
     centroid_rows: u32,
 ) -> Result<GsplatScene> {
+    pool_inner(
+        device,
+        queue,
+        pipelines,
+        meta,
+        capacity,
+        depth_alpha_clip,
+        centroid_rows,
+        true,
+    )
+}
+
+/// A pool for a level whose SH palette rows are known (`LevelStream::palette_texture_rows`). When the level has no
+/// SH data (`centroid_rows` is 1, the reserved zero row alone) the per-slot SH label texture, 4 bytes a slot that
+/// would stay zero, is replaced by a 1x1 stand-in: a 6-million-slot pool saves 23 MiB. Everything else matches
+/// `pool_with_centroid_rows`.
+#[allow(clippy::too_many_arguments)]
+pub fn pool_for_level(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pipelines: &Pipelines,
+    meta: &sog::Meta,
+    capacity: u32,
+    depth_alpha_clip: f32,
+    centroid_rows: u32,
+) -> Result<GsplatScene> {
+    pool_inner(
+        device,
+        queue,
+        pipelines,
+        meta,
+        capacity,
+        depth_alpha_clip,
+        centroid_rows,
+        centroid_rows > 1,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pool_inner(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pipelines: &Pipelines,
+    meta: &sog::Meta,
+    capacity: u32,
+    depth_alpha_clip: f32,
+    centroid_rows: u32,
+    per_slot_sh_labels: bool,
+) -> Result<GsplatScene> {
     let rows = capacity.div_ceil(POOL_WIDTH);
     let mut textures: BTreeMap<String, wgpu::Texture> = ["quats", "scales", "sh0", "sh_labels"]
         .iter()
         .map(|name| {
+            let stand_in = *name == "sh_labels" && !per_slot_sh_labels;
             (
                 name.to_string(),
                 upload_texture(
                     device,
                     queue,
                     name,
-                    POOL_WIDTH,
-                    rows,
+                    if stand_in { 1 } else { POOL_WIDTH },
+                    if stand_in { 1 } else { rows },
                     wgpu::TextureFormat::Rgba8Unorm,
                     None,
                 ),
@@ -283,16 +398,16 @@ pub fn pool_with_centroid_rows(
         count: rows * POOL_WIDTH,
         ..meta.clone()
     };
-    let empty = vec![[f32::NAN; 3]; meta.count as usize];
     assemble(
         device,
         queue,
         pipelines,
         &meta,
         textures,
-        &empty,
+        Centres::Empty,
         POOL_WIDTH,
         depth_alpha_clip,
+        per_slot_sh_labels,
     )
 }
 
@@ -304,9 +419,10 @@ fn assemble(
     pipelines: &Pipelines,
     meta: &sog::Meta,
     textures: BTreeMap<String, wgpu::Texture>,
-    centres: &[[f32; 3]],
+    centres: Centres<'_>,
     splat_width: u32,
     depth_alpha_clip: f32,
+    per_slot_sh_labels: bool,
 ) -> Result<GsplatScene> {
     let count = meta.count;
     let mut views: BTreeMap<String, wgpu::TextureView> = textures
@@ -385,23 +501,28 @@ fn assemble(
             buffers.insert(b.name.clone(), buffer);
         }
     }
-    let order = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("splatOrder"),
-        size: u64::from(count.max(1)) * 4,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    buffers.insert("splatOrder".into(), order);
-
+    // A decoded asset's centres go in while the buffer is mapped; a pool's are all NaN, filled on the GPU.
     let centers = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("splat centres"),
         size: u64::from(count.max(1)) * 12,
         usage: wgpu::BufferUsages::STORAGE
             | wgpu::BufferUsages::COPY_DST
             | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
+        mapped_at_creation: matches!(centres, Centres::Known(_)),
     });
-    queue.write_buffer(&centers, 0, centres_le_bytes(centres).as_ref());
+    match &centres {
+        Centres::Known(known) => {
+            let bytes = centres_le_bytes(known);
+            centers
+                .slice(..)
+                .get_mapped_range_mut()
+                .expect("centres buffer is mapped at creation")
+                .slice(..bytes.len())
+                .copy_from_slice(bytes.as_ref());
+            centers.unmap();
+        }
+        Centres::Empty => fill_buffer(device, queue, &centers, f32::NAN.to_le_bytes()),
+    }
     // Per-slot opacity for crossfades (see the scene shader): whole until a sort writes otherwise.
     let fade = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("splatFade"),
@@ -409,13 +530,29 @@ fn assemble(
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    queue.write_buffer(
+    fill_buffer(device, queue, &fade, 1.0f32.to_le_bytes());
+    // Count the splats in view so the draw can cover only that prefix of the sorted order.
+    // With indirect draws the sorter compacts the splats in view before sorting; the fallback sorts every slot.
+    // The key pass reads the same scale texture and codebook as the vertex stage, to leave out the splats that stage
+    // would discard for their footprint (`sort::Footprint`).
+    let sorter = DepthSorter::with_visibility_count(
+        device,
+        queue,
+        count,
+        &centers,
         &fade,
-        0,
-        f32s_le_bytes(&vec![1.0; count.max(1) as usize]).as_ref(),
+        INDIRECT_DRAW.load(std::sync::atomic::Ordering::Relaxed),
+        Some(crate::sort::SplatTextures {
+            scales: &views["scales"],
+            codebook: &views["sogCodebook"],
+            width: splat_width,
+        }),
     );
-    let sorter = DepthSorter::new_for_direct_draw(device, queue, count, &centers, &fade);
     buffers.insert("splatFade".into(), fade);
+    // The draw reads the sorter's own result buffer rather than a copy of it: one fewer buffer of `count` indices,
+    // and one fewer copy of them every sort. The order is valid until the next sort, which runs before the draw
+    // each frame.
+    buffers.insert("splatOrder".into(), sorter.indices_buffer().clone());
     // Per-slot level of detail (plus one; 0 for splats not from a streamed level) and the LOD tint switch.
     let lod = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("splatLod"),
@@ -432,22 +569,46 @@ fn assemble(
     });
     buffers.insert("splatDebug".into(), debug);
     buffers.insert("splatCenters".into(), centers.clone());
+    // Where the depth prepass starts in the sorted order (`DepthSorter::encode_depth_range`); always 0 without a range.
+    let depth_start = sorter.depth_start_buffer().cloned().unwrap_or_else(|| {
+        let zero = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("splatDepthStart (whole order)"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&zero, 0, &0u32.to_le_bytes());
+        zero
+    });
+    buffers.insert("splatDepthStart".into(), depth_start);
+    // The draw stops at the sort's visible count: the GPU's own count for a compacting sort, all ones otherwise.
+    let visible = if sorter.counts_visible() {
+        sorter.visible_buffer().clone()
+    } else {
+        let all = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("splatVisible (every slot)"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&all, 0, &u32::MAX.to_le_bytes());
+        all
+    };
+    buffers.insert("splatVisible".into(), visible);
     let scene_buffers = Buffers(&buffers);
     scene_buffers.set(queue, "splatTextureSize", &u32s(&[splat_width]));
     scene_buffers.set(queue, "numSplats", &u32s(&[count]));
-    scene_buffers.set(queue, "minPixelSize", &f32s(&[2.0]));
+    scene_buffers.set(queue, "minPixelSize", &f32s(&[MIN_PIXEL_SIZE]));
     scene_buffers.set(queue, "alphaClipForward", &f32s(&[1.0 / 255.0]));
     scene_buffers.set(queue, "alphaClip", &f32s(&[depth_alpha_clip]));
     scene_buffers.set(queue, "blueNoiseJitter", &f32s(&[0.0, 0.0, 0.0, 0.0]));
 
-    let groups = |variant: &Variant| -> Vec<wgpu::BindGroup> {
-        variant
-            .layouts
+    let groups = |layouts: &[wgpu::BindGroupLayout], bindings: &[Binding]| -> Vec<wgpu::BindGroup> {
+        layouts
             .iter()
             .enumerate()
             .map(|(group, layout)| {
-                let entries: Vec<wgpu::BindGroupEntry> = variant
-                    .bindings
+                let entries: Vec<wgpu::BindGroupEntry> = bindings
                     .iter()
                     .filter(|b| b.group == group as u32)
                     .map(|b| {
@@ -477,8 +638,8 @@ fn assemble(
             })
             .collect()
     };
-    let color_groups = groups(&pipelines.color);
-    let depth_groups = groups(&pipelines.depth);
+    let color_groups = groups(&pipelines.color.layouts, &pipelines.color.bindings);
+    let depth_groups = groups(&pipelines.depth.layouts, &pipelines.depth.bindings);
 
     let quad_data = quad_vertices();
     let quad = device.create_buffer(&wgpu::BufferDescriptor {
@@ -516,9 +677,16 @@ fn assemble(
         quad_indices,
         count,
         sorter,
-        centre: sog::mean_centre(centres),
-        bounds: robust_bounds(centres),
+        centre: match &centres {
+            Centres::Known(known) => sog::mean_centre(known),
+            Centres::Empty => [0.0; 3],
+        },
+        bounds: match &centres {
+            Centres::Known(known) => robust_bounds(known),
+            Centres::Empty => ([0.0; 3], [0.0; 3]),
+        },
         textures,
+        per_slot_sh_labels,
         centers,
         release_scratch: Default::default(),
         lod_label_scratch: Default::default(),
@@ -549,6 +717,9 @@ impl GsplatScene {
         );
         let count = centres.len() as u32;
         for (name, texels) in streams {
+            if *name == "sh_labels" && !self.per_slot_sh_labels {
+                continue;
+            }
             if let Some(texture) = self.textures.get(*name) {
                 write_slots(queue, texture, self.splat_width, start, count, texels);
             }
@@ -601,6 +772,9 @@ impl GsplatScene {
         // Copy single rows so differently aligned source and destination ranges can share
         // the same tightly packed scratch buffer without row-stride padding.
         for name in ["quats", "scales", "sh0", "sh_labels"] {
+            if name == "sh_labels" && !self.per_slot_sh_labels {
+                continue;
+            }
             let texture = &self.textures[name];
             for (start, into_scratch) in [(from, true), (to, false)] {
                 let (mut slot, mut offset) = (start, 0u32);
@@ -853,6 +1027,26 @@ impl GsplatScene {
         self.count
     }
 
+    /// Splats the last sort found in view, rounded up to whole draw instances (128 splats); for benchmarks. Waits
+    /// for the GPU.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn drawn_splats(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> u32 {
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("draw args readback"),
+            size: 20,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_buffer(self.sorter.draw_args(), 0, &readback, 0, 20);
+        queue.submit(Some(encoder.finish()));
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+        let data = slice.get_mapped_range().expect("mapped draw args");
+        u32::from_le_bytes([data[4], data[5], data[6], data[7]]) * INSTANCE_SIZE
+    }
+
     /// Writes this frame's matrices and records the depth sort. Call before any pass that draws the scene.
     pub fn prepare(
         &self,
@@ -893,6 +1087,15 @@ impl GsplatScene {
         );
         let view_model = camera::mul(&view.view, model);
         let clip = camera::mul(&view.projection, &view_model);
+        let effects = *self.frame_effects.borrow();
+        self.sorter.set_footprint(Some(crate::sort::Footprint {
+            projection: view.projection,
+            viewport: [w, h],
+            min_pixel_size: MIN_PIXEL_SIZE,
+            focus_distance: effects[1],
+            blur_scale: effects[2],
+            motion_blur: effects[3] > 0.0,
+        }));
         self.sorter.encode(
             queue,
             encoder,
@@ -901,7 +1104,29 @@ impl GsplatScene {
             cutout.map(|c| (c, &view.view, model)),
             &self.buffers["splatOrder"],
         );
+        // Until a host limits it, the depth prepass covers every splat in view.
+        self.sorter.encode_depth_range(queue, encoder, None);
     }
+
+    /// Limits this frame's depth prepass (`draw_depth`) to the splats no farther than `far_depth` (view-space distance
+    /// along the view direction, scene units): enough for depth tests of fragments that are themselves no farther, such
+    /// as impact decals and smoke. Call after `prepare` and before the prepass. The depth buffer then differs only
+    /// where it is farther than `far_depth`, which such a test cannot tell apart. `None` keeps every splat.
+    pub fn prepare_depth_range(
+        &self,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &View,
+        model: &Mat4,
+        far_depth: Option<f32>,
+    ) {
+        if let Some(far_depth) = far_depth.filter(|depth| depth.is_finite()) {
+            let view_model = camera::mul(&view.view, model);
+            self.sorter
+                .encode_depth_range(queue, encoder, Some((&view_model, far_depth)));
+        }
+    }
+
 
     /// Draws the sorted splats, blended, into a pass with a colour target and a depth attachment.
     pub fn draw_color(&self, pass: &mut wgpu::RenderPass<'_>, pipelines: &Pipelines) {
@@ -910,7 +1135,12 @@ impl GsplatScene {
 
     /// Writes the splats' depth into a depth-only pass.
     pub fn draw_depth(&self, pass: &mut wgpu::RenderPass<'_>, pipelines: &Pipelines) {
-        self.draw(pass, &pipelines.depth.pipeline, &self.depth_groups);
+        self.draw_with(
+            pass,
+            &pipelines.depth.pipeline,
+            &self.depth_groups,
+            self.sorter.depth_draw_args(),
+        );
     }
 
     fn draw(
@@ -918,6 +1148,17 @@ impl GsplatScene {
         pass: &mut wgpu::RenderPass<'_>,
         pipeline: &wgpu::RenderPipeline,
         groups: &[wgpu::BindGroup],
+    ) {
+        self.draw_with(pass, pipeline, groups, None);
+    }
+
+    /// `args`: indirect arguments for a part of the order (the depth prepass's range) instead of every splat in view.
+    fn draw_with(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        pipeline: &wgpu::RenderPipeline,
+        groups: &[wgpu::BindGroup],
+        args: Option<&wgpu::Buffer>,
     ) {
         if self.count == 0 {
             return;
@@ -928,10 +1169,16 @@ impl GsplatScene {
         }
         pass.set_vertex_buffer(0, self.quad.slice(..));
         pass.set_index_buffer(self.quad_indices.slice(..), wgpu::IndexFormat::Uint16);
-        // Draw the active prefix directly. The sorter puts visible splats first and the vertex shader culls the
-        // remainder. This avoids relying on backend-specific indirect-draw validation while retaining GPU sorting.
-        let instances = self.sorter.active_slots().div_ceil(INSTANCE_SIZE);
-        pass.draw_indexed(0..INSTANCE_SIZE * 6, 0, 0..instances);
+        // The sorter puts the splats in view first and counts them on the GPU (`DepthSorter::draw_args`), so the
+        // draw shades only that prefix: a culled splat never pays the four vertex-shader invocations that decode
+        // and project it. Until the first sort the arguments cover every splat.
+        // A compacting sorter's order is defined only for the splats in view, so it is always drawn indirectly.
+        if self.sorter.counts_visible() {
+            pass.draw_indexed_indirect(args.unwrap_or(self.sorter.draw_args()), 0);
+        } else {
+            let instances = self.sorter.active_slots().div_ceil(INSTANCE_SIZE);
+            pass.draw_indexed(0..INSTANCE_SIZE * INDICES_PER_SPLAT, 0, 0..instances);
+        }
     }
 
     /// Renders this scene alone offscreen (sky, then splats with `view.model`) and reads it back as tightly packed
@@ -1089,6 +1336,63 @@ impl Buffers<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pool for a level without SH keeps a 1x1 stand-in for the per-slot labels. Uploads that carry labels and
+    /// compaction must leave it alone (writing or copying slots into a 1x1 texture is a validation error), and the
+    /// pool must still centre, sort and draw its splats.
+    #[test]
+    fn a_level_pool_without_sh_labels_uploads_moves_sorts_and_draws() {
+        let Some((device, queue)) = crate::try_device() else {
+            return;
+        };
+        let pipelines = Pipelines::new(&device, crate::COLOR_FORMAT).unwrap();
+        let meta = sog::Meta {
+            count: 0,
+            means_mins: [-1.0; 3],
+            means_maxs: [1.0; 3],
+            scales_codebook: (0..256).map(|i| -2.0 - i as f32 * 0.2).collect(),
+            sh0_codebook: vec![1.0; 256],
+            sh_n_codebook: vec![0.0; 256],
+            sh_n_count: 0,
+        };
+        // `centroid_rows == 1` is "no SH anywhere": the labels texture becomes a stand-in.
+        let pool = pool_for_level(&device, &queue, &pipelines, &meta, 4096, 0.5, 1).unwrap();
+        assert!(!pool.per_slot_sh_labels);
+        assert_eq!(pool.textures["sh_labels"].width(), 1);
+        assert_eq!(pool.textures["quats"].width(), POOL_WIDTH);
+
+        let count = 64u32;
+        let centres: Vec<[f32; 3]> = (0..count).map(|i| [i as f32 * 0.01, 0.0, 0.0]).collect();
+        let texel = |value: u8| -> Vec<u8> { vec![value; count as usize * 4] };
+        let (quats, scales, sh0, labels) = (texel(128), texel(40), texel(200), texel(7));
+        // The streamer always sends labels; the pool must skip them rather than write past its 1x1 texture.
+        pool.write_splats(
+            &queue,
+            100,
+            &[
+                ("quats", &quats),
+                ("scales", &scales),
+                ("sh0", &sh0),
+                ("sh_labels", &labels),
+            ],
+            &centres,
+        );
+        pool.move_slots(&queue, 100, 700, count);
+        pool.set_active(&queue, 800);
+
+        let view = View {
+            model: crate::camera::IDENTITY,
+            view: crate::camera::look_at([0.3, 0.0, 3.0], [0.3, 0.0, 0.0], [0.0, 1.0, 0.0]),
+            projection: crate::camera::perspective(60f32.to_radians(), 1.0, 0.05, 100.0),
+            width: 64,
+            height: 64,
+            near: 0.05,
+            far: 100.0,
+        };
+        // Reading back also surfaces any validation error from the draw or the sort's in-place output.
+        let pixels = pool.render_rgba(&device, &queue, &pipelines, &view, None);
+        assert_eq!(pixels.len(), 64 * 64 * 4);
+    }
 
     #[test]
     fn moving_overlapping_slots_preserves_centres_and_all_texture_streams() {

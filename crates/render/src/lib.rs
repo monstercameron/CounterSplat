@@ -114,13 +114,61 @@ pub fn bind_group_layouts(
 }
 
 /// Requests a device on any available adapter, or `None` when no GPU is reachable (e.g. CI).
+///
+/// Tests and benchmarks can pick a particular adapter, to run on more than one driver of the same machine:
+/// `COUNTERSPLAT_ADAPTER` is a case-insensitive part of the adapter's name (`warp` or `basic` for the software
+/// renderer), and `COUNTERSPLAT_BACKEND` is `vulkan`, `dx12` or `gl`. Both must match; with neither set, or with no
+/// match, the default adapter is used. `examples/adapters.rs` lists what is available.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn try_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-    let adapter =
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .ok()?;
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
+    let name = std::env::var("COUNTERSPLAT_ADAPTER")
+        .ok()
+        .map(|n| n.to_lowercase());
+    let backend = std::env::var("COUNTERSPLAT_BACKEND")
+        .ok()
+        .map(|b| b.to_lowercase());
+    let chosen = if name.is_some() || backend.is_some() {
+        pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+            .into_iter()
+            .find(|adapter| {
+                let info = adapter.get_info();
+                let label = info.name.to_lowercase();
+                let name_ok = name.as_deref().is_none_or(|n| {
+                    label.contains(n) || (n == "warp" && label.contains("basic render"))
+                });
+                let backend_ok = backend
+                    .as_deref()
+                    .is_none_or(|b| format!("{:?}", info.backend).to_lowercase() == b);
+                name_ok && backend_ok
+            })
+    } else {
+        None
+    };
+    let adapter = match chosen {
+        Some(adapter) => adapter,
+        None => {
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+                .ok()?
+        }
+    };
+    let required_features = adapter.features() & wanted_features();
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features,
+        ..Default::default()
+    }))
+    .ok()
+}
+
+/// Optional features `try_device` asks for when the adapter has them: `COUNTERSPLAT_TIMESTAMPS=1` requests GPU
+/// timestamp queries (benchmarks' stage timing); nothing otherwise.
+#[cfg(not(target_arch = "wasm32"))]
+fn wanted_features() -> wgpu::Features {
+    if std::env::var("COUNTERSPLAT_TIMESTAMPS").is_ok_and(|v| v == "1") {
+        wgpu::Features::TIMESTAMP_QUERY
+    } else {
+        wgpu::Features::empty()
+    }
 }
 
 /// Format of the scene colour target. The engine's default is RGBA8 with premultiplied alpha.

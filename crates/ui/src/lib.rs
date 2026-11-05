@@ -4,6 +4,7 @@
 //! worker, and send [`UiEvent`] values back. This crate has no ECS, browser, GPU, or Lua dependency.
 //! Coordinates are logical points with a top-left origin; the host supplies pixels-per-point.
 
+pub mod pointer;
 mod timing;
 pub use timing::{FrameCounter, FrameHistory, FrameMeasurement, FrameMeter, FrameUpdate};
 

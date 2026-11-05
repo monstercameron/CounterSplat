@@ -1916,6 +1916,130 @@ fn reused_upload_buffers_match_fresh_allocations_and_clear_short_tails() {
     }
 }
 
+/// The vectorised centre path must match the scalar expression bit for bit, including on blocks whose
+/// intermediates are NaN, negative or negative zero (those fall back to the exact scalar code), and at every
+/// block boundary.
+#[test]
+fn vectorised_centres_match_the_scalar_reference_with_a_lookup_table() {
+    let stream = stream(10_000);
+    let lookup = make_centre_lookup(&stream.shared).unwrap();
+    // (means_mins, means_maxs) of the chunk, relative to the shared range [-1, 1]: ordinary, wider, narrower,
+    // shifted below the shared minimum (negative intermediates), degenerate, NaN, infinite and signed zero.
+    let metas: [([f32; 3], [f32; 3]); 8] = [
+        ([-1.0; 3], [1.0; 3]),
+        ([-2.0; 3], [3.0; 3]),
+        ([-0.5; 3], [0.25; 3]),
+        ([-1.5, -1.0000001, -1.0], [0.5, 1.0, 1.0]),
+        ([0.0; 3], [0.0; 3]),
+        ([f32::NAN, -1.0, -1.0], [1.0; 3]),
+        ([-1.0; 3], [f32::INFINITY, 1.0, 1.0]),
+        ([-0.0, 0.0, -1.0], [1.0; 3]),
+    ];
+    for (mins, maxs) in metas {
+        let mut remap_meta = stream.remaps[0].as_ref().unwrap().meta.clone();
+        remap_meta.means_mins = mins;
+        remap_meta.means_maxs = maxs;
+        let base = stream.remaps[0].as_ref().unwrap();
+        let remap = Remap {
+            meta: remap_meta.clone(),
+            scales: base.scales,
+            sh0: base.sh0,
+            sh_n: base.sh_n,
+        };
+        for count in [0usize, 1, 63, 64, 65, 127, 128, 129, 1000, 4096] {
+            let textures: BTreeMap<_, _> = ["means_l", "means_u", "scales", "sh0", "sh_labels"]
+                .into_iter()
+                .enumerate()
+                .map(|(stream, name)| {
+                    let mut state = stream as u32 + 17 + count as u32;
+                    let rgba = (0..count * 4)
+                        .map(|_| {
+                            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                            (state >> 24) as u8
+                        })
+                        .collect();
+                    (
+                        name,
+                        sog::Texture {
+                            width: count.max(1) as u32,
+                            height: 1,
+                            rgba,
+                        },
+                    )
+                })
+                .collect();
+            let bundle = Bundle {
+                meta: remap_meta.clone(),
+                textures,
+            };
+            let range = Range {
+                file: 0,
+                offset: 0,
+                count: count as u32,
+            };
+            let expected = encode_upload_reference(
+                &bundle,
+                &remap,
+                &stream.shared,
+                range,
+                Some(3),
+                Some(&lookup),
+            );
+            let actual = encode_upload(&bundle, &remap, &stream.shared, range, Some(3), Some(&lookup));
+            assert_eq!(actual.scales, expected.scales);
+            assert_eq!(actual.sh0, expected.sh0);
+            assert_eq!(actual.labels, expected.labels);
+            let bits = |centres: &[[f32; 3]]| -> Vec<[u32; 3]> {
+                centres.iter().map(|c| c.map(f32::to_bits)).collect()
+            };
+            assert_eq!(
+                bits(&actual.centres),
+                bits(&expected.centres),
+                "mins {mins:?} maxs {maxs:?} count {count}"
+            );
+        }
+    }
+}
+
+/// Where the per-splat time goes: the centre arithmetic + gather alone, against the whole encode.
+#[test]
+#[ignore = "manual CPU microbenchmark"]
+fn benchmark_centre_stage_share() {
+    use std::{hint::black_box, time::Instant};
+    let n = 1 << 18;
+    let mut state = 1u32;
+    let mut noise = |len: usize| -> Vec<u8> {
+        (0..len)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 24) as u8
+            })
+            .collect()
+    };
+    let (lo, hi) = (noise(n * 4), noise(n * 4));
+    let stream = stream(10_000);
+    let lookup = make_centre_lookup(&stream.shared).unwrap();
+    let factor = [(1.0f32, 0.0f32); 3];
+    let mut centres = vec![[0.0f32; 3]; n];
+    let mut best = u128::MAX;
+    for _ in 0..40 {
+        let start = Instant::now();
+        super::simd::centres(
+            black_box(&mut centres),
+            black_box(&lo),
+            black_box(&hi),
+            &factor,
+            &stream.shared,
+            Some(black_box(&lookup)),
+        );
+        best = best.min(start.elapsed().as_nanos());
+    }
+    println!(
+        "centres only (random indices): {:.2} ns/splat",
+        best as f64 / n as f64
+    );
+}
+
 #[test]
 #[ignore = "manual real-asset CPU microbenchmark"]
 fn benchmark_reused_upload_buffers() {

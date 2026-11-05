@@ -3,9 +3,12 @@
 //! This crate knows nothing about GPU APIs, scan formats, physics engines, or any game. Applications own the
 //! top-level loop and compose these pieces with other crates through their public APIs.
 
+pub mod chunk_jobs;
+pub mod frame_stacks;
 pub mod inflight;
 pub mod log;
 pub mod pacing;
+pub mod profile;
 pub mod rate;
 pub mod scheduler;
 pub mod time;

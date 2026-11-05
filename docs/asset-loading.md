@@ -70,8 +70,10 @@ The gameplay scene's `resources.preview` can tune asset work without changing en
 }
 ```
 
-`chunk_decoder_workers` selects `"auto"` (one to four workers based on the browser's reported logical cores),
-or an explicit integer from 1 to 4. It applies to both streamed and preloaded splats. Metadata fetch concurrency
+`chunk_decoder_workers` selects `"auto"` (one to eight workers based on the browser's reported logical cores: 1, 2,
+3, 4, 6 and 8 at up to 2, 4, 8, 12, 16 and more cores), or an explicit integer from 1 to 8. It applies to both
+streamed and preloaded splats. Decoded chunks are copied into the renderer from the frame loop, within a 3 ms budget
+per frame (at least one chunk), so a burst of finished workers cannot stall one frame. Metadata fetch concurrency
 can be 1 to 32; fetch and parsing happen on a dedicated temporary worker. More workers can improve throughput,
 but also use more memory and CPU; profile on the intended device. These settings do not move the browser's Lua,
 ECS, or GPU submission off the page thread. See [thread ownership](threading.md).

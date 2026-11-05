@@ -18,18 +18,13 @@ MAX_SITE_BYTES = 1_000_000_000
 ID_RE = re.compile(r"^[0-9a-f]{8}$")
 PACKAGE_FILES = [
     "countersplat_web.js", "countersplat_web_bg.wasm", "engine_api.lua",
-    "asset_loader.js", "chunk_decoder_pool.js", "chunk_preload.js",
-    "display_settings.js", "first_person_frames.js", "frame_profile.js",
-    "frame_stack_profile.js", "gameplay_events.js", "input_latency.js",
-    "line_layers.js", "metadata_client.js", "metadata_loader.js", "metadata-worker.js",
-    "minimap_runtime.js", "minimap_splat.js", "minimap-worker.js",
-    "mouse_buttons.js", "mouse_capture.js", "player_controls_preferences.js",
-    "player_rig.js", "scene_audio.js", "skybox-worker.js", "ui_layout_preferences.js",
-    "voxel_runtime.js", "voxel-worker.js", "worker_latency.js",
+    "metadata-worker.js",
+    "minimap-worker.js",
+    "skybox-worker.js", "voxel-worker.js",
     "wasmoon/index.js", "wasmoon/glue.wasm",
 ]
 SITE_FILES = ["index.html", "site.css", "site.js", "game/index.html", "game/launcher.js"]
-PREVIEW_FILES = ["main.js", "decoder.js", "lua_runtime.js", "asset_loader.js"]
+PREVIEW_FILES = ["main.js", "decoder.js", "lua_runtime.js"]
 
 
 def json_file(path):

@@ -5085,6 +5085,7 @@
       "level_asset": "level",
       "skybox_entity": "skybox",
       "capacity": 3000000,
+      "max_capacity": 6000000,
       "chunk_decoder_workers": "auto",
       "metadata_fetch_concurrency": 12,
       "rotate_z_180": true,
@@ -5313,7 +5314,7 @@
           "asset": "example-sky",
           "enabled": true,
           "priority": 0,
-          "exposure": 1.0,
+          "exposure": 0.45,
           "rotation_degrees": 0.0
         }
       }
@@ -5327,20 +5328,20 @@
           "enabled": true,
           "priority": 0,
           "filmic": true,
-          "exposure_ev": -0.08,
-          "contrast": 1.07,
-          "saturation": 1.02,
-          "temperature": 0.02,
-          "tint": -0.02,
-          "shadow_warmth": -0.32,
-          "highlight_warmth": 0.2,
-          "shadows": -0.04,
-          "highlights": -0.1,
-          "bloom_intensity": 0.1,
+          "exposure_ev": -0.4,
+          "contrast": 1.34,
+          "saturation": 1.0,
+          "temperature": 0.03,
+          "tint": 0.6,
+          "shadow_warmth": -0.44,
+          "highlight_warmth": 0.3,
+          "shadows": -0.16,
+          "highlights": -0.05,
+          "bloom_intensity": 0.14,
           "bloom_threshold": 1.0,
-          "vignette": 0.14,
-          "grain": 0.002,
-          "sharpness": 0.24
+          "vignette": 0.32,
+          "grain": 0.018,
+          "sharpness": 0.12
         }
       }
     },
@@ -6305,8 +6306,8 @@
           "exposure_compensation_ev": 0.0,
           "focus_distance_m": 7.5,
           "sensor_height_mm": 24.0,
-          "depth_of_field": true,
-          "motion_blur": true
+          "depth_of_field": false,
+          "motion_blur": false
         },
         "Hitbox": {
           "enabled": true,

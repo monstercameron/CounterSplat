@@ -12,6 +12,8 @@ pub struct ImpactRenderer {
     camera: wgpu::Buffer,
     sprites: wgpu::Buffer,
     count: u32,
+    /// Each sprite's centre and radius, for `far_view_depth`.
+    bounds: Vec<[f32; 4]>,
 }
 impl ImpactRenderer {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
@@ -118,6 +120,7 @@ impl ImpactRenderer {
             camera,
             sprites,
             count: 0,
+            bounds: Vec::new(),
         }
     }
     /// Packed instances: center XYZ/radius, surface normal XYZ/kind (0 mark,
@@ -141,7 +144,23 @@ impl ImpactRenderer {
             queue.write_buffer(&self.sprites, 0, bytemuck::cast_slice(sprites));
         }
         self.count = (sprites.len() / FLOATS_PER_SPRITE) as u32;
+        self.bounds.clear();
+        self.bounds.extend(sprites.chunks_exact(FLOATS_PER_SPRITE).map(|s| [s[0], s[1], s[2], s[3]]));
         Ok(())
+    }
+    /// The farthest view-space depth (distance along the view direction) any sprite fragment can have: a sprite is a
+    /// square of half-size `radius` around its centre, so no corner is farther than centre depth + radius * sqrt(2).
+    /// The scene's depth prepass needs no splat farther than this (`GsplatScene::prepare_depth_range`). `None`
+    /// without sprites.
+    pub fn far_view_depth(&self, view: &Mat4) -> Option<f32> {
+        self.bounds
+            .iter()
+            .map(|[x, y, z, radius]| {
+                // Column-major: view-space z is row 2.
+                let view_z = view[2] * x + view[6] * y + view[10] * z + view[14];
+                -view_z + radius * std::f32::consts::SQRT_2
+            })
+            .reduce(f32::max)
     }
     pub fn is_empty(&self) -> bool {
         self.count == 0

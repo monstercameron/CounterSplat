@@ -58,14 +58,58 @@ asset inventory; the original descriptor bytes transfer to the page owner for re
 coalesced progress and is terminated on completion, failure, or cancellation. Metadata fetch concurrency is bounded,
 and the output preserves file order. Single-scan metadata uses the same path without a network round trip.
 
-A pool of one to four dedicated workers fetches and decodes SOG textures based on logical CPU count. Streamed chunks
-are selected by the renderer with no hidden worker queue, so available workers receive current priorities. When a
-level marks splats as preloaded, the same bounded pool decodes multiple chunks concurrently while preserving the
-original chunk order. Preload failure or cancellation terminates the pool. Decoded data is transferred to the canvas
+A pool of one to eight dedicated workers fetches and decodes SOG textures based on logical CPU count (eight from 17
+logical cores). Each decode is a single-threaded WebP/wasm job; on a 20-thread machine 24 Nelson chunks took 1755 ms
+on one worker, 630 ms on four, 473 ms on eight and 423 ms on twelve, which is why the cap moved from four to eight.
+Streamed chunks are selected by the renderer with no hidden worker queue, so available workers receive current
+priorities. When a level marks splats as preloaded, the same bounded pool decodes multiple chunks concurrently while
+preserving the original chunk order. A level with fewer chunks than workers (a single-file scan is one chunk) would
+leave workers idle, so its chunk is split into texture groups (means_l, means_u, quats, scales, sh0, SH streams) that
+different workers decode and the page merges again: the 2.5 M-splat Barn preload went from about 315 ms to 168 ms
+with identical bytes. Finished chunks are queued and copied into the renderer from the frame loop within a 3 ms
+budget (at least one per frame), so a burst of completed workers cannot stall a single frame; chunks waiting in that
+queue count against idle workers, which bounds memory. Streaming 20 Nelson chunks inserted over 255 ms with the
+worst frame 8.4 ms. Preload failure or cancellation terminates the pool. Decoded data is transferred to the canvas
 owner for validated GPU upload; retained preload bytes have a 512 MiB limit, with up to one additional result in
 flight per worker. A separate worker decodes Radiance HDR panoramas, and a voxel worker owns collision queries and
 debug geometry. The browser allows one submitted GPU frame in flight. Frame-time measurements describe CPU submission
 intervals, not GPU execution or display presentation timestamps.
+
+### Rust host code, JavaScript glue
+
+Host logic is Rust; JavaScript is kept to glue (DOM events, worker bootstraps, calls into the module). In Rust now:
+
+- Chunk decoding and streaming (`apps/web/src/chunks.rs`): the worker side (`chunk_worker_handle`: fetch, decode,
+  transfer), the worker pool, preloading with stream-split jobs (`preload_level_chunks`), and the per-frame insert
+  budget, retries and requests in `Viewer::pump_chunks`. Planning rules and their tests: `countersplat_core::chunk_jobs`.
+  `preview/decoder.js` is a three-line bootstrap.
+- Level metadata loading (`apps/web/src/metadata.rs`, `loadLevelMetadata` / `metadata_worker_handle`) and the asset
+  policies and level inventory (`countersplat_scene::asset_policy`); `metadata-worker.js` is a bootstrap.
+- Display and HUD preferences, render resolution, presentation mapping and the viewport resources scene scripts read
+  (`countersplat_scene::display`, `apps/web/src/display.rs`, `Viewer::apply_display`, `Viewer::menu_settings`).
+- Profiling counters (`countersplat_core::profile`), gameplay pointer buttons and pointer lock
+  (`countersplat_ui::pointer`), world-line layers (`countersplat_scene::line_layers`), UI layout, control, rig and other
+  stored settings (`countersplat_scene::host_preferences`, `apps/web/src/prefs.rs`), impact/projectile/hitbox packing,
+  and first-person footage scheduling (`countersplat_scene::first_person_frames`, `apps/web/src/footage.rs`).
+- Level collision (`apps/web/src/voxels.rs`): the voxel worker (`voxel_worker_handle`) and the per-entity movement,
+  ground, clearance and trace coordination, owned by the Viewer (`start_voxels`, `voxel_receive`, `voxel_tick`, ...).
+  The rules are `countersplat_scene::voxel_host`, written against a small `Host` trait so they are unit-tested without
+  a browser. Because `drain` and `emit` are ECS operations on the Viewer, the coordinator calls its own world directly
+  instead of round-tripping through JavaScript. Worker replies are queued and applied at the start of each frame
+  (`voxel_receive`), before input and scripts read the world.
+- The level map (`apps/web/src/minimap.rs`, rules in `countersplat_scene::minimap`): request validation and
+  coalescing, the map worker with its own voxel copy or, for a level without voxels, splat centres decoded from the
+  finest LOD within 3 M splats, and the round map raster. Results reach the scene after the page state is released, so
+  a scene may request again from its result handler.
+- Web Audio playback (`apps/web/src/audio.rs`, `SceneAudio`; mixing rules in `countersplat_scene::audio_mix`).
+- The opt-in CPU stack capture (`apps/web/src/stacks.rs`, `FrameStackCapture`; capture, summary and GPU-frame
+  matching in `countersplat_core::frame_stacks`). It binds the browser's JS Self-Profiling `Profiler` directly.
+
+Each moved module's JavaScript tests were ported to Rust unit tests. The workers (`decoder.js`, `metadata-worker.js`,
+`voxel-worker.js`, `minimap-worker.js`, `skybox-worker.js`) are bootstraps that load the module and forward messages.
+Still JavaScript: the page orchestration (`main.js`: DOM events, level launch sequencing and the frame loop calling
+into Rust) and the Lua bridge around the third-party wasmoon VM (`lua_runtime.js`). The native build runs Lua with
+mlua, which does not target `wasm32-unknown-unknown`, so moving the bridge needs a Lua VM that builds for that target.
 
 The page thread still owns the browser ECS, Lua VMs, WebGPU orchestration, and the renderer's initial Rust stream
 construction. Physics geometry queries and asset preparation run on workers, but this is not a fully separated browser

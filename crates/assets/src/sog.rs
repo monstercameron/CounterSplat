@@ -170,14 +170,30 @@ pub fn decode_stream(stream: &str, bytes: &[u8]) -> Result<Texture> {
 pub fn centres(bundle: &Bundle) -> Vec<[f32; 3]> {
     let meta = &bundle.meta;
     let (means_l, means_u) = (&bundle.textures["means_l"], &bundle.textures["means_u"]);
-    (0..meta.count as usize)
-        .map(|i| {
-            [0, 1, 2].map(|c| {
-                let lo = f32::from(means_l.rgba[i * 4 + c]);
-                let hi = f32::from(means_u.rgba[i * 4 + c]);
-                let n = (lo + 256.0 * hi) / 65535.0;
-                unlog(meta.means_mins[c] + (meta.means_maxs[c] - meta.means_mins[c]) * n)
+    let decode = |c: usize, q: u32| {
+        let n = q as f32 / 65535.0;
+        unlog(meta.means_mins[c] + (meta.means_maxs[c] - meta.means_mins[c]) * n)
+    };
+    let count = meta.count as usize;
+    if count < 1 << 16 {
+        return (0..count)
+            .map(|i| {
+                [0, 1, 2].map(|c| {
+                    let q = u32::from(means_l.rgba[i * 4 + c]) + 256 * u32::from(means_u.rgba[i * 4 + c]);
+                    decode(c, q)
+                })
             })
+            .collect();
+    }
+    // A position axis has only 65,536 distinct encoded values, so evaluate the `exp` once per value instead of
+    // three times per splat (millions of calls on a real scan). The inputs to `decode` are identical, so every
+    // centre is bit-for-bit what the direct expression gives.
+    let tables: [Vec<f32>; 3] = [0, 1, 2].map(|c| (0..=u32::from(u16::MAX)).map(|q| decode(c, q)).collect());
+    means_l.rgba[..count * 4]
+        .chunks_exact(4)
+        .zip(means_u.rgba[..count * 4].chunks_exact(4))
+        .map(|(lo, hi)| {
+            [0, 1, 2].map(|c| tables[c][(usize::from(lo[c]) | usize::from(hi[c]) << 8) & 0xFFFF])
         })
         .collect()
 }
@@ -626,6 +642,35 @@ mod tests {
             64 + 3,
             "the second chunk's labels follow the first chunk's centroids"
         );
+    }
+
+    #[test]
+    fn table_decoded_centres_are_bit_identical_to_the_direct_expression() {
+        // Large enough to take the 65,536-entry table path; the small bundle takes the direct one.
+        for n in [100u32, 70_000] {
+            let mut bundle = line(n, -40.0, 60.0, 0.0);
+            let mut state = 12345u32;
+            for name in ["means_l", "means_u"] {
+                for byte in &mut bundle.textures.get_mut(name).unwrap().rgba {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    *byte = (state >> 24) as u8;
+                }
+            }
+            let meta = &bundle.meta;
+            let (l, u) = (&bundle.textures["means_l"], &bundle.textures["means_u"]);
+            let got = centres(&bundle);
+            assert_eq!(got.len(), n as usize);
+            for (i, centre) in got.iter().enumerate() {
+                for c in 0..3 {
+                    let lo = f32::from(l.rgba[i * 4 + c]);
+                    let hi = f32::from(u.rgba[i * 4 + c]);
+                    let n = (lo + 256.0 * hi) / 65535.0;
+                    let want =
+                        unlog(meta.means_mins[c] + (meta.means_maxs[c] - meta.means_mins[c]) * n);
+                    assert_eq!(centre[c].to_bits(), want.to_bits(), "splat {i} axis {c}");
+                }
+            }
+        }
     }
 
     #[test]
