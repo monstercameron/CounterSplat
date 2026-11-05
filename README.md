@@ -149,7 +149,7 @@ python scripts/preview.py
 
 Open [http://127.0.0.1:18763/](http://127.0.0.1:18763/), select a local level,
 and choose **Launch level**. The selector can also open a compatible scene
-from `assets/scenes/`. Press **Esc â†’ Game mode â†’ Start pursuit** to try the
+from `assets/scenes/`. Press **Esc → Game mode → Start pursuit** to try the
 survival mode.
 
 The build writes Cargo output to `.artifacts/target/` and browser bindings and
@@ -168,7 +168,8 @@ when preparing the packaged resources.
 | Left / right mouse | Fire / aim down sights. |
 | V | Cycle single, burst, and automatic fire. |
 | R / hold R | Reload / consolidate partially filled magazines. |
-| F | Stow or equip the weapon. |
+| F | Stow or equip the weapon. The gameplay scene spawns with it stowed. |
+| T | Reset the training range: the targets move in front of you and knocked-down cans stand back up. |
 | Q | Show the inspection HUD and local map. Combat actions dismiss it. |
 | Backquote / tilde | Show or hide ECS tools and release mouse capture. |
 | Esc | Open the pause menu; choose a level, adjust settings, or manage Pursuit. |
@@ -222,8 +223,9 @@ The Rust and browser hosts provide validated storage, input, timing, collision
 queries, and rendering; the game-specific decisions remain in Lua.
 
 See [scene format](docs/scenes.md), [ECS](crates/ecs/README.md),
-[Lua API](crates/scripting-lua/README.md), and
-[shooting and ballistics](docs/ballistics.md).
+[Lua API](crates/scripting-lua/README.md),
+[shooting and ballistics](docs/ballistics.md), and
+[physics props and the can range](docs/props.md).
 
 ### Rendering and streaming
 

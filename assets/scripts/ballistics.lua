@@ -235,7 +235,7 @@ local function resolve(p, status, voxel)
     if hit then
         local target=hit.target
         local event={entity=p.entity,owner=p.owner,source=p.source,shot=p.shot,stance=p.stance,
-            position=copy(position),normal=copy(hit.normal),travel_seconds=p.age,
+            position=copy(position),normal=copy(hit.normal),velocity=copy(p.velocity),travel_seconds=p.age,
             distance_m=p.distance/p.units,damage=p.damage,kind=target and 'entity' or 'level'}
         if target then event.target=target; event.zone=hit.zone end
         ecs.set_resource('combat.last_impact',event)

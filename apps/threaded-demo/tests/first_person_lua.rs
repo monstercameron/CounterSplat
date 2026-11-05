@@ -106,7 +106,8 @@ impl Fixture {
     }
 }
 /// The shipped gameplay scene spawns with the weapon put away (nothing drawn, no shots), as if F had been pressed,
-/// while its footage is being remade; F equips it, and a respawn stows it again.
+/// while its footage is being remade. F equips it: it fires, but with the first-person view off it is still not
+/// drawn, so shots go through the crosshair.
 #[test]
 fn spawns_with_the_weapon_stowed_until_f_equips_it() {
     let f = Fixture::as_shipped();
@@ -123,7 +124,11 @@ fn spawns_with_the_weapon_stowed_until_f_equips_it() {
     f.tick(60);
     assert_eq!(f.state()["state"], "lowReady");
     let frames = f.world.borrow_mut().drain_events("first_person.frame");
-    assert_eq!(frames.last().unwrap()["visible"], true);
+    assert!(frames.iter().all(|frame| frame["visible"] == false), "the view stays off: {frames:?}");
+    f.mouse("left", true);
+    f.mouse("left", false);
+    f.tick(40);
+    assert_eq!(f.state()["ammo"], 29, "the equipped weapon fires");
 }
 
 #[test]

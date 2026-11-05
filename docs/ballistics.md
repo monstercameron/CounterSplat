@@ -41,7 +41,9 @@ optional; when present, Lua subtracts the configured damage and emits
 `combat.damage`, followed by `combat.death` when health first reaches zero.
 `projectile.spawned`, `projectile.impact` and `projectile.expired` are ordinary
 ECS events. Impact data includes the target or level, source, position, normal,
-shot number, distance and travel time. The shooter and weapon are excluded from
+the bullet's velocity as it hit, shot number, distance and travel time. A host
+may deliver a same-tick spawn and impact in either order, so a script that needs
+the bullet's direction at impact reads it from the impact. The shooter and weapon are excluded from
 hitbox tests. This first implementation does not simulate penetration,
 ricochets, drag or moving-target swept volumes.
 

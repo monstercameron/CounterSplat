@@ -4,6 +4,8 @@
 //! asset data through `countersplat-assets`; it does not depend on rendering or game-specific concepts.
 
 pub mod floor;
+pub mod prop_runtime;
+pub mod props;
 pub mod voxel;
 pub mod voxel_collision;
 pub mod world;

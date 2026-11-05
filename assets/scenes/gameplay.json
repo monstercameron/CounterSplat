@@ -5075,6 +5075,7 @@
       },
       "hitboxes": { "language": "lua", "uri": "../scripts/hitboxes.lua", "autoload": false, "load": "preload" },
       "training-target": { "language": "lua", "uri": "../scripts/training_target.lua", "autoload": false, "load": "preload" },
+      "can-range": { "language": "lua", "uri": "../scripts/can_range.lua", "autoload": false, "load": "preload" },
       "pursuit-mode": { "language": "lua", "uri": "../scripts/pursuit_mode.lua", "autoload": false, "load": "preload" },
       "game-audio": { "language": "lua", "uri": "../scripts/game_audio.lua", "autoload": false, "load": "preload" },
       "impact-effects": { "language": "lua", "uri": "../scripts/impact_effects.lua", "autoload": false, "load": "preload" },
@@ -5125,6 +5126,7 @@
         "inspection-hud",
         "hitboxes",
         "training-target",
+        "can-range",
         "pursuit-mode",
         "ballistics",
         "impact-effects",
@@ -5139,6 +5141,21 @@
     "training_range": {
       "level_ids": ["58d333ae"],
       "targets": ["training_target_left", "training_target_center", "training_target_right"]
+    },
+    "can_range": {
+      "level_ids": ["58d333ae"],
+      "forward_m": 4.5,
+      "lateral_m": 2.2,
+      "wall": { "length_m": 1.6, "height_m": 1.0, "thickness_m": 0.2, "friction": 0.7, "color": [0.16, 0.1, 0.06] },
+      "can_count": 10,
+      "can": {
+        "radius_m": 0.033, "height_m": 0.122, "mass_kg": 0.015,
+        "friction": 0.4, "restitution": 0.25, "linear_damping": 0.05, "angular_damping": 0.4,
+        "cap_color": [0.75, 0.75, 0.72]
+      },
+      "can_colors": [[0.75, 0.04, 0.03], [0.05, 0.22, 0.7], [0.75, 0.55, 0.04], [0.05, 0.45, 0.12], [0.6, 0.6, 0.62]],
+      "shot_impulse_ns": 0.12,
+      "floor_friction": 0.6
     },
     "first_person_magazine": {
       "frame_size": [1280, 720],
@@ -6213,6 +6230,7 @@
         "attack_damage": 18.0, "attack_interval_s": 1.1, "attack_range_m": 1.1 }
     } },
     { "id": "training_range", "layer": "level", "parent": "active_level", "components": {} },
+    { "id": "can_range", "layer": "level", "parent": "active_level", "components": {} },
     {
       "id": "training_target_left", "layer": "level", "parent": "training_range",
       "components": {
@@ -10040,7 +10058,7 @@
           "clip_blend_seconds": 0.12
         },
         "FirstPersonView": {
-          "enabled": true,
+          "enabled": false,
           "opacity": 1.0,
           "key_threshold": 0.14,
           "key_softness": 0.28,

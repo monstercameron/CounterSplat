@@ -15,6 +15,7 @@ mod menu;
 mod metadata;
 mod minimap;
 mod prefs;
+mod props;
 mod stacks;
 mod selector;
 mod ui_layer;
@@ -124,6 +125,11 @@ pub struct Viewer {
     voxel_debug: VoxelDebug,
     tracers: TracerRenderer,
     hitbox_lines: TracerRenderer,
+    /// Rigid-body props the scene's scripts lay out (`props.layout`) and push (`prop.impulse`), and their meshes.
+    props: countersplat_physics::prop_runtime::PropRuntime,
+    prop_renderer: countersplat_render::props::PropRenderer,
+    /// The last prop error reported, so a broken layout warns once rather than every frame.
+    prop_error: Option<String>,
     impacts: ImpactRenderer,
     scheduler: Scheduler,
     frame_limit: Option<u32>,
@@ -406,6 +412,7 @@ impl Viewer {
         let voxel_debug = VoxelDebug::new(&device, postprocess::SCENE_FORMAT);
         let tracers = TracerRenderer::new(&device, postprocess::SCENE_FORMAT);
         let hitbox_lines = TracerRenderer::new(&device, postprocess::SCENE_FORMAT);
+        let prop_renderer = countersplat_render::props::PropRenderer::new(&device, postprocess::SCENE_FORMAT);
         let impacts = ImpactRenderer::new(&device, postprocess::SCENE_FORMAT);
         let pipelines = Pipelines::new(&device, postprocess::SCENE_FORMAT).map_err(js_error)?;
         let rows = stream.palette_texture_rows(device.limits().max_texture_dimension_2d);
@@ -466,6 +473,9 @@ impl Viewer {
             voxel_debug,
             tracers,
             hitbox_lines,
+            props: Default::default(),
+            prop_renderer,
+            prop_error: None,
             impacts,
             scheduler: Scheduler::new(fixed, rate),
             frame_limit: None,
@@ -992,6 +1002,9 @@ impl Viewer {
         let plan = self.scheduler.poll(now).map_err(js_error)?;
         self.total_ticks = plan.total_ticks;
         self.script_ticks = plan.simulation.ticks;
+        // Props advance with the scripts' fixed ticks: last frame's hits push them, and the scripts that run after
+        // this frame see where they landed.
+        self.step_props(plan.simulation.ticks as f32 * self.scheduler.tick_seconds() as f32);
         self.discarded_time = self.discarded_time.saturating_add(plan.simulation.dropped);
         if self.frame_limit.is_some() {
             self.missed_deadlines = self.missed_deadlines.saturating_add(plan.frame.missed);
@@ -1204,6 +1217,8 @@ impl Viewer {
                     snapshot.skybox.rotation_degrees,
                 );
             }
+            // Solid props write depth before the splats, so the scan and the props hide each other correctly.
+            self.prop_renderer.draw(&self.queue, &mut pass, &view.view, &view.projection, lens.exposure_multiplier());
             self.pool.draw_color(&mut pass, &self.pipelines);
             if !self.menu_visible {
                 self.tracers

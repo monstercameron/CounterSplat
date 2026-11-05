@@ -11,6 +11,7 @@ pub mod impact;
 pub mod metrics;
 pub mod postprocess;
 pub mod presentation;
+pub mod props;
 pub mod scene;
 pub mod sort;
 pub mod stream;
