@@ -41,7 +41,8 @@ fn url(relative: &str, base: &str) -> Result<String, JsValue> {
 
 enum Source {
     Voxels(VoxelCollisionData),
-    Splats(Vec<Vec<f32>>),
+    /// Height-bucketed centres per chunk, so a map request reads only the centres near its slab.
+    Splats(Vec<minimap::SplatColumn>),
 }
 
 thread_local! {
@@ -78,7 +79,7 @@ async fn body(response: Response, limit: f64, what: &str) -> Result<Vec<u8>, JsV
 }
 
 /// Splat centres of the level's finest LOD within the map budget; a missing LOD manifest means a single SOG.
-async fn load_splats(base: &str, flip_xy: bool) -> Result<Vec<Vec<f32>>, JsValue> {
+async fn load_splats(base: &str, flip_xy: bool) -> Result<Vec<minimap::SplatColumn>, JsValue> {
     let manifest = response(start_fetch(&url("lod-meta.json", base)?)).await?;
     let manifest = if manifest.status() == 404 {
         None
@@ -103,7 +104,8 @@ async fn load_splats(base: &str, flip_xy: bool) -> Result<Vec<Vec<f32>>, JsValue
         if low.width() != high.width() || low.height() != high.height() {
             return Err(js_error("map means dimensions differ"));
         }
-        chunks.push(minimap::decode_splat_centres(&meta, &low.take_pixels(), &high.take_pixels(), flip_xy).map_err(js_error)?);
+        let centres = minimap::decode_splat_centres(&meta, &low.take_pixels(), &high.take_pixels(), flip_xy).map_err(js_error)?;
+        chunks.push(minimap::SplatColumn::new(&centres));
     }
     Ok(chunks)
 }
@@ -154,7 +156,7 @@ fn slice(request: &Request) -> Result<(Vec<u8>, f64, f64), JsValue> {
                 (mask, radius)
             }
             Source::Splats(chunks) => {
-                (minimap::rasterize_splat_slice(chunks, request.position, height, request.radius, request.thickness, request.size), request.radius)
+                (minimap::rasterize_splat_columns(chunks, request.position, height, request.radius, request.thickness, request.size), request.radius)
             }
         };
         if mask.len() != (request.size * request.size) as usize {

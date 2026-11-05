@@ -2,14 +2,16 @@
 //!
 //! Capsule/sphere-vs-voxel penetration and iterative push-out follow the SuperSplat Viewer
 //! approach (PlayCanvas Ltd., MIT); see THIRD_PARTY.md. No dense grid is allocated.
-use countersplat_assets::svo::{grid_cells, uses_legacy_coordinates, Octree, LEAF_SIZE};
+use countersplat_assets::svo::{grid_cells, uses_legacy_coordinates, BlockCursor, Octree, LEAF_SIZE};
 use std::error::Error;
 
 const EPSILON: f32 = 1.0e-4;
 const MAX_ITERATIONS: usize = 4;
 const MAX_MOVE_STEPS: usize = 256;
-// Bound temporary storage and avoid cache setup when a query visits few rows.
+// Bound temporary storage and avoid cache setup when a query visits few rows. Slabs up to the stack size use a
+// stack cache; wider ones (a minimap slice spans hundreds of blocks) a heap cache up to the larger bound.
 const MAX_CACHED_LEAF_BLOCKS: usize = 256;
+const MAX_HEAP_CACHED_LEAF_BLOCKS: usize = 1 << 16;
 const MIN_CACHE_ROWS: u64 = 32;
 
 /// The first occupied voxel reached by a swept world-space segment.
@@ -37,10 +39,16 @@ fn for_each_solid_cell(tree: &Octree, lo: [i32; 3], hi: [i32; 3], visit: impl Fn
     let x_count = hi[0] as u32 / LEAF_SIZE - x_first + 1;
     let y_first = lo[1] as u32 / LEAF_SIZE;
     let y_count = hi[1] as u32 / LEAF_SIZE - y_first + 1;
-    if u64::from(x_count) * u64::from(y_count) > MAX_CACHED_LEAF_BLOCKS as u64 {
+    let blocks = u64::from(x_count) * u64::from(y_count);
+    if blocks > MAX_HEAP_CACHED_LEAF_BLOCKS as u64 {
         return for_each_solid_cell_uncached(tree, lo, hi, visit);
     }
-    for_each_solid_cell_cached(tree, lo, hi, visit, [x_first, x_count, y_first, y_count]);
+    if blocks > MAX_CACHED_LEAF_BLOCKS as u64 {
+        let mut cache = vec![0_u64; blocks as usize];
+        return for_each_solid_cell_cached(tree, lo, hi, visit, [x_first, x_count, y_first, y_count], &mut cache);
+    }
+    let mut cache = [0_u64; MAX_CACHED_LEAF_BLOCKS];
+    for_each_solid_cell_cached(tree, lo, hi, visit, [x_first, x_count, y_first, y_count], &mut cache);
 }
 
 // Keep the cache's stack allocation off the fast path for tiny queries.
@@ -51,8 +59,10 @@ fn for_each_solid_cell_cached(
     hi: [i32; 3],
     mut visit: impl FnMut([i32; 3]),
     [x_first, x_count, y_first, y_count]: [u32; 4],
+    cache: &mut [u64],
 ) {
-    let mut cache = [0_u64; MAX_CACHED_LEAF_BLOCKS];
+    // Blocks are refilled x-fastest, so consecutive lookups share all but the last octree levels (see BlockCursor).
+    let mut cursor = BlockCursor::default();
     let mut cached_z = u32::MAX;
     for z in lo[2]..=hi[2] {
         let block_z = z as u32 / LEAF_SIZE;
@@ -60,7 +70,7 @@ fn for_each_solid_cell_cached(
             for by in 0..y_count {
                 for bx in 0..x_count {
                     let index = (by * x_count + bx) as usize;
-                    cache[index] = tree.block_mask([
+                    cache[index] = tree.block_mask_with(&mut cursor, [
                         (x_first + bx) * LEAF_SIZE,
                         (y_first + by) * LEAF_SIZE,
                         z as u32,
@@ -97,6 +107,8 @@ fn for_each_solid_cell_uncached(
     hi: [i32; 3],
     mut visit: impl FnMut([i32; 3]),
 ) {
+    // Consecutive row segments are in the same or the next block along x: the cursor resumes near the leaf.
+    let mut cursor = BlockCursor::default();
     for z in lo[2]..=hi[2] {
         for y in lo[1]..=hi[1] {
             let mut x = lo[0] as u32;
@@ -104,7 +116,7 @@ fn for_each_solid_cell_uncached(
             while x <= hi_x {
                 let end = (x | 3).min(hi_x);
                 let shift = ((y as u32 & 3) * 4) + ((z as u32 & 3) * 16);
-                let row = (tree.block_mask([x, y as u32, z as u32]) >> shift) & 0xf;
+                let row = (tree.block_mask_with(&mut cursor, [x, y as u32, z as u32]) >> shift) & 0xf;
                 let mut mask = row & (0xf << (x & 3)) & (0xf >> (3 - (end & 3)));
                 while mask != 0 {
                     let cell_x = (x & !3) + mask.trailing_zeros();
@@ -117,31 +129,22 @@ fn for_each_solid_cell_uncached(
     }
 }
 
-// A ray visits adjacent cells in sequence, so several normally share one
-// octree leaf. The trace clips to the grid before calling this cursor.
+// A ray visits adjacent cells in sequence, so several normally share one octree leaf, and the next leaf shares most
+// of its path from the root (BlockCursor). The trace clips to the grid before calling this cursor.
 struct OccupancyCursor<'a> {
     tree: &'a Octree,
-    block: [u32; 3],
-    mask: u64,
+    cursor: BlockCursor,
 }
 impl<'a> OccupancyCursor<'a> {
     fn new(tree: &'a Octree) -> Self {
         Self {
             tree,
-            block: [u32::MAX; 3],
-            mask: 0,
+            cursor: BlockCursor::default(),
         }
     }
     #[inline]
     fn contains(&mut self, cell: [i32; 3]) -> bool {
-        let cell = cell.map(|value| value as u32);
-        let block = cell.map(|value| value / LEAF_SIZE);
-        if block != self.block {
-            self.block = block;
-            self.mask = self.tree.block_mask(cell);
-        }
-        let bit = (cell[0] & 3) + 4 * (cell[1] & 3) + 16 * (cell[2] & 3);
-        self.mask & (1_u64 << bit) != 0
+        self.tree.is_solid_with(&mut self.cursor, cell)
     }
 }
 
@@ -483,13 +486,15 @@ impl VoxelCollider {
             let mut cell = [0, 1, 2]
                 .map(|i| ((local[i] - self.tree.meta.grid_min[i]) / resolution).floor() as i32);
             // A camera starting inside occupied geometry is not a reliable ground probe.
-            if self.tree.is_solid(cell) {
+            // The probe steps one cell at a time, so the cursor reuses each block (and its path) four times.
+            let mut cursor = BlockCursor::default();
+            if self.tree.is_solid_with(&mut cursor, cell) {
                 continue;
             }
             let direction = if self.flip_xy { 1 } else { -1 };
             for _ in 0..steps {
                 cell[1] += direction;
-                if !self.tree.is_solid(cell) {
+                if !self.tree.is_solid_with(&mut cursor, cell) {
                     continue;
                 }
                 let local_surface = self.tree.meta.grid_min[1]
@@ -669,9 +674,10 @@ impl VoxelCollider {
         }
         blocks.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
         let mut out = Vec::with_capacity(limit.min(4096));
+        let mut cursor = BlockCursor::default();
         for (_, b) in blocks {
             let origin = b.map(|v| v * LEAF_SIZE);
-            let mut mask = self.tree.block_mask(origin);
+            let mut mask = self.tree.block_mask_with(&mut cursor, origin);
             while mask != 0 {
                 let bit = mask.trailing_zeros();
                 mask &= mask - 1;

@@ -34,6 +34,36 @@ pub struct Octree {
     words: Vec<u32>,
 }
 
+/// The previous `Octree::block_mask_with` lookup: its block, the node index at each depth of its walk, the depth the
+/// walk stopped at and its result. Start each query with a fresh cursor (`BlockCursor::default()`); it is only valid
+/// for the octree it was used with.
+#[derive(Debug, Clone)]
+pub struct BlockCursor {
+    block: [u32; 3],
+    stop: u32,
+    nodes: [u32; 21],
+    mask: u64,
+}
+
+impl Default for BlockCursor {
+    fn default() -> Self {
+        Self {
+            block: [u32::MAX; 3],
+            stop: 0,
+            nodes: [0; 21],
+            mask: 0,
+        }
+    }
+}
+
+impl BlockCursor {
+    fn finish(&mut self, stop: u32, mask: u64) -> u64 {
+        self.stop = stop;
+        self.mask = mask;
+        mask
+    }
+}
+
 /// Grid dimensions in cells: `ceil((max - min) / resolution)` per axis.
 pub fn grid_cells(meta: &Meta) -> [u32; 3] {
     [0, 1, 2].map(|i| ((meta.grid_max[i] - meta.grid_min[i]) / meta.resolution).ceil() as u32)
@@ -284,6 +314,72 @@ impl Octree {
     }
 
     /// Occupancy mask (bit = x + 4y + 16z) of the leaf block that contains `cell`, or `0` when empty.
+    /// `is_solid` through `cursor` (see `block_mask_with`).
+    pub fn is_solid_with(&self, cursor: &mut BlockCursor, cell: [i32; 3]) -> bool {
+        if cell.iter().any(|&v| v < 0) {
+            return false;
+        }
+        let cell = cell.map(|v| v as u32);
+        let bit = (cell[0] & 3) + 4 * (cell[1] & 3) + 16 * (cell[2] & 3);
+        self.block_mask_with(cursor, cell) & (1u64 << bit) != 0
+    }
+
+    /// `block_mask` through `cursor`, which remembers the previous lookup's root-to-leaf path. Nearby blocks share all
+    /// but the last levels of their paths, so the walk resumes from the deepest node the two blocks share instead of
+    /// the root: one or two dependent reads instead of `tree_depth`, which matters once the upper levels are no longer
+    /// cached. The result is exactly `block_mask(cell)`.
+    pub fn block_mask_with(&self, cursor: &mut BlockCursor, cell: [u32; 3]) -> u64 {
+        let dims = grid_cells(&self.meta);
+        if (0..3).any(|axis| cell[axis] >= dims[axis]) {
+            return 0;
+        }
+        let block = cell.map(|v| v / LEAF_SIZE);
+        let depth = self.meta.tree_depth;
+        // The walk takes the octant at depth d from block bit (depth - 1 - d). Blocks agreeing on every bit above
+        // the highest differing one take the same octants down to depth `shared`, so they share nodes[..=shared].
+        let differ = (block[0] ^ cursor.block[0]) | (block[1] ^ cursor.block[1]) | (block[2] ^ cursor.block[2]);
+        if differ == 0 {
+            return cursor.mask;
+        }
+        let shared = depth as i64 - 32 + i64::from(differ.leading_zeros());
+        let start = if cursor.block[0] == u32::MAX || shared < 0 {
+            0
+        } else if shared as u32 > cursor.stop {
+            // The previous walk ended above the levels the blocks differ in, so this one ends the same way.
+            cursor.block = block;
+            return cursor.mask;
+        } else {
+            shared as u32
+        };
+        cursor.block = block;
+        let mut node = if start == 0 { 0 } else { cursor.nodes[start as usize] as usize };
+        for d in start..depth {
+            cursor.nodes[d as usize] = node as u32;
+            let word = self.words[node];
+            if word == SOLID {
+                return cursor.finish(d, u64::MAX);
+            }
+            let mask = word >> 24;
+            if mask == 0 {
+                let base = self.meta.node_count + (word & INDEX_MASK) as usize * 2;
+                return cursor.finish(d, self.words[base] as u64 | ((self.words[base + 1] as u64) << 32));
+            }
+            let shift = depth - d - 1 + 2;
+            let octant = ((cell[0] >> shift) & 1) | (((cell[1] >> shift) & 1) << 1) | (((cell[2] >> shift) & 1) << 2);
+            if mask & (1 << octant) == 0 {
+                return cursor.finish(d, 0);
+            }
+            node = (word & INDEX_MASK) as usize + (mask & ((1 << octant) - 1)).count_ones() as usize;
+        }
+        cursor.nodes[depth as usize] = node as u32;
+        let word = self.words[node];
+        if word == SOLID {
+            return cursor.finish(depth, u64::MAX);
+        }
+        let base = self.meta.node_count + (word & INDEX_MASK) as usize * 2;
+        cursor.finish(depth, self.words[base] as u64 | ((self.words[base + 1] as u64) << 32))
+    }
+
     fn leaf_mask(&self, cell: [u32; 3]) -> u64 {
         let mut node = 0usize;
         for depth in 0..self.meta.tree_depth {
@@ -727,6 +823,114 @@ mod tests {
                 .is_empty(),
             "retain supported narrow posts"
         );
+    }
+
+    /// A random octree of `depth` levels mixing every node kind: solid nodes, early mixed leaves (an interior-depth
+    /// word with no child mask), absent children and random leaf masks.
+    fn random_tree(depth: u32, seed: u64) -> Octree {
+        let mut state = seed | 1;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut nodes = vec![0u32];
+        let mut leaves: Vec<u32> = Vec::new();
+        let mut pending = vec![(0usize, 0u32)];
+        let leaf = |leaves: &mut Vec<u32>, mask: u64| {
+            leaves.extend([mask as u32, (mask >> 32) as u32]);
+            (leaves.len() / 2 - 1) as u32
+        };
+        while let Some((index, d)) = pending.pop() {
+            let roll = next() % 10;
+            if d == depth || (d > 0 && roll == 0) {
+                // A leaf at the bottom, or an early mixed leaf repeated over the node's span.
+                let mask = next() & next();
+                nodes[index] = leaf(&mut leaves, mask);
+            } else if d > 0 && roll == 1 {
+                nodes[index] = SOLID;
+            } else {
+                let child_mask = (next() % 255 + 1) as u32;
+                let first = nodes.len();
+                nodes.resize(first + child_mask.count_ones() as usize, 0);
+                nodes[index] = (child_mask << 24) | first as u32;
+                for k in 0..child_mask.count_ones() as usize {
+                    pending.push((first + k, d + 1));
+                }
+            }
+        }
+        let side = (LEAF_SIZE << depth) as f32;
+        let meta = Meta {
+            grid_min: [0.0; 3],
+            // A grid a little smaller than the octree's span, so lookups past its edge are tested too.
+            grid_max: [side - 3.0, side - 5.0, side - 1.0],
+            resolution: 1.0,
+            tree_depth: depth,
+            node_count: nodes.len(),
+            leaf_data_count: leaves.len(),
+        };
+        let bytes: Vec<u8> = nodes.iter().chain(&leaves).flat_map(|w| w.to_le_bytes()).collect();
+        Octree::from_bytes(meta, &bytes).unwrap()
+    }
+
+    /// The path cursor must give exactly `block_mask` for any sequence of lookups: raster order (neighbours), the
+    /// reverse, random jumps (short shared prefixes) and a random walk (repeats and single steps), on random trees and on
+    /// the real levels' octrees when they are present (they are not in the repository).
+    #[test]
+    fn block_cursor_matches_the_root_walk_in_any_lookup_order() {
+        let mut trees: Vec<Octree> = (0..6).map(|seed| random_tree(4, 0x9e37_79b9 + seed)).collect();
+        let levels = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/levels");
+        for entry in std::fs::read_dir(levels).into_iter().flatten().flatten() {
+            if let Ok(tree) = Octree::load(&entry.path()) {
+                trees.push(tree);
+            }
+        }
+        for tree in &trees {
+            let dims = grid_cells(&tree.meta);
+            let blocks = dims.map(|d| d.div_ceil(LEAF_SIZE) + 1);
+            // Real levels have millions of blocks: sample a stride of them in raster order.
+            let total = u64::from(blocks[0]) * u64::from(blocks[1]) * u64::from(blocks[2]);
+            let stride = (total / 200_000).max(1);
+            let raster: Vec<[u32; 3]> = (0..total)
+                .step_by(stride as usize)
+                .map(|i| {
+                    let i = i as u32;
+                    [i % blocks[0], i / blocks[0] % blocks[1], i / (blocks[0] * blocks[1])]
+                        .map(|b| b * LEAF_SIZE + (i % 3))
+                })
+                .collect();
+            let mut state = 0x2545_f491u32;
+            let mut next = move || {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state
+            };
+            let jumps: Vec<[u32; 3]> = (0..20_000).map(|_| [0, 1, 2].map(|a| next() % (blocks[a] * LEAF_SIZE))).collect();
+            let mut at = [0u32; 3];
+            let walk: Vec<[u32; 3]> = (0..20_000)
+                .map(|_| {
+                    let axis = (next() % 3) as usize;
+                    let step = [0, 1, 4, 5][(next() % 4) as usize];
+                    at[axis] = if next() % 2 == 0 { at[axis] + step } else { at[axis].saturating_sub(step) }
+                        .min(blocks[axis] * LEAF_SIZE);
+                    at
+                })
+                .collect();
+            let reverse: Vec<[u32; 3]> = raster.iter().rev().copied().collect();
+            for (name, order) in [("raster", &raster), ("reverse", &reverse), ("jumps", &jumps), ("walk", &walk)] {
+                let mut cursor = BlockCursor::default();
+                for &cell in order {
+                    assert_eq!(
+                        tree.block_mask_with(&mut cursor, cell),
+                        tree.block_mask(cell),
+                        "{name} order, cell {cell:?}, depth {}",
+                        tree.meta.tree_depth
+                    );
+                }
+            }
+        }
     }
 
     #[test]

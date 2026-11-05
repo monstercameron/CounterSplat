@@ -2040,6 +2040,91 @@ fn benchmark_centre_stage_share() {
     );
 }
 
+/// Where an upload's CPU time goes on real chunks (`LOD_UPLOAD_LEVEL=<absolute level dir>`): the whole encode, the
+/// centre stage alone, and the centre stage with every index forced into the first 256 table entries (one L1-resident
+/// kilobyte a table), whose difference is what the 768 KB decode tables cost in cache misses.
+#[test]
+#[ignore = "manual real-asset CPU microbenchmark"]
+fn benchmark_upload_stages() {
+    use std::{hint::black_box, path::PathBuf, time::Instant};
+    let dir = std::env::var_os("LOD_UPLOAD_LEVEL").map(PathBuf::from).expect("set LOD_UPLOAD_LEVEL");
+    let meta = LodMeta::parse(&std::fs::read(dir.join("lod-meta.json")).unwrap()).unwrap();
+    let metas: Vec<Option<Vec<u8>>> =
+        meta.filenames.iter().map(|file| std::fs::read(dir.join(file)).ok()).collect();
+    let file = meta.filenames.iter().position(|f| f == "0_0/meta.json").unwrap();
+    let mut ranges: Vec<_> = meta
+        .leaves
+        .iter()
+        .filter_map(|leaf| leaf.lods.first().copied().flatten())
+        .filter(|range| range.file == file && range.count > 0)
+        .collect();
+    ranges.sort_by_key(|range| range.offset);
+    let stream = LevelStream::new(meta, &metas, StreamSettings::default()).unwrap();
+    let bundle = sog::load_dir(&dir.join(stream.meta.dir_of(file).unwrap())).unwrap();
+    let remap = stream.remaps[file].as_ref().unwrap();
+    let lookup = make_centre_lookup(&stream.shared).unwrap();
+    let splats: u64 = ranges.iter().map(|r| u64::from(r.count)).sum();
+    let factor = [0, 1, 2].map(|c| {
+        let span = (stream.shared.means_maxs[c] - stream.shared.means_mins[c]).max(f32::MIN_POSITIVE);
+        (
+            (remap.meta.means_maxs[c] - remap.meta.means_mins[c]) / span,
+            (remap.meta.means_mins[c] - stream.shared.means_mins[c]) / span * 65535.0,
+        )
+    });
+    let slices = |name: &str, range: crate::lod::Range| {
+        let (a, b) = (range.offset as usize * 4, (range.offset + range.count) as usize * 4);
+        &bundle.textures[name].rgba[a..b]
+    };
+    // The same streams with the high bytes cleared and the low bytes kept: indices stay below 256 after a unit rescale.
+    let narrow_hi = vec![0u8; bundle.textures["means_u"].rgba.len()];
+    let unit = [(1.0f32, 0.0f32); 3];
+    let mut scratch = EncodedUpload::default();
+    let mut centres = vec![[0f32; 3]; ranges.iter().map(|r| r.count as usize).max().unwrap()];
+    let mut best = [u128::MAX; 3];
+    for _ in 0..15 {
+        let start = Instant::now();
+        for &range in &ranges {
+            encode_upload_into(&mut scratch, &bundle, remap, &stream.shared, range, Some(1), Some(&lookup));
+        }
+        best[0] = best[0].min(start.elapsed().as_nanos());
+        let start = Instant::now();
+        for &range in &ranges {
+            let n = range.count as usize;
+            super::simd::centres(
+                black_box(&mut centres[..n]),
+                slices("means_l", range),
+                slices("means_u", range),
+                &factor,
+                &stream.shared,
+                Some(&lookup),
+            );
+        }
+        best[1] = best[1].min(start.elapsed().as_nanos());
+        let start = Instant::now();
+        for &range in &ranges {
+            let n = range.count as usize;
+            let (a, b) = (range.offset as usize * 4, (range.offset + range.count) as usize * 4);
+            super::simd::centres(
+                black_box(&mut centres[..n]),
+                slices("means_l", range),
+                &narrow_hi[a..b],
+                &unit,
+                &stream.shared,
+                Some(&lookup),
+            );
+        }
+        best[2] = best[2].min(start.elapsed().as_nanos());
+    }
+    let per = |ns: u128| ns as f64 / splats as f64;
+    println!(
+        "{splats} splats in {} ranges: whole encode {:.2} ns/splat, centres {:.2}, centres with L1-resident indices {:.2}",
+        ranges.len(),
+        per(best[0]),
+        per(best[1]),
+        per(best[2])
+    );
+}
+
 #[test]
 #[ignore = "manual real-asset CPU microbenchmark"]
 fn benchmark_reused_upload_buffers() {

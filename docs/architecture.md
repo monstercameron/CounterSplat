@@ -177,6 +177,37 @@ has it). No hand-written intrinsics: the portable form is bit-identical on every
   `benchmark_centre_stage_share` and `benchmark_reused_upload_buffers` (`LOD_UPLOAD_LEVEL=<absolute level dir>`) are
   the manual benchmarks.
 
+### CPU cache behaviour
+
+A pass over the CPU code for cache-unfriendly access, measured warm (data cached) and cold (64 MiB streamed through
+the caches first, as the renderer and scripts do between queries). Results must be bit-identical; every benchmark
+below prints a checksum or compares against the previous code.
+
+- Voxel octree lookups (`Octree::block_mask_with` + `BlockCursor` in `svo.rs`): every block lookup used to walk all
+  `tree_depth` levels from the root (9 dependent reads on the lobby's 6.4 MB tree). The cursor keeps the previous
+  walk's node at each depth and resumes from the deepest node the new block shares with the old one (the highest
+  differing bit of the block coordinates gives that depth), so neighbouring blocks cost one or two reads. Rays,
+  ground probes, capsule slabs, minimap slices and the debug voxel view use it; a wide slab (a minimap slice spans
+  360 blocks) now gets a heap block cache instead of re-reading a block for every 4-cell row segment.
+  `block_cursor_matches_the_root_walk_in_any_lookup_order` checks it against the root walk on random trees (solid
+  nodes, early mixed leaves, absent children) and the local levels' trees in raster, reverse, random-jump and
+  random-walk orders. `voxel_cache_bench` (interleaved against the previous build, lobby, 256 queries spread over the
+  level, identical checksums): ground probes 0.79-0.94 to 0.19 ms warm and 0.85 to 0.35-0.49 ms cold, capsule moves
+  7.9-8.3 to 5.2-5.9 ms, minimap slices 157-165 to 54-56 ms for 16; hitscan rays unchanged (they already reused the
+  current block).
+- Splat minimap (`SplatColumn` in `scene/src/minimap.rs`): each map request scanned every decoded centre (up to 3 M,
+  12 bytes each) to keep the few percent within the slab's height. Centres are now bucketed by height once per chunk
+  (a counting sort into up to 4096 buckets, 33 ms for 2.5 M) with heights in their own array, and a request reads
+  only the buckets the slab overlaps (plus one either side) and applies the original test: 2.19 to 0.39 ms per
+  request for 2.5 M centres. `height_bucketed_columns_draw_the_same_map_as_the_full_scan` compares the images,
+  including non-finite heights and centres exactly on the slab boundary.
+- Measured, not cache-bound (left as they are): the streaming upload's centre decode does three lookups per splat in
+  65,536-entry tables (768 KB), but on real streamed chunks (Morton-ordered) forcing every index into the first 256
+  entries changes nothing (2.24 against 2.22 ns a splat, `benchmark_upload_stages`), and its other stages are
+  sequential streams. The ECS keeps components in `BTreeMap`s, but the gameplay scene has 241 entities (217 of them
+  UI), which fit in cache whatever the layout. The collision queries' cold/warm gap was 3-19% before the cursor, so
+  the remaining capsule cost is the per-cell penetration arithmetic, not memory.
+
 ### Flame-graph segments (sort, draw, post, CPU)
 
 `docs/flamegraph/renderer-flamegraph.html` profiles a frame in the browser (`?stack_profile=1`): the GPU is the

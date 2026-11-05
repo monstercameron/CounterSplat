@@ -191,6 +191,121 @@ pub fn rasterize_splat_slice(chunks: &[Vec<f32>], position: [f64; 3], height: f6
     mask
 }
 
+/// One chunk's decoded splat centres grouped into height buckets (a counting sort), with the heights in their own
+/// array. A map slab keeps only the centres within `thickness / 2` of its height, a few percent of a level:
+/// `rasterize_splat_columns` reads just the buckets the slab overlaps and applies the original test to their centres,
+/// where `rasterize_splat_slice` streams every centre's 12 bytes through the cache on each request. Built once per
+/// decoded chunk, in linear time.
+#[derive(Debug, Clone, Default)]
+pub struct SplatColumn {
+    heights: Vec<f32>,
+    xz: Vec<[f32; 2]>,
+    /// Bucket b holds the centres `starts[b]..starts[b + 1]`; heights from `low` in steps of `step`.
+    starts: Vec<u32>,
+    low: f64,
+    step: f64,
+}
+
+impl SplatColumn {
+    /// From `decode_splat_centres` output (x, y, z per centre). Centres whose height is not finite never pass the
+    /// slab test, so they are left out.
+    pub fn new(points: &[f32]) -> Self {
+        let finite = || points.chunks_exact(3).filter(|p| p[1].is_finite());
+        let (low, high) = finite().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+            (lo.min(f64::from(p[1])), hi.max(f64::from(p[1])))
+        });
+        let count = finite().count();
+        if count == 0 {
+            return Self::default();
+        }
+        let buckets = (count / 64).clamp(1, 4096);
+        let step = ((high - low) / buckets as f64).max(f64::MIN_POSITIVE);
+        let bucket = |y: f32| (((f64::from(y) - low) / step) as usize).min(buckets - 1);
+        let mut starts = vec![0u32; buckets + 1];
+        for p in finite() {
+            starts[bucket(p[1]) + 1] += 1;
+        }
+        for b in 0..buckets {
+            starts[b + 1] += starts[b];
+        }
+        let mut fill = starts.clone();
+        let (mut heights, mut xz) = (vec![0f32; count], vec![[0f32; 2]; count]);
+        for p in finite() {
+            let at = &mut fill[bucket(p[1])];
+            heights[*at as usize] = p[1];
+            xz[*at as usize] = [p[0], p[2]];
+            *at += 1;
+        }
+        Self { heights, xz, starts, low, step }
+    }
+
+    pub fn len(&self) -> usize {
+        self.heights.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.heights.is_empty()
+    }
+
+    /// The centres a slab `height ± half` may keep: the buckets it overlaps, widened by one on each side so rounding
+    /// in the bucket arithmetic can never leave a kept centre out. The caller applies the exact test to each.
+    fn candidates(&self, height: f64, half: f64) -> std::ops::Range<usize> {
+        let buckets = self.starts.len().saturating_sub(1);
+        if buckets == 0 || !height.is_finite() || !half.is_finite() {
+            return 0..self.heights.len();
+        }
+        let index = |y: f64| ((y - self.low) / self.step).floor();
+        let first = (index(height - half) - 1.0).clamp(0.0, buckets as f64) as usize;
+        let last = (index(height + half) + 2.0).clamp(0.0, buckets as f64) as usize;
+        self.starts[first] as usize..self.starts[last.max(first)] as usize
+    }
+}
+/// Marks `(x, y)` at full strength and its neighbours at 96, keeping the strongest mark per pixel.
+#[inline]
+fn stamp(mask: &mut [u8], size: i64, x: i64, y: i64) {
+    for oy in -1..=1 {
+        for ox in -1..=1 {
+            let (qx, qy) = (x + ox, y + oy);
+            if (0..size).contains(&qx) && (0..size).contains(&qy) {
+                let cell = &mut mask[(qy * size + qx) as usize];
+                *cell = (*cell).max(if ox == 0 && oy == 0 { 255 } else { 96 });
+            }
+        }
+    }
+}
+
+/// `rasterize_splat_slice` over height-bucketed columns: the same image (each pixel keeps its strongest mark, so the
+/// order the centres are visited in does not matter, and each candidate gets the same slab test), reading only the
+/// buckets near the slab.
+pub fn rasterize_splat_columns(
+    columns: &[SplatColumn],
+    position: [f64; 3],
+    height: f64,
+    radius: f64,
+    thickness: f64,
+    size: u32,
+) -> Vec<u8> {
+    let size_i = size as i64;
+    let mut mask = vec![0u8; (size * size) as usize];
+    let factor = f64::from(size) / (radius * 2.0);
+    let half = thickness * 0.5;
+    for column in columns {
+        let range = column.candidates(height, half);
+        for (&py, &[px, pz]) in column.heights[range.clone()].iter().zip(&column.xz[range]) {
+            if (f64::from(py) - height).abs() > half {
+                continue;
+            }
+            let x = ((f64::from(px) - position[0] + radius) * factor).floor();
+            let y = ((f64::from(pz) - position[2] + radius) * factor).floor();
+            if !(0.0..f64::from(size)).contains(&x) || !(0.0..f64::from(size)).contains(&y) {
+                continue;
+            }
+            stamp(&mut mask, size_i, x as i64, y as i64);
+        }
+    }
+    mask
+}
+
 /// Caps a voxel slice's radius so a large map on a fine grid stays within about 14 M cell visits (boundary cells
 /// counted conservatively).
 pub fn bounded_voxel_radius(radius: f64, thickness: f64, resolution: f64) -> f64 {
@@ -265,6 +380,72 @@ pub fn colorize(mask: &[u8], size: u32) -> Vec<u8> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Random centres spread over 40 x 30 x 40, with non-finite heights and centres exactly on slab boundaries mixed in.
+    fn cloud(n: usize, seed: u32) -> Vec<f32> {
+        let mut state = seed | 1;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 8) as f32 / 16_777_216.0
+        };
+        (0..n)
+            .flat_map(|i| {
+                let y = match i % 97 {
+                    0 => f32::NAN,
+                    1 => f32::INFINITY,
+                    2 => 1.0 + 0.2, // exactly on the upper boundary of the height-1.0, thickness-0.4 slab
+                    3 => 1.0 - 0.2,
+                    _ => next() * 30.0 - 5.0,
+                };
+                [next() * 40.0 - 20.0, y, next() * 40.0 - 20.0]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn height_bucketed_columns_draw_the_same_map_as_the_full_scan() {
+        let chunks: Vec<Vec<f32>> = (0..3).map(|k| cloud(20_000 + k * 777, 7 + k as u32)).collect();
+        let columns: Vec<SplatColumn> = chunks.iter().map(|c| SplatColumn::new(c)).collect();
+        let finite: usize = chunks.iter().map(|c| c.chunks_exact(3).filter(|p| p[1].is_finite()).count()).sum();
+        assert_eq!(columns.iter().map(SplatColumn::len).sum::<usize>(), finite);
+        let mut lit = 0;
+        for (height, thickness) in [(1.0, 0.4), (-4.9, 0.4), (12.37, 2.0), (24.99, 0.01), (100.0, 0.4), (3.0, 60.0)] {
+            for (position, radius, size) in [([0.0, 0.0, 0.0], 12.0, 128), ([7.5, 0.0, -3.25], 4.0, 64), ([-19.0, 0.0, 19.0], 30.0, 256)] {
+                let expected = rasterize_splat_slice(&chunks, position, height, radius, thickness, size);
+                let actual = rasterize_splat_columns(&columns, position, height, radius, thickness, size);
+                assert_eq!(actual, expected, "height {height}, thickness {thickness}, position {position:?}");
+                lit += expected.iter().filter(|&&v| v > 0).count();
+            }
+        }
+        assert!(lit > 10_000, "the maps are not empty");
+    }
+
+    #[test]
+    #[ignore = "manual CPU microbenchmark"]
+    fn benchmark_splat_map_slab() {
+        use std::{hint::black_box, time::Instant};
+        let chunks = vec![cloud(2_500_000, 3)];
+        let columns: Vec<SplatColumn> = chunks.iter().map(|c| SplatColumn::new(c)).collect();
+        let time = |f: &dyn Fn() -> Vec<u8>| {
+            let mut best = f64::MAX;
+            for _ in 0..9 {
+                let start = Instant::now();
+                black_box(f());
+                best = best.min(start.elapsed().as_secs_f64() * 1e3);
+            }
+            best
+        };
+        let scan = time(&|| rasterize_splat_slice(black_box(&chunks), [0.0; 3], 1.0, 12.0, 0.4, 128));
+        let slab = time(&|| rasterize_splat_columns(black_box(&columns), [0.0; 3], 1.0, 12.0, 0.4, 128));
+        let start = Instant::now();
+        black_box(SplatColumn::new(&chunks[0]));
+        println!(
+            "2.5 M centres, 0.4 slab: full scan {scan:.2} ms, height-bucketed {slab:.3} ms; bucketing once {:.1} ms",
+            start.elapsed().as_secs_f64() * 1e3
+        );
+    }
 
     fn request(x: f64) -> Request {
         Request::parse(&json!({"position":[x,2,0],"feet":0.3,"units":1,"radius":12,"height":0.9144,"thickness":0.4,"size":32})).unwrap()
