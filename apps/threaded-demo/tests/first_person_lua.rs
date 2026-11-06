@@ -303,11 +303,19 @@ fn a_crouch_slide_drives_the_weapon_slide_state() {
     f.lua.dispatch("player.slide", &json!({"active": true})).unwrap();
     f.tick(2);
     assert_eq!(f.state()["state"], "slide");
-    assert_eq!(f.world.borrow_mut().drain_events("first_person.frame").pop().unwrap()["clip"], "slide");
+    let entering = f.world.borrow_mut().drain_events("first_person.frame").pop().unwrap();
+    assert_eq!(entering["clip"], "slide");
+    // The drop into the slide plays over the clip's duration, then holds on its last frame.
+    f.tick(40);
+    let frames = f.world.borrow_mut().drain_events("first_person.frame");
+    let held = frames.iter().rev().find(|e| e["clip"] == "slide").unwrap_or(&entering);
+    assert!(held["index"].as_u64() > entering["index"].as_u64(), "the slide entry plays: {entering} -> {held}");
     f.lua.dispatch("player.slide", &json!({"active": false})).unwrap();
     f.key("ShiftLeft", false);
     f.key("KeyW", false);
     f.tick(2);
+    assert_eq!(f.state()["state"], "slideExit", "getting up plays the slide exit");
+    f.tick(30);
     assert_eq!(f.state()["state"], "lowReady");
 
     f.lua.dispatch("player.slide", &json!({"active": true})).unwrap();
@@ -429,7 +437,7 @@ fn aim_reversal_burst_stow_and_input_reset_are_scripted() {
     f.tick(1);
     f.key("KeyF", true);
     f.key("KeyF", false);
-    f.tick(35);
+    f.tick(40);
     assert_eq!(f.state()["state"], "noGun");
     f.mouse("left", true);
     f.tick(60);
@@ -659,10 +667,42 @@ fn ads_shots_show_authored_flash_then_return_to_the_aimed_pose() {
     assert_eq!(f.state()["shots"], 1);
 }
 
+/// From an idle low ready, stowing plays the holster footage out of frame and equipping plays it backwards; the
+/// footage does the lowering, so the view model is neither faded nor pushed down.
 #[test]
-fn stowing_and_equipping_lower_and_fade_the_viewmodel() {
+fn stowing_and_equipping_from_low_ready_play_the_holster_clip() {
     let f = Fixture::new();
     f.tick(1);
+    f.key("KeyF", true);
+    f.key("KeyF", false);
+    f.tick(15);
+    let frames = f.world.borrow_mut().drain_events("first_person.frame");
+    let mid = frames.last().unwrap();
+    assert_eq!(mid["clip"], "holster");
+    let stowing = mid["index"].as_u64().unwrap();
+    assert!(stowing > 1 && stowing < 17, "mid-holster: {mid}");
+    assert!(mid["motion_y"].as_f64().unwrap().abs() < 0.02, "{mid}");
+    assert_eq!(mid["opacity"].as_f64().unwrap(), 1.0);
+    f.tick(25);
+    assert_eq!(f.state()["state"], "noGun");
+    f.key("KeyF", true);
+    f.key("KeyF", false);
+    f.tick(10);
+    let frames = f.world.borrow_mut().drain_events("first_person.frame");
+    let drawing = frames.last().unwrap();
+    assert_eq!(drawing["clip"], "holster");
+    assert_eq!(drawing["direction"], -1, "equipping plays the holster backwards");
+    assert_eq!(drawing["opacity"].as_f64().unwrap(), 1.0);
+    f.tick(40);
+    assert_eq!(f.state()["state"], "lowReady");
+}
+
+/// Stowing from any other pose (here ADS) freezes that pose and lowers and fades it procedurally.
+#[test]
+fn stowing_from_ads_lowers_and_fades_the_viewmodel() {
+    let f = Fixture::new();
+    f.mouse("right", true);
+    f.tick(30);
     f.key("KeyF", true);
     f.key("KeyF", false);
     f.tick(15);
@@ -672,13 +712,6 @@ fn stowing_and_equipping_lower_and_fade_the_viewmodel() {
     assert!(mid["opacity"].as_f64().unwrap() < 0.9);
     f.tick(20);
     assert_eq!(f.state()["state"], "noGun");
-    f.key("KeyF", true);
-    f.key("KeyF", false);
-    f.tick(10);
-    let frames = f.world.borrow_mut().drain_events("first_person.frame");
-    assert!(frames.last().unwrap()["opacity"].as_f64().unwrap() < 1.0);
-    f.tick(40);
-    assert_eq!(f.state()["state"], "lowReady");
 }
 
 #[test]
@@ -1396,8 +1429,10 @@ fn death_during_stow_or_equip_keeps_the_current_weapon_visibility() {
             .drain_events("first_person.frame")
             .pop()
             .unwrap();
+        // Mid-holster: the footage is part-way out of frame at full opacity.
+        assert_eq!(before["clip"], "holster");
         let opacity = before["opacity"].as_f64().unwrap();
-        assert!(opacity > 0.05 && opacity < 0.95);
+        assert_eq!(opacity, 1.0);
         f.lua.dispatch("weapon.die", &json!({})).unwrap();
         f.tick(1);
         let after = f
@@ -1411,6 +1446,8 @@ fn death_during_stow_or_equip_keeps_the_current_weapon_visibility() {
             next <= opacity + 0.01 && next >= opacity - 0.1,
             "death should continue from the visible pose: before={opacity}, after={next}"
         );
+        assert_eq!(after["clip"], "holster", "death freezes the visible holster frame");
+        assert_eq!(after["index"], before["index"]);
     }
 }
 
@@ -1484,4 +1521,43 @@ fn each_sprint_direction_is_its_own_state_with_its_own_clip() {
     assert_eq!(last_frame(&f)["clip"], "runFromLow", "releasing sprint carries back to low ready");
     f.tick(40);
     assert_eq!(f.state()["state"], "lowReady");
+}
+
+/// Aimed shots in the shipped scene leave through the revolver's front sight (FirstPersonView.ads_sight, the
+/// fiber-optic dot in the ADS frame) as the renderer draws it, not through the screen centre.
+#[test]
+fn ads_shots_leave_through_the_drawn_front_sight() {
+    let f = Fixture::as_shipped();
+    f.tick(10);
+    f.mouse("right", true);
+    f.tick(40);
+    assert_eq!(f.state()["state"], "ads");
+    f.lua
+        .dispatch(
+            "first_person.presentation",
+            &json!({"visible": true, "clip": "raising", "index": 33,
+                    "motion_x": 0.0, "motion_y": 0.0, "motion_roll": 0.0, "vertical_offset": 0.055}),
+        )
+        .unwrap();
+    let (yaw, pitch, fov) = {
+        let world = f.world.borrow();
+        let camera = world.get::<countersplat_scene::PlayerCamera>(f.player).unwrap();
+        (camera.yaw as f64, camera.pitch as f64, camera.view_fov_degrees.unwrap_or(camera.fov_degrees) as f64)
+    };
+    assert!(yaw.abs() < 1e-9 && pitch.abs() < 1e-9, "the projection below assumes a level camera facing -Z");
+    f.mouse("left", true);
+    f.mouse("left", false);
+    f.tick(1);
+    let shot = f.world.borrow_mut().drain_events("weapon.shot").pop().expect("an aimed shot");
+    let d: Vec<f64> = (0..3).map(|i| shot["direction"][i].as_f64().unwrap()).collect();
+    let tangent = (fov.to_radians() * 0.5).tan();
+    let screen_x = 0.5 + d[0] / (-d[2]) / (2.0 * 16.0 / 9.0 * tangent);
+    let screen_y = 0.5 - d[1] / (-d[2]) / (2.0 * tangent);
+    let sight = f.world.borrow().get_dynamic(f.entity, "FirstPersonView").unwrap()["ads_sight"].clone();
+    // A 16:9 view shows the frame whole; the renderer pushes it down by vertical_offset.
+    let expected_x = sight[0].as_f64().unwrap() / 1280.0;
+    let expected_y = sight[1].as_f64().unwrap() / 720.0 + 0.055;
+    assert!((screen_x - expected_x).abs() < 1e-6, "x {screen_x} vs {expected_x}");
+    assert!((screen_y - expected_y).abs() < 1e-6, "y {screen_y} vs {expected_y}");
+    assert!(screen_y < 0.5, "the sight is drawn above the screen centre, so the shot goes there");
 }

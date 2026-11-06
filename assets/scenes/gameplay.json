@@ -4982,6 +4982,476 @@
         "uri": "../images/first-person/playback/slide/0001.webp",
         "load": "preload"
       },
+      "first-person-frame-reload-in-low-01": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0001.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-02": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0002.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-03": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0003.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-04": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0004.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-05": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0005.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-06": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0006.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-07": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0007.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-08": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0008.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-09": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0009.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-10": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0010.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-11": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0011.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-12": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0012.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-13": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0013.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-14": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0014.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-low-15": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInLow/0015.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-01": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0001.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-02": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0002.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-03": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0003.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-04": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0004.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-05": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0005.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-06": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0006.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-07": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0007.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-08": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0008.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-09": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0009.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-10": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0010.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-11": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0011.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-12": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0012.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-13": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0013.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-14": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0014.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-in-ads-15": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadInADS/0015.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-01": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0001.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-02": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0002.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-03": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0003.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-04": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0004.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-05": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0005.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-06": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0006.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-07": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0007.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-08": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0008.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-09": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0009.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-10": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0010.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-11": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0011.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-12": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0012.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-13": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0013.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-14": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0014.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-reload-out-ads-15": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/reloadOutADS/0015.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-01": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0001.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-02": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0002.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-03": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0003.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-04": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0004.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-05": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0005.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-06": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0006.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-07": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0007.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-08": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0008.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-09": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0009.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-10": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0010.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-inspect-in-11": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/inspectIn/0011.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-01": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0001.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-02": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0002.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-03": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0003.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-04": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0004.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-05": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0005.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-06": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0006.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-07": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0007.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-08": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0008.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-09": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0009.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-10": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0010.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-in-11": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideIn/0011.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-01": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0001.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-02": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0002.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-03": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0003.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-04": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0004.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-05": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0005.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-06": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0006.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-07": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0007.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-08": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0008.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-09": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0009.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-10": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0010.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-slide-out-11": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/slideOut/0011.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-01": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0001.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-02": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0002.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-03": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0003.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-04": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0004.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-05": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0005.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-06": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0006.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-07": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0007.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-08": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0008.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-09": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0009.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-10": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0010.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-11": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0011.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-12": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0012.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-13": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0013.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-14": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0014.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-holster-15": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/0015.webp",
+        "load": "streamable"
+      },
+      "first-person-frame-empty": {
+        "kind": "first_person_frame",
+        "uri": "../images/first-person/playback/holster/empty.webp",
+        "load": "streamable"
+      },
       "sound-rifle-shot": { "kind": "sound", "uri": "../sound/first-person/rifle-shot.mp3", "load": "preload" },
       "sound-rifle-reload": { "kind": "sound", "uri": "../sound/first-person/rifle-reload.mp3", "load": "preload" },
       "sound-dry-fire": { "kind": "sound", "uri": "../sound/first-person/dry-fire.mp3", "load": "preload" },
@@ -5325,11 +5795,11 @@
         "duration": 4
       },
       "reloadADS": {
-        "frames": 97,
+        "frames": 116,
         "duration": 4
       },
       "reload": {
-        "frames": 97,
+        "frames": 100,
         "duration": 4
       },
       "crouchEnterADS": {
@@ -5380,20 +5850,23 @@
       "runLeft": { "frames": 2, "duration": 1.6 },
       "runRight": { "frames": 2, "duration": 1.6 },
       "runBackward": { "frames": 2, "duration": 1.6 },
-      "slide": { "frames": 1, "duration": 1.0 },
+      "slide": { "frames": 13, "duration": 0.4 },
+      "slideExit": { "frames": 13, "duration": 0.45 },
+      "holster": { "frames": 17, "duration": 0.6 },
       "fireHip": {
         "frames": 7,
-        "duration": 0.14
+        "duration": 0.14,
+        "enabled": false
       },
       "fireADS": {
         "frames": 7,
         "duration": 0.14,
         "enabled": true,
         "sight_frame_size": [1280, 720],
-        "sight_anchors": [[640, 361], [640, 365], [639, 310], [638, 305], [638, 343], [641, 361], [640, 361]]
+        "sight_anchors": [[638, 139], [638, 139], [639, 306], [639, 306], [639, 306], [639, 306], [639, 306]]
       },
       "inspect": {
-        "frames": 9,
+        "frames": 25,
         "duration": 2.4
       }
     }
@@ -10231,6 +10704,7 @@
         "FirstPersonView": {
           "enabled": true,
           "aim_from_camera": true,
+          "ads_sight": [639, 306],
           "opacity": 1.0,
           "key_threshold": 0.14,
           "key_softness": 0.28,

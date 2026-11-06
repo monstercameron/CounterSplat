@@ -1086,7 +1086,7 @@ fn q_opens_the_hud_and_turns_the_weapon_into_its_inspect_pose() {
     assert_eq!(state(&f), "inspecting", "Q holds the weapon in its inspect pose");
     let frame = f.world.borrow_mut().drain_events("first_person.frame").pop().unwrap();
     assert_eq!(frame["clip"], "inspect");
-    assert_eq!(frame["index"], 5, "the observe still");
+    assert_eq!(frame["index"], 13, "the observe still, in the middle of the inspect clip");
 }
 
 /// Q pressed while the weapon is still raised from a shot opens the HUD at once and turns the weapon into its

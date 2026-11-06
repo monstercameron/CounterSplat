@@ -42,19 +42,43 @@ Controls in the gameplay canvas:
   The body stays crouched for the whole slide even if C is released;
   releasing the movement key that started it (W) or jumping cancels it.
   Afterwards you stay crouched only while C is still held. The weapon follows the
-  `player.slide` events into its `slide` state; aiming or firing leaves it.
+  `player.slide` events into its `slide` state and gets up through
+  `slideExit`; aiming or firing leaves it.
 - Q (inspection HUD) and I inspect the weapon from an idle low ready:
   `inspectEnter` turns it into the observe pose, `inspecting` holds it and
   `inspectExit` returns. Q holds it for as long as the HUD is open; I for
   `WeaponConfig.inspect_seconds` (2.4 s). Aiming, firing, sprinting or
   reloading cancels it.
 
-Until real footage is filmed, every clip shows revolver concept stills
-(`docs/concepts/revolver/`): `manifest.json` repeats a few stills in each
-clip's frame list so poses change at the right phase, and Lua's frame counts
-are unchanged. The stills have no authored sight landmarks, so the shipped
-scene sets `FirstPersonView.aim_from_camera` and shots leave through the
-camera centre. To regenerate the frames, convert each still with
+The revolver's poses are concept stills (`docs/concepts/revolver/`), and the
+moves between them are being filled with Seedance 2.5 footage generated from
+each pair of stills (`scripts/seedance_frames.py`, which also keys the frames
+and spaces them evenly along the motion). Footage so far:
+
+- low ready → hip → ADS (`raising`);
+- the low ready / ADS → sprint carries (`runFromLow`, `runFromADS`);
+- the reload, from low ready or ADS: open the cylinder, the filmed reload, then
+  close back into the same pose (`reload`, `reloadADS`);
+- the inspect turn (`inspect`: low ready → observe pose → back);
+- the slide: the drop plays over `slide`'s duration and holds until the slide
+  ends, then `slideExit` gets up into low ready (aiming or firing skips it);
+- the holster (`holster`): stowing from an idle low ready plays it out of
+  frame and equipping plays it backwards. Stowing from any other pose freezes
+  that pose and lowers and fades it.
+
+The idle and sprint loops, crouch and the ADS shot still repeat stills. Hip fire has no
+shot footage (`fireHip` is disabled: generated takes lunged the barrel out of
+the frame), so a hip shot holds the hip pose and kicks it with the spring
+recoil. Every shot's view-model kick scales with the weapon's resolved
+`WeaponRecoil.vertical_degrees` relative to the 0.55° carbine the springs were
+tuned on, so the .500 Magnum (1.84°) kicks about 3.3 times as hard.
+`scripts/footage_manifest.py` writes `manifest.json`'s frame lists so poses
+change at the right phase; Lua's frame counts are unchanged. Hip shots leave through the camera centre
+(`FirstPersonView.aim_from_camera`). Aimed shots leave through the revolver's
+front sight as it is drawn: `FirstPersonView.ads_sight` is the fiber-optic dot's
+pixel in the 1280x720 ADS frame (639, 306), and the `fireADS` clip's
+`sight_anchors` mark the post in each fire frame, so sway, recoil and the
+frame's vertical offset move the aim with the sight. To regenerate the frames, convert each still with
 `cargo run --release -p countersplat-assets --example footage_still -- in.png out.webp`
 and copy it to the path named in the manifest.
 

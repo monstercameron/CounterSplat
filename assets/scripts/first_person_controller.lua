@@ -166,6 +166,8 @@ local function clamp(v,a,b) return math.max(a,math.min(b,v)) end
 local function lowered_amount()
     if s.state=='noGun' or s.state=='dead' then return 1 end
     if s.state~='stow' and s.state~='equip' and s.state~='death' then return 0 end
+    -- The holster footage lowers the weapon out of frame itself.
+    if s.clip=='holster' then return 0 end
     local progress=clamp(s.time/math.max(s.duration,.001),0,1)
     local smooth=progress*progress*(3-2*progress)
     local start=s.lower_from
@@ -241,7 +243,7 @@ local function stable(state)
     elseif state=='hipFire' then s.clip,s.to='raising',HIP
     elseif is_run(state) then s.clip,s.to=run_clip(state),0
     elseif state=='inspecting' then s.clip,s.to='inspect',.5
-    elseif state=='slide' then s.clip,s.to=clips.slide and 'slide' or 'raising',0
+    elseif state=='slide' then s.clip,s.to=clips.slide and 'slide' or 'raising',0; s.slide_time=0
     else s.clip,s.to='raising',0 end
     s.from=s.to
     s.idle_settle=.12
@@ -259,7 +261,7 @@ local function reload()
         slot,seconds=spare(),setting('reload_seconds',4,.1,15)
         if not slot then return end
     end
-    if INSPECT_STATES[s.state] then stable('lowReady') end
+    if INSPECT_STATES[s.state] or s.state=='slideExit' then stable('lowReady') end
     -- Let a committed shot display its flash before changing clips.
     if s.flash>0 and (s.state=='ads' or s.state=='hipFire') then
         s.reload_requested=true; stop_trigger(); return
@@ -332,6 +334,12 @@ local function shoot(cadence_remainder)
     end
     local default_u=s.flash_stance=='ads' and 640/1280 or 641/1280
     local default_v=s.flash_stance=='ads' and 361/720 or 329/720
+    -- FirstPersonView.ads_sight is the front sight's pixel in the 1280x720 ADS frame (the fiber-optic dot on
+    -- the post), so aimed shots leave through the sight the player lines up.
+    local ads_sight=view.ads_sight
+    if s.flash_stance=='ads' and type(ads_sight)=='table' and type(ads_sight[1])=='number' and type(ads_sight[2])=='number' then
+        default_u,default_v=clamp(ads_sight[1]/1280,0,1),clamp(ads_sight[2]/720,0,1)
+    end
     -- Optional per-frame source-image landmarks make filmed recoil follow the
     -- visible sight. An unannotated clip retains the old stance landmark.
     local function sight(clip,index)
@@ -364,8 +372,9 @@ local function shoot(cadence_remainder)
     local screen_x,screen_y
     if aspect>source then screen_x,screen_y=.5+(frame_x-.5)*source/aspect,frame_y
     else screen_x,screen_y=frame_x,1+(frame_y-1)*aspect/source end
-    -- Stand-in stills have no authored sight landmarks, so the view can aim through the camera centre.
-    if view.enabled~=true or view.aim_from_camera==true or (type(view.opacity)=='number' and view.opacity<=0) then
+    -- Hip shots can aim through the camera centre (aim_from_camera); aimed shots always follow the sight.
+    if view.enabled~=true or (view.aim_from_camera==true and s.flash_stance~='ads') or
+       (type(view.opacity)=='number' and view.opacity<=0) then
         screen_x,screen_y=.5,.5
     end
     local fov=type(camera.view_fov_degrees)=='number' and camera.view_fov_degrees or camera.fov_degrees
@@ -405,8 +414,12 @@ local function shoot(cadence_remainder)
         s.camera_kick_yaw=clamp(s.camera_kick_yaw+
             math.rad(recoil_setting('horizontal_degrees',.12,0,2))*side*kick,-math.rad(30),math.rad(30))
     end
+    -- The view-model kick scales with the weapon's resolved recoil (WeaponRecoil.vertical_degrees, which its
+    -- profile derives from felt recoil), relative to the 0.55-degree carbine these spring impulses were tuned on.
+    local profile_kick=1
+    if recoil and type(recoil.vertical_degrees)=='number' then profile_kick=clamp(recoil.vertical_degrees/.55,.4,4) end
     local weight=animation_setting('recoil_strength',1,0,3)*(s.recoil_hip and 1.15 or .8)*
-        (1+s.recoil_heat*(s.recoil_hip and .3 or .15))*stability_recoil
+        (1+s.recoil_heat*(s.recoil_hip and .3 or .15))*stability_recoil*profile_kick
     s.recoil_x.v=s.recoil_x.v+(side*.30+s.recoil_bias*.12)*weight*.64
     s.recoil_y.v=s.recoil_y.v-(.82+side*.13)*weight
     s.recoil_roll.v=s.recoil_roll.v+side*.24*weight*.64
@@ -444,8 +457,15 @@ local function equip()
     -- Stowing interrupts a carry or reload without completing a magazine swap.
     stop_trigger(); s.reload_requested=false; s.equip_requested=false
     s.reload_slot=nil; s.reload_held=false; s.reload_time=0
+    -- From an idle low ready the holster footage carries the weapon to the hip and out of frame; equipping plays
+    -- it in reverse. Any other pose (aiming, sprinting, mid-transition) freezes and lowers procedurally.
+    local holster=clips.holster and (clips.holster.duration or .6)
     if s.state=='noGun' then
-        s.frozen_pose=nil; transition('equip','raising',0,0,.7,'lowReady'); s.lower_from=1
+        s.frozen_pose=nil
+        if holster then transition('equip','holster',1,0,holster,'lowReady')
+        else transition('equip','raising',0,0,.7,'lowReady'); s.lower_from=1 end
+    elseif holster and s.state=='lowReady' and s.duration<=0 then
+        s.frozen_pose=nil; transition('stow','holster',0,1,holster,'noGun')
     else
         local current,lowered=phase(),lowered_amount()
         s.frozen_pose=last_pose
@@ -455,7 +475,7 @@ local function equip()
 end
 -- Inspect from an idle low ready. `held` keeps the observe pose until end_inspect (the inspection HUD's
 -- lifetime); otherwise it returns after `inspect_seconds`. Aim, fire, sprint or reload cancel it.
-local INSPECT_TURN=.35
+local INSPECT_TURN=.5
 local function inspect(held)
     if s.state=='inspectEnter' or s.state=='inspecting' then
         if held then s.inspect_held=true end
@@ -602,7 +622,7 @@ local function present()
     local visible=view.enabled==true and s.state~='noGun' and s.state~='dead'
     local clip,p,direction,loop=s.clip,phase(),1,false
     if s.edge_a then direction=s.to>=s.from and 1 or -1
-    elseif HIP_TRANSITIONS[s.state] then direction=s.to>=s.from and 1 or -1 end
+    elseif HIP_TRANSITIONS[s.state] or s.clip=='holster' then direction=s.to>=s.from and 1 or -1 end
     local fire=s.flash_stance=='ads' and 'fireADS' or 'fireHip'
     if (s.state=='stow' or s.state=='death') and s.frozen_pose then
         clip,p,direction=s.frozen_pose.clip,s.frozen_pose.p,s.frozen_pose.direction
@@ -612,6 +632,9 @@ local function present()
         clip=run_clip(s.state)
         local period=clips[clip].duration or 1.6
         p=(s.run_clock%period)/period; loop=true
+    elseif s.state=='slide' and clip=='slide' then
+        -- The drop into the slide plays over the clip's duration, then holds until the slide ends.
+        p=clamp((s.slide_time or 0)/math.max(.01,clips.slide.duration or .4),0,1)
     elseif s.crouch>0 and (s.state=='lowReady' or s.state=='ads') and s.duration<=0 then
         local stance=s.state=='ads' and 'ADS' or 'Low'
         if s.crouch<.999 then
@@ -899,12 +922,20 @@ ecs.system('player.first_person',function(dt)
     local shooting=wants_shot()
     -- A slide takes over from low ready, a sprint or a carry between them; aiming or firing leaves it while the
     -- body keeps sliding, and when the slide ends the weapon settles into the crouch.
-    local slide_from=s.state=='lowReady' or is_run(s.state) or s.state=='lowToRun' or s.state=='runToLow'
+    local slide_from=s.state=='lowReady' or is_run(s.state) or s.state=='lowToRun' or s.state=='runToLow' or
+        s.state=='slideExit'
     if s.sliding and not s.aim and not shooting and (s.state=='slide' or slide_from) then
         if s.state~='slide' then s.edge_a,s.edge_b,s.edge_duration=nil,nil,nil; stable('slide') end
+        s.slide_time=(s.slide_time or 0)+dt
         present(); return
     end
-    if s.state=='slide' then stable('lowReady') end
+    if s.state=='slide' then
+        -- Getting up plays the slide exit into low ready; aiming or firing skips straight to the weapon.
+        if clips.slideExit and not (s.aim or shooting) then
+            transition('slideExit','slideExit',0,1,clips.slideExit.duration or .45,'lowReady')
+        else stable('lowReady') end
+    end
+    if s.state=='slideExit' and (s.aim or shooting) then stable('lowReady') end
     local quick_fire=sprint and not s.aim and shooting
     -- A raised hip-fire pose can coexist with sprint locomotion. Only return
     -- to the run carry after the requested shot/burst and flash have finished.

@@ -19,6 +19,8 @@ pub fn gameplay_with_ready_weapon(root: &Path) -> Vec<u8> {
     components["WeaponState"]["state"] = "lowReady".into();
     components["FirstPersonView"]["enabled"] = true.into();
     components["FirstPersonView"].as_object_mut().unwrap().remove("aim_from_camera");
+    // The projection tests use the generic default ADS landmark; the shipped front-sight landmark has its own test.
+    components["FirstPersonView"].as_object_mut().unwrap().remove("ads_sight");
     // Weapon mechanics are tested against the authored select-fire values, not the shipped revolver profile.
     components.as_object_mut().unwrap().remove("WeaponProfile");
     serde_json::to_vec(&scene).unwrap()

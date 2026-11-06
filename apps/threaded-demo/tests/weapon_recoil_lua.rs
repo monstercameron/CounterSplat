@@ -161,6 +161,39 @@ fn shot_rises_smoothly_stays_raised_and_accepts_mouse_compensation() {
 }
 
 #[test]
+fn hip_shot_holds_the_hip_pose_and_kicks_with_the_weapon_profile() {
+    // Highest view-model offset (negative motion_y is up) during one hip shot, given the resolved recoil.
+    let kick = |vertical_degrees: f64| {
+        let f = Fixture::new();
+        f.world
+            .borrow_mut()
+            .write_component_field(f.ids["first_person"], "WeaponAnimation", "recoil_strength", json!(1.0))
+            .unwrap();
+        f.set_recoil("vertical_degrees", json!(vertical_degrees));
+        f.tick(5, 60.0);
+        f.world.borrow_mut().drain_events("first_person.frame");
+        f.fire_single();
+        let (mut peak, mut clips) = (0.0f64, Vec::new());
+        for _ in 0..60 {
+            f.tick(1, 60.0);
+            for frame in f.world.borrow_mut().drain_events("first_person.frame") {
+                peak = peak.min(frame["motion_y"].as_f64().unwrap());
+                clips.push(frame["clip"].as_str().unwrap().to_owned());
+            }
+        }
+        assert_eq!(f.shots().len(), 1, "a tap from low ready fires one hip shot");
+        // Generated hip-shot footage lunged the barrel out of the frame, so the hip pose kicks procedurally.
+        assert!(!clips.iter().any(|c| c == "fireHip"), "hip fire stays on the hip pose: {clips:?}");
+        peak
+    };
+    let carbine = kick(0.55);
+    let magnum = kick(1.84); // revolver_500's resolved kick
+    assert!(carbine < -0.005, "a light gun still kicks the view model: {carbine}");
+    assert!(magnum < carbine * 2.5, "heavier recoil kicks harder: {carbine} vs {magnum}");
+    assert!(magnum < -0.03 && magnum > -0.09, "a magnum kick is visible and stays in frame: {magnum}");
+}
+
+#[test]
 fn automatic_fire_accumulates_and_does_not_recentre() {
     let f = Fixture::new();
     f.aim();
@@ -300,8 +333,16 @@ fn ads_shots_follow_the_actual_presented_recoil_frame_and_motion() {
         let projected_x = 0.5 + dx / (-dz) / (2.0 * aspect * tangent);
         let projected_y = 0.5 - dy / (-dz) / (2.0 * tangent);
 
-        let u = (640.0 + (638.0 - 640.0) * blend) / 1280.0;
-        let v = (361.0 + (305.0 - 361.0) * blend) / 720.0;
+        // The fourth fireADS frame's authored sight landmark, blended from the default ADS landmark.
+        let anchor = f
+            .world
+            .borrow()
+            .get_dynamic_resource("first_person_clips")
+            .unwrap()["fireADS"]["sight_anchors"][3]
+            .clone();
+        let (ax, ay) = (anchor[0].as_f64().unwrap(), anchor[1].as_f64().unwrap());
+        let u = (640.0 + (ax - 640.0) * blend) / 1280.0;
+        let v = (361.0 + (ay - 361.0) * blend) / 720.0;
         let x = u - 0.5;
         let y = v + 0.055 - 1.0;
         let c = 0.09_f64.cos();
